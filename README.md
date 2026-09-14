@@ -19,8 +19,10 @@ tools/get_material_maker.sh                 # fetch Material Maker into tools/ (
 tools/bake_materials.sh                     # bake materials/*.ptex to assets/textures/terrain
 ```
 
-The two mockups compare the meshers on the same seed, field and textures:
-open `docs/mockups/marching-cubes.html` and `docs/mockups/hex-terrain.html`
+The two mockups compare the meshers on the same seed, field, sea, towns and
+textures, with a first person walker on each (Walk the port, then WASD,
+Shift, Space and the mouse): open `docs/mockups/marching-cubes.html` and
+`docs/mockups/hex-terrain.html`
 straight off the checkout, or published: [marching cubes](https://claude.ai/code/artifact/342b7f52-5a1f-4000-94b3-1d3967b527d1) and
 [hex terrain](https://claude.ai/code/artifact/87905fd8-d47b-4f2e-8cc3-8c226251a799). Drag to orbit, wheel to zoom, "Stand on it" for a
 walker's eye height.

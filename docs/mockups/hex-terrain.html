@@ -5,33 +5,33 @@
 <link rel="stylesheet" href="mockup.css">
 <canvas id="c"></canvas>
 <div class="busy" id="busy">RAISING THE COLUMNS</div>
+<div class="cross" id="cross" hidden></div>
+<div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span></div>
 <aside class="panel">
   <h1>Freeport <span>hex terrain</span></h1>
-  <p>The same planetoid, the same field and seed, as <b>tenebris</b> would draw it: a Goldberg
-  polyhedron (an icosahedron subdivided and dualled, twelve pentagons and the rest hexagons),
-  one <b>column per tile</b> at the height the field first turns to rock, quantised to one metre
-  blocks, with walls wherever a neighbour stands lower. Drag to orbit, wheel to zoom.</p>
+  <p>The same planet, sea, field and seed as <b>tenebris</b> would draw it: a Goldberg polyhedron, one <b>column per tile</b> in one metre blocks. The same three towns, but here a town is tiles <b>levelled</b> to one height and a building is a <b>stack of concrete hex blocks</b>, windows lit by the shader. Walk it.</p>
   <div class="hud" id="hud"></div>
   <div class="controls">
+    <button id="walk">Walk the port</button>
     <button id="orbit" class="on">Orbit</button>
-    <button id="surface">Stand on it</button>
     <button id="tex" class="on">Textured</button>
     <button id="wire">Wire</button>
-    <select id="sub"><option value="5">1.6 m tiles</option><option value="6" selected>0.8 m tiles</option><option value="7">0.4 m tiles</option></select>
+    <select id="sub"><option value="6">1.05 m tiles</option><option value="7" selected>0.52 m tiles</option></select>
     <button id="reseed">New seed</button>
   </div>
-  <div class="look">What to look at, against the marching cubes mockup on the same seed:
+  <div class="look">What to judge on foot, against the marching cubes mockup on the same seed:
     <ul>
-      <li>the same hills as terraces: readable, buildable, and never an overhang</li>
-      <li>the twelve pentagons, which a tile grid on a sphere cannot avoid</li>
-      <li>the walls, which are the whole cost: a flat plain is cheap and a cliff is not</li>
-      <li>what a metre block reads as at a walker's eye height</li>
+      <li>every hill is a stair: a metre block is a jump, a half metre kerb is a step, and a beach is a terrace</li>
+      <li>the town's level sits in the hillside as a cut, with a wall wherever the hill was higher</li>
+      <li>a building is the ground grown up: nothing to place, nothing to align, and every wall is on the grid</li>
+      <li>the pentagons, and what a hex footprint does to a street corner</li>
     </ul></div>
 </aside>
 <script type="module">
-import { THREE, Planet, PLANET, makeScene, terrainMaterial, viewOrbit, viewSurface, surfaceRadius, hud, fmt } from './common.js';
+import { THREE, Planet, PLANET, planTowns, lotFrame, makeScene, makeSea, terrainMaterial, viewOrbit, surfaceRadius, Walker, hud, fmt } from './common.js';
 
-const BLOCK = 1.0; // metres, tenebris's own block height
+const BLOCK = 1.0;   // metres, tenebris's own block height
+const STOREY = 3.0;  // metres, three blocks
 
 // An icosahedron subdivided `sub` times, with the faces round every vertex,
 // which is all the dual needs: a tile is a vertex, its corners are the
@@ -40,14 +40,13 @@ function icosphere(sub) {
   const t = (1 + Math.sqrt(5)) / 2;
   let v = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
   let f = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
-  const norm = (p) => { const l = Math.hypot(p[0], p[1], p[2]); return [p[0] / l, p[1] / l, p[2] / l]; };
-  v = v.map(norm);
+  v = v.map(norm3);
   for (let s = 0; s < sub; s++) {
     const mid = new Map(), nf = [];
     const midpoint = (a, b) => {
       const key = a < b ? a * 1e7 + b : b * 1e7 + a;
       let m = mid.get(key);
-      if (m === undefined) { m = v.length; v.push(norm([(v[a][0] + v[b][0]) / 2, (v[a][1] + v[b][1]) / 2, (v[a][2] + v[b][2]) / 2])); mid.set(key, m); }
+      if (m === undefined) { m = v.length; v.push(norm3([(v[a][0] + v[b][0]) / 2, (v[a][1] + v[b][1]) / 2, (v[a][2] + v[b][2]) / 2])); mid.set(key, m); }
       return m;
     };
     for (const [a, b, c] of f) {
@@ -58,6 +57,9 @@ function icosphere(sub) {
   }
   return { v, f };
 }
+function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function norm3(p) { const l = Math.hypot(p[0], p[1], p[2]); return [p[0] / l, p[1] / l, p[2] / l]; }
 
 // The tiles: for each vertex, its corner directions in order round it and
 // the neighbour across each edge, from the two faces that meet there.
@@ -65,7 +67,7 @@ function goldberg(sub) {
   const { v, f } = icosphere(sub);
   const around = v.map(() => []);
   f.forEach((face, i) => face.forEach((vi) => around[vi].push(i)));
-  const centroid = f.map(([a, b, c]) => { const p = [(v[a][0] + v[b][0] + v[c][0]) / 3, (v[a][1] + v[b][1] + v[c][1]) / 3, (v[a][2] + v[b][2] + v[c][2]) / 3]; const l = Math.hypot(...p); return [p[0] / l, p[1] / l, p[2] / l]; });
+  const centroid = f.map(([a, b, c]) => norm3([(v[a][0] + v[b][0] + v[c][0]) / 3, (v[a][1] + v[b][1] + v[c][1]) / 3, (v[a][2] + v[b][2] + v[c][2]) / 3]));
   const tiles = [];
   for (let i = 0; i < v.length; i++) {
     const c = v[i];
@@ -73,43 +75,79 @@ function goldberg(sub) {
     const ex = norm3(cross(c, ax)), ey = cross(c, ex);
     const faces = around[i].map((fi) => { const d = centroid[fi]; return { fi, ang: Math.atan2(dot(d, ey), dot(d, ex)) }; }).sort((p, q) => p.ang - q.ang);
     const corners = faces.map((x) => centroid[x.fi]);
-    const neighbours = faces.map((x, k) => {
-      const fa = f[x.fi], fb = f[faces[(k + 1) % faces.length].fi];
-      return fa.find((vi) => vi !== i && fb.includes(vi));
-    });
+    const neighbours = faces.map((x, k) => { const fa = f[x.fi], fb = f[faces[(k + 1) % faces.length].fi]; return fa.find((vi) => vi !== i && fb.includes(vi)); });
     tiles.push({ dir: c, corners, neighbours });
   }
   return tiles;
 }
-function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
-function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
-function norm3(p) { const l = Math.hypot(p[0], p[1], p[2]); return [p[0] / l, p[1] / l, p[2] / l]; }
 
-// Columns: a cap per tile at its quantised height and a wall down to every
-// lower neighbour. The heights are the field's first crossing from space,
-// which is what a column can know about a field that undercuts.
-function columns(tiles, planet) {
-  const h = tiles.map((t) => {
-    const r = surfaceRadius(planet, new THREE.Vector3(...t.dir));
-    return planet.radius + Math.round((r - planet.radius) / BLOCK) * BLOCK;
-  });
-  const pos = [], nrm = [], idx = [];
+// The tile under a direction by a greedy walk from a hint, tenebris's own
+// `find_tile`: a few hops, never a scan of every tile.
+function findTile(tiles, d, hint) {
+  let cur = hint, best = dot(tiles[cur].dir, d);
+  for (let hops = 0; hops < 200; hops++) {
+    let next = cur;
+    for (const n of tiles[cur].neighbours) { const s = dot(tiles[n].dir, d); if (s > best) { best = s; next = n; } }
+    if (next === cur) return cur;
+    cur = next;
+  }
+  return cur;
+}
+
+// Heights and tags: the field's first crossing quantised to blocks, then
+// the towns: a site's tiles levelled to its height, streets tagged paved,
+// and a building's tiles raised by its storeys and tagged built. Nothing is
+// placed: the ground grows up into the building, on the grid it is on.
+function plan(tiles, planet, towns) {
+  const R = planet.radius;
+  const h = new Float64Array(tiles.length), tag = new Uint8Array(tiles.length), base = new Float64Array(tiles.length);
+  const q = (r) => R + Math.round((r - R) / BLOCK) * BLOCK;
+  for (let i = 0; i < tiles.length; i++) { const t = tiles[i]; h[i] = q(surfaceRadius(planet, new THREE.Vector3(t.dir[0], t.dir[1], t.dir[2]))); base[i] = h[i]; }
+  let hint = 0, builtTiles = 0;
+  for (const town of towns) {
+    const level = q(R + town.h);
+    const centre = [town.dir.x, town.dir.y, town.dir.z];
+    hint = findTile(tiles, centre, hint);
+    // Every tile within the town's radius and a skirt: level it. Found by a
+    // flood from the centre tile, which is the neighbour table doing what a
+    // scan of every tile would.
+    const seen = new Set([hint]), queue = [hint];
+    const reach = Math.cos((town.radius + 4) / R);
+    while (queue.length) {
+      const i = queue.pop();
+      h[i] = level; base[i] = level; tag[i] = 0;
+      const rel = [tiles[i].dir[0] - centre[0], tiles[i].dir[1] - centre[1], tiles[i].dir[2] - centre[2]];
+      const x = (rel[0] * town.east.x + rel[1] * town.east.y + rel[2] * town.east.z) * R;
+      const z = (rel[0] * town.north.x + rel[1] * town.north.y + rel[2] * town.north.z) * R;
+      for (const st of town.streets) if (Math.abs(x - st.x) < st.w / 2 && Math.abs(z - st.z) < st.d / 2) tag[i] = 2;
+      for (const lot of town.lots) if (Math.abs(x - lot.x) < lot.w / 2 && Math.abs(z - lot.z) < lot.d / 2) { tag[i] = 1; h[i] = level + lot.storeys * STOREY; builtTiles++; }
+      for (const n of tiles[i].neighbours) if (!seen.has(n) && dot(tiles[n].dir, centre) > reach) { seen.add(n); queue.push(n); }
+    }
+  }
+  return { h, tag, base, builtTiles };
+}
+
+// Columns: a cap per tile at its height and a wall down to every lower
+// neighbour, carrying the tile's tag and base so the shader can dress a
+// building and light its windows.
+function columns(tiles, p) {
+  const pos = [], nrm = [], idx = [], tags = [], bases = [];
   let walls = 0;
-  const push = (p, n) => { pos.push(p[0], p[1], p[2]); nrm.push(n[0], n[1], n[2]); return pos.length / 3 - 1; };
+  const push = (v, n, t, b) => { pos.push(v[0], v[1], v[2]); nrm.push(n[0], n[1], n[2]); tags.push(t); bases.push(b); return pos.length / 3 - 1; };
   tiles.forEach((t, i) => {
-    const r = h[i], k = t.corners.length;
-    const centre = push([t.dir[0] * r, t.dir[1] * r, t.dir[2] * r], t.dir);
-    const ring = t.corners.map((c) => push([c[0] * r, c[1] * r, c[2] * r], t.dir));
+    const r = p.h[i], k = t.corners.length, tg = p.tag[i], b = p.base[i];
+    const centre = push([t.dir[0] * r, t.dir[1] * r, t.dir[2] * r], t.dir, tg, b);
+    const ring = t.corners.map((c) => push([c[0] * r, c[1] * r, c[2] * r], t.dir, tg, b));
     for (let e = 0; e < k; e++) idx.push(centre, ring[e], ring[(e + 1) % k]);
     for (let e = 0; e < k; e++) {
-      const rn = h[t.neighbours[e]];
+      const rn = p.h[t.neighbours[e]];
       if (!(rn < r)) continue;
-      const a = t.corners[e], b = t.corners[(e + 1) % k];
-      let n = norm3(cross([b[0] - a[0], b[1] - a[1], b[2] - a[2]], t.dir));
+      const a = t.corners[e], c2 = t.corners[(e + 1) % k];
+      let n = norm3(cross([c2[0] - a[0], c2[1] - a[1], c2[2] - a[2]], t.dir));
       const toward = tiles[t.neighbours[e]].dir;
       if (dot(n, [toward[0] - t.dir[0], toward[1] - t.dir[1], toward[2] - t.dir[2]]) < 0) n = [-n[0], -n[1], -n[2]];
-      const q = [push([a[0] * r, a[1] * r, a[2] * r], n), push([b[0] * r, b[1] * r, b[2] * r], n),
-                 push([b[0] * rn, b[1] * rn, b[2] * rn], n), push([a[0] * rn, a[1] * rn, a[2] * rn], n)];
+      const q = [push([a[0] * r, a[1] * r, a[2] * r], n, tg, b), push([c2[0] * r, c2[1] * r, c2[2] * r], n, tg, b),
+                 push([c2[0] * rn, c2[1] * rn, c2[2] * rn], n, tg, b), push([a[0] * rn, a[1] * rn, a[2] * rn], n, tg, b)];
       idx.push(q[0], q[3], q[2], q[0], q[2], q[1]);
       walls++;
     }
@@ -117,25 +155,77 @@ function columns(tiles, planet) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('tag', new THREE.Float32BufferAttribute(tags, 1));
+  g.setAttribute('base', new THREE.Float32BufferAttribute(bases, 1));
   g.setIndex(idx);
-  return { geometry: g, triangles: idx.length / 3, vertices: pos.length / 3, walls, heights: h };
+  return { geometry: g, triangles: idx.length / 3, vertices: pos.length / 3, walls };
 }
 
 const canvas = document.getElementById('c');
 const { renderer, scene, camera, controls } = makeScene(canvas);
 const material = await terrainMaterial(renderer);
-let seed = PLANET.seed, planet = new Planet({ ...PLANET, seed });
-let mesh = null, stats = {}, tiles = null, tilesSub = -1;
+let seed = PLANET.seed, planet = null, towns = null;
+let mesh = null, stats = {}, tiles = null, tilesSub = -1, heights = null;
+scene.add(makeSea(new Planet(PLANET)));
+
+// On foot the ground is the tile's top, and a wall is any tile round the
+// body that stands higher than a step: a building, a terrace, a cliff. The
+// same rule for all three, because on a column world they are the same
+// thing. The body is pushed off each such tile along the line from the
+// tile's middle, a few times over, so a wall is slid along.
+const RING = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]];
+const walker = new Walker(camera, canvas, new Planet(PLANET), {
+  ground: (dir, w) => { w.hint = findTile(tiles, [dir.x, dir.y, dir.z], w.hint); return heights[w.hint]; },
+  resolve: (to, footTop, w) => {
+    // The circumradius, not the inradius: a body held off a hexagon's
+    // flats can still stand in its corner, and a camera in a column sees
+    // the inside of the world.
+    const R = planet.radius, reach = stats.width * 0.62 + w.radius;
+    let d = to.clone();
+    let hint = w.hint;
+    for (let pass = 0; pass < 4; pass++) {
+      const up = d, pole = Math.abs(up.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+      const e = new THREE.Vector3().crossVectors(pole, up).normalize(), n = new THREE.Vector3().crossVectors(up, e).normalize();
+      let pushed = false;
+      for (const [a, b] of RING) {
+        const s = d.clone().addScaledVector(e, a * w.radius / R).addScaledVector(n, b * w.radius / R).normalize();
+        hint = findTile(tiles, [s.x, s.y, s.z], hint);
+        if (heights[hint] <= footTop) continue;
+        const c = tiles[hint].dir;
+        const away = d.clone().sub(new THREE.Vector3(c[0], c[1], c[2]));
+        away.addScaledVector(d, -away.dot(d));
+        const dist = away.length() * R;
+        if (dist < 1e-6) continue;
+        const need = reach - dist;
+        if (need <= 0) continue;
+        d.addScaledVector(away.normalize(), need / R).normalize();
+        pushed = true;
+      }
+      if (!pushed) break;
+    }
+    return d;
+  },
+});
 
 function rebuild() {
   const busy = document.getElementById('busy'); busy.hidden = false;
   requestAnimationFrame(() => setTimeout(() => {
+    planet = new Planet({ ...PLANET, seed });
+    walker.planet = planet;
     const sub = parseInt(document.getElementById('sub').value, 10);
     const t0 = performance.now();
     if (tilesSub !== sub) { tiles = goldberg(sub); tilesSub = sub; }
-    const built = columns(tiles, planet);
+    const tTiles = performance.now() - t0;
+    const t1 = performance.now();
+    towns = planTowns(planet, 3, seed);
+    const p = plan(tiles, planet, towns);
+    heights = p.h;
+    const tPlan = performance.now() - t1;
+    const t2 = performance.now();
+    const built = columns(tiles, p);
+    const tMesh = performance.now() - t2;
     const pent = tiles.filter((t) => t.corners.length === 5).length;
-    stats = { sub, ms: performance.now() - t0, tiles: tiles.length, pent, width: 1.05 * planet.radius / Math.pow(2, sub), ...built };
+    stats = { sub, tTiles, tPlan, tMesh, tiles: tiles.length, pent, width: 1.05 * planet.radius / Math.pow(2, sub), builtTiles: p.builtTiles, ...built };
     if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
     mesh = new THREE.Mesh(built.geometry, material);
     scene.add(mesh);
@@ -146,30 +236,42 @@ function rebuild() {
 
 function say() {
   hud(document.getElementById('hud'), [
-    ['seed', seed], ['tiles', `${fmt(stats.tiles)} (${stats.pent} pentagons)`], ['tile width', `${stats.width.toFixed(2)} m`],
-    ['walls', fmt(stats.walls)], ['triangles', fmt(stats.triangles)], ['vertices', fmt(stats.vertices)],
-    ['built in', `${stats.ms.toFixed(0)} ms`], ['textures', material.hasTextures ? 'Material Maker bakes' : 'not found, flat colours'],
+    ['seed', seed], ['tiles', `${fmt(stats.tiles)} (${stats.pent} pentagons), ${stats.width.toFixed(2)} m`],
+    ['columns', `${fmt(stats.triangles)} triangles, ${fmt(stats.walls)} walls`],
+    ['towns', `${towns.length}, ${fmt(stats.builtTiles)} built tiles`],
+    ['timed', `tiles ${stats.tTiles.toFixed(0)} ms, plan ${stats.tPlan.toFixed(0)} ms, mesh ${stats.tMesh.toFixed(0)} ms`],
+    ['textures', material.hasTextures ? 'Material Maker bakes' : 'not found, flat colours'],
   ]);
 }
 
-const heightAt = (d) => {
-  // The column under a direction is the nearest tile's, which is what a walker stands on.
-  let best = -1, bd = -2;
-  for (let i = 0; i < tiles.length; i++) { const dd = tiles[i].dir[0] * d.x + tiles[i].dir[1] * d.y + tiles[i].dir[2] * d.z; if (dd > bd) { bd = dd; best = i; } }
-  return stats.heights[best];
-};
 const on = (id, f) => document.getElementById(id).addEventListener('click', f);
 const mark = (id, state) => document.getElementById(id).classList.toggle('on', state);
-on('orbit', () => { viewOrbit(controls, camera); mark('orbit', true); mark('surface', false); });
-on('surface', () => { viewSurface(controls, camera, planet, heightAt); mark('orbit', false); mark('surface', true); });
+function walkMode(onFoot) {
+  document.getElementById('cross').hidden = !onFoot; document.getElementById('walkhud').hidden = !onFoot;
+  mark('walk', onFoot); mark('orbit', !onFoot);
+  controls.enabled = !onFoot;
+}
+on('orbit', () => { walker.exit(); walkMode(false); viewOrbit(controls, camera); });
+on('walk', () => {
+  const port = towns[0];
+  const f = lotFrame(planet, port, 0, -port.radius - 2);
+  walker.hint = findTile(tiles, [f.dir.x, f.dir.y, f.dir.z], 0);
+  walker.enter(f.dir, f.north);
+  walkMode(true);
+});
 on('tex', () => { const v = material.uniforms.uTextured.value > 0.5 ? 0 : 1; material.uniforms.uTextured.value = material.hasTextures ? v : 0; mark('tex', material.uniforms.uTextured.value > 0.5); });
 on('wire', () => { material.wireframe = !material.wireframe; mark('wire', material.wireframe); });
-on('reseed', () => { seed = (seed * 1103515245 + 12345) >>> 0; planet = new Planet({ ...PLANET, seed }); rebuild(); });
+on('reseed', () => { seed = (seed * 1103515245 + 12345) >>> 0; rebuild(); });
 document.getElementById('sub').addEventListener('change', rebuild);
 mark('tex', material.hasTextures);
 
 rebuild();
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+let last = performance.now();
+renderer.setAnimationLoop((now) => {
+  const dt = (now - last) / 1000; last = now;
+  if (walker.active) { walker.update(dt); document.getElementById('walkstat').textContent = walker.stat; } else controls.update();
+  renderer.render(scene, camera);
+});
 // For a harness that wants one frame rather than a loop (the screenshots in docs/img).
-window.__mock = { renderer, scene, camera, controls };
+window.__mock = { renderer, scene, camera, controls, walker, get towns() { return towns; }, get planet() { return planet; }, lotFrame, walkMode, findTile: (d) => findTile(tiles, d, 0) };
 </script>

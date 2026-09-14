@@ -5,30 +5,30 @@
 <link rel="stylesheet" href="mockup.css">
 <canvas id="c"></canvas>
 <div class="busy" id="busy">MARCHING THE FIELD</div>
+<div class="cross" id="cross" hidden></div>
+<div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span></div>
 <aside class="panel">
   <h1>Freeport <span>marching cubes</span></h1>
-  <p>A planetoid as a <b>density field</b> and the classic mesher on the classic tables,
-  the same tables <code>freeport_core</code> carries. The ground is a smooth surface with
-  <b>overhangs and undercuts</b> where the field says so. Drag to orbit, wheel to zoom.</p>
+  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. Three towns stand on ground the field itself was <b>flattened</b> under, built from a <b>block kit</b>: slabs, wall panels, glass, pillars, parapets and gables placed free on a local grid. Walk it.</p>
   <div class="hud" id="hud"></div>
   <div class="controls">
+    <button id="walk">Walk the port</button>
     <button id="orbit" class="on">Orbit</button>
-    <button id="surface">Stand on it</button>
     <button id="tex" class="on">Textured</button>
     <button id="wire">Wire</button>
-    <select id="res"><option value="60">2 m cells</option><option value="96" selected>1.25 m cells</option><option value="132">0.9 m cells</option></select>
+    <select id="res"><option value="80">1.9 m cells</option><option value="112" selected>1.3 m cells</option><option value="144">1.0 m cells</option></select>
     <button id="reseed">New seed</button>
   </div>
-  <div class="look">What to look at, against the hex mockup on the same seed:
+  <div class="look">What to judge on foot, against the hex mockup on the same seed:
     <ul>
-      <li>the lip of every crater and the ledges the volumetric term cuts: a hex column cannot lean out</li>
-      <li>the silhouette against the stars from orbit, which is a curve here and a staircase there</li>
-      <li>the same three materials on the same slopes, so only the mesher differs</li>
-      <li>the triangle count for the same ground, because that is what the GPU pays</li>
+      <li>a slope is a slope: you walk up a hill and down to the beach without a step anywhere, and a cliff stops you</li>
+      <li>the town's plateau meets the hillside in a smooth skirt, cut by the field rather than laid on it</li>
+      <li>buildings stand plumb on their own patch of a curved world, and their walls stop you cold</li>
+      <li>the shore: wet sand at the water line, and the sea holds you at wading depth</li>
     </ul></div>
 </aside>
 <script type="module">
-import { THREE, Planet, PLANET, makeScene, terrainMaterial, viewOrbit, viewSurface, surfaceRadius, hud, fmt } from './common.js';
+import { THREE, Planet, PLANET, planTowns, lotFrame, makeScene, makeSea, terrainMaterial, dressed, viewOrbit, surfaceRadius, hash3, Walker, hud, fmt } from './common.js';
 import { EDGE_TABLE, TRI_TABLE } from './mc_tables.js';
 
 // `march.rs`, transcribed: Bourke's corners and edges, a corner bit set when
@@ -78,28 +78,188 @@ function march(field, corner, cell, n) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('tag', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1));
+  g.setAttribute('base', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1));
   g.setIndex(idx);
   return { geometry: g, triangles: idx.length / 3, vertices: pos.length / 3, samples: s * s * s };
+}
+
+// ------------------------------------------------------------ the block kit --
+// A building is a list of boxes in its own frame (x east, y up, z north,
+// origin at the middle of its footprint on the ground), each box in one of
+// four materials. Boxes rather than a modelled facade because a kit is what
+// a game ships: a slab, a panel, a pane, a pillar, a parapet, a gable, each
+// a size and a place, and a building is a plan that names them.
+const STOREY = 3.0;
+function kit(lot, seed) {
+  const boxes = [];
+  const box = (mat, w, h, d, x, y, z, ry) => boxes.push({ mat, size: [w, h, d], pos: [x, y, z], ry: ry || 0 });
+  const { w, d, storeys } = lot;
+  const H = storeys * STOREY;
+  box('concrete', w + 0.6, 0.35, d + 0.6, 0, 0.17, 0);                     // the ground slab
+  for (let s = 0; s < storeys; s++) {
+    const y0 = 0.35 + s * STOREY;
+    box('concrete', w, STOREY, 0.3, 0, y0 + STOREY / 2, d / 2 - 0.15);     // north and south panels
+    box('concrete', w, STOREY, 0.3, 0, y0 + STOREY / 2, -d / 2 + 0.15);
+    box('concrete', 0.3, STOREY, d, w / 2 - 0.15, y0 + STOREY / 2, 0);      // east and west panels
+    box('concrete', 0.3, STOREY, d, -w / 2 + 0.15, y0 + STOREY / 2, 0);
+    box('trim', w + 0.5, 0.25, d + 0.5, 0, y0 + STOREY - 0.12, 0);          // the floor line
+    // Panes: one every 2.2 m along each long side, lit or dark off a hash.
+    for (const [side, len, sx, sz] of [[0, w, 0, 1], [1, w, 0, -1], [2, d, 1, 0], [3, d, -1, 0]]) {
+      const count = Math.max(1, Math.floor((len - 1.2) / 2.2));
+      for (let i = 0; i < count; i++) {
+        const along = (i + 0.5) / count * (len - 1.2) - (len - 1.2) / 2;
+        const lit = hash3(lot.id, s * 4 + side, i, seed) > 0.42 && s > 0 || (s === 0 && hash3(lot.id, 99, i, seed) > 0.7);
+        const mat = lit ? 'lit' : 'glass';
+        if (side < 2) box(mat, 1.3, 1.4, 0.12, along, y0 + STOREY * 0.55, sz * (d / 2 + 0.02));
+        else box(mat, 0.12, 1.4, 1.3, sx * (w / 2 + 0.02), y0 + STOREY * 0.55, along);
+      }
+    }
+  }
+  for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) box('trim', 0.45, H + 0.5, 0.45, x * (w / 2 - 0.1), 0.35 + (H + 0.5) / 2 - 0.2, z * (d / 2 - 0.1)); // the pillars
+  box('trim', 1.2, 2.2, 0.2, 0, 0.35 + 1.1, d / 2 + 0.06);                   // the door
+  if (lot.kind === 'gable') {
+    const rise = w * 0.32;
+    const slant = Math.hypot(w / 2, rise), ang = Math.atan2(rise, w / 2);
+    box('roof', slant + 0.4, 0.22, d + 0.8, -w / 4, 0.35 + H + rise / 2, 0, ang);
+    box('roof', slant + 0.4, 0.22, d + 0.8, w / 4, 0.35 + H + rise / 2, 0, -ang);
+    box('concrete', w - 0.3, rise, 0.25, 0, 0.35 + H + rise / 2 - 0.05, d / 2 - 0.2);   // the gable ends, plain
+    box('concrete', w - 0.3, rise, 0.25, 0, 0.35 + H + rise / 2 - 0.05, -d / 2 + 0.2);
+  } else {
+    box('roof', w + 0.4, 0.3, d + 0.4, 0, 0.35 + H + 0.15, 0);
+    box('trim', w + 0.5, 0.7, 0.25, 0, 0.35 + H + 0.5, d / 2 + 0.12);       // the parapet
+    box('trim', w + 0.5, 0.7, 0.25, 0, 0.35 + H + 0.5, -d / 2 - 0.12);
+    box('trim', 0.25, 0.7, d + 0.5, w / 2 + 0.12, 0.35 + H + 0.5, 0);
+    box('trim', 0.25, 0.7, d + 0.5, -w / 2 - 0.12, 0.35 + H + 0.5, 0);
+    if (storeys > 2) box('trim', 2.2, 1.6, 2.2, w * 0.2, 0.35 + H + 1.1, -d * 0.15);   // the plant room
+  }
+  return boxes;
+}
+
+// Merge boxes into one geometry per material, in world space, with UVs in
+// metres so the concrete's pour lines are the same size on every panel.
+function mergeBoxes(list) {
+  const out = {};
+  for (const { mat, matrix, size } of list) {
+    const g = new THREE.BoxGeometry(size[0], size[1], size[2]);
+    const uv = g.attributes.uv;
+    const dims = [[size[2], size[1]], [size[2], size[1]], [size[0], size[2]], [size[0], size[2]], [size[0], size[1]], [size[0], size[1]]];
+    for (let f = 0; f < 6; f++) for (let v = f * 4; v < f * 4 + 4; v++) uv.setXY(v, uv.getX(v) * dims[f][0] / 3, uv.getY(v) * dims[f][1] / 3);
+    g.applyMatrix4(matrix);
+    (out[mat] = out[mat] || []).push(g);
+  }
+  const merged = {};
+  for (const [mat, gs] of Object.entries(out)) {
+    let nv = 0, ni = 0;
+    for (const g of gs) { nv += g.attributes.position.count; ni += g.index.count; }
+    const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = new Uint32Array(ni);
+    let vo = 0, io = 0;
+    for (const g of gs) {
+      pos.set(g.attributes.position.array, vo * 3); nrm.set(g.attributes.normal.array, vo * 3); uv.set(g.attributes.uv.array, vo * 2);
+      for (let i = 0; i < g.index.count; i++) idx[io + i] = g.index.array[i] + vo;
+      vo += g.attributes.position.count; io += g.index.count;
+    }
+    const m = new THREE.BufferGeometry();
+    m.setAttribute('position', new THREE.BufferAttribute(pos, 3)); m.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    m.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); m.setIndex(new THREE.BufferAttribute(idx, 1));
+    merged[mat] = m;
+  }
+  return merged;
+}
+
+// Every town's buildings and streets as world geometry, and the box
+// colliders the walker runs into: one per building, in the lot's own frame.
+function buildTowns(planet, towns, seed) {
+  const list = [], colliders = [];
+  let id = 0, count = 0;
+  for (const town of towns) {
+    for (const lot of town.lots) {
+      lot.id = id++;
+      const f = lotFrame(planet, town, lot.x, lot.z);
+      // x east, y up, z SOUTH: east cross up is south, and a right handed
+      // frame is what keeps a box's faces winding outward. The first cut
+      // used north and every building drew inside out, black but for its
+      // windows.
+      const m = new THREE.Matrix4().makeBasis(f.east, f.up, f.north.clone().negate()).setPosition(f.dir.clone().multiplyScalar(f.base));
+      for (const b of kit(lot, seed)) {
+        const local = new THREE.Matrix4().makeRotationZ(b.ry).setPosition(b.pos[0], b.pos[1], b.pos[2]);
+        list.push({ mat: b.mat, size: b.size, matrix: m.clone().multiply(local) });
+      }
+      colliders.push({ dir: f.dir, east: f.east, north: f.north, hw: lot.w / 2 + 0.3, hd: lot.d / 2 + 0.3, top: f.base + lot.storeys * STOREY + 0.4 });
+      count++;
+    }
+    for (const st of town.streets) {
+      const f = lotFrame(planet, town, st.x, st.z);
+      const m = new THREE.Matrix4().makeBasis(f.east, f.up, f.north.clone().negate()).setPosition(f.dir.clone().multiplyScalar(f.base));
+      list.push({ mat: 'street', size: [st.w, 0.12, st.d], matrix: m.clone().multiply(new THREE.Matrix4().setPosition(0, 0.06, 0)) });
+    }
+  }
+  return { geometries: mergeBoxes(list), colliders, buildings: count };
 }
 
 const canvas = document.getElementById('c');
 const { renderer, scene, camera, controls } = makeScene(canvas);
 const material = await terrainMaterial(renderer);
-let seed = PLANET.seed, planet = new Planet({ ...PLANET, seed });
-let mesh = null, stats = {};
+const materials = {
+  concrete: dressed(material.textures, 'concrete'),
+  trim: dressed(material.textures, 'concrete', { color: 0x9a9a96 }),
+  roof: dressed(material.textures, 'hull_plate', { color: 0x777a7c }),
+  street: dressed(material.textures, 'concrete', { color: 0x4a4b4a }),
+  glass: new THREE.MeshStandardMaterial({ color: 0x0b1319, roughness: 0.15, metalness: 0.7 }),
+  lit: new THREE.MeshStandardMaterial({ color: 0x1a1a14, roughness: 0.2, metalness: 0.2, emissive: 0xffc070, emissiveIntensity: 1.5 }),
+};
+let seed = PLANET.seed, planet = null, towns = null, colliders = [];
+let meshes = [], stats = {};
+const sea = makeSea(new Planet(PLANET)); scene.add(sea);
+
+// The walker's ground is the field's own first crossing; a building is a box
+// the body is pushed out of along whichever face it has come in least by,
+// which is what lets it slide along a wall; a cliff is the step rule.
+const walker = new Walker(camera, canvas, new Planet(PLANET), {
+  ground: (dir) => surfaceRadius(planet, dir),
+  resolve: (to, footTop, w) => {
+    const R = planet.radius;
+    let d = to.clone();
+    for (let pass = 0; pass < 2; pass++) {
+      for (const c of colliders) {
+        if (c.dir.dot(d) < Math.cos(24 / R)) continue;
+        if (footTop > c.top) continue;
+        const rel = d.clone().sub(c.dir).multiplyScalar(R);
+        const x = rel.dot(c.east), z = rel.dot(c.north);
+        const px = c.hw + w.radius - Math.abs(x), pz = c.hd + w.radius - Math.abs(z);
+        if (px <= 0 || pz <= 0) continue;
+        if (px < pz) d.addScaledVector(c.east, Math.sign(x || 1) * px / R); else d.addScaledVector(c.north, Math.sign(z || 1) * pz / R);
+        d.normalize();
+      }
+    }
+    return d;
+  },
+});
 
 function rebuild() {
   const busy = document.getElementById('busy'); busy.hidden = false;
   requestAnimationFrame(() => setTimeout(() => {
+    planet = new Planet({ ...PLANET, seed });
+    walker.planet = planet;
+    const t0 = performance.now();
+    towns = planTowns(planet, 3, seed);
+    const tTowns = performance.now() - t0;
     const n = parseInt(document.getElementById('res').value, 10);
     const half = PLANET.radius + PLANET.relief * 0.5 + PLANET.overhang + 2;
     const cell = (2 * half) / n;
-    const t0 = performance.now();
+    const t1 = performance.now();
     const built = march(planet, -half, cell, n);
-    stats = { n, cell, ms: performance.now() - t0, ...built };
-    if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
-    mesh = new THREE.Mesh(built.geometry, material);
-    scene.add(mesh);
+    const tMarch = performance.now() - t1;
+    const t2 = performance.now();
+    const city = buildTowns(planet, towns, seed);
+    colliders = city.colliders;
+    const tCity = performance.now() - t2;
+    for (const m of meshes) { scene.remove(m); m.geometry.dispose(); }
+    meshes = [new THREE.Mesh(built.geometry, material)];
+    let cityTris = 0;
+    for (const [mat, g] of Object.entries(city.geometries)) { meshes.push(new THREE.Mesh(g, materials[mat])); cityTris += g.index.count / 3; }
+    for (const m of meshes) scene.add(m);
+    stats = { n, cell, tMarch, tCity, tTowns, cityTris, buildings: city.buildings, ...built };
     busy.hidden = true;
     say();
   }, 20));
@@ -108,23 +268,41 @@ function rebuild() {
 function say() {
   hud(document.getElementById('hud'), [
     ['seed', seed], ['lattice', `${stats.n}³ cells of ${stats.cell.toFixed(2)} m`],
-    ['samples', fmt(stats.samples)], ['triangles', fmt(stats.triangles)], ['vertices', fmt(stats.vertices)],
-    ['marched in', `${stats.ms.toFixed(0)} ms`], ['textures', material.hasTextures ? 'Material Maker bakes' : 'not found, flat colours'],
+    ['terrain', `${fmt(stats.triangles)} triangles, ${stats.tMarch.toFixed(0)} ms`],
+    ['towns', `${towns.length}, ${stats.buildings} buildings, ${fmt(stats.cityTris)} triangles`],
+    ['planned in', `${stats.tTowns.toFixed(0)} ms, built in ${stats.tCity.toFixed(0)} ms`],
+    ['textures', material.hasTextures ? 'Material Maker bakes' : 'not found, flat colours'],
   ]);
 }
 
 const on = (id, f) => document.getElementById(id).addEventListener('click', f);
 const mark = (id, state) => document.getElementById(id).classList.toggle('on', state);
-on('orbit', () => { viewOrbit(controls, camera); mark('orbit', true); mark('surface', false); });
-on('surface', () => { viewSurface(controls, camera, planet, (d) => surfaceRadius(planet, d)); mark('orbit', false); mark('surface', true); });
+function walkMode(onFoot) {
+  document.getElementById('cross').hidden = !onFoot; document.getElementById('walkhud').hidden = !onFoot;
+  mark('walk', onFoot); mark('orbit', !onFoot);
+  controls.enabled = !onFoot;
+}
+on('orbit', () => { walker.exit(); walkMode(false); viewOrbit(controls, camera); });
+on('walk', () => {
+  const port = towns[0];
+  // Start on the port's main street, looking up it.
+  const f = lotFrame(planet, port, 0, -port.radius - 2);
+  walker.enter(f.dir, f.north);
+  walkMode(true);
+});
 on('tex', () => { const v = material.uniforms.uTextured.value > 0.5 ? 0 : 1; material.uniforms.uTextured.value = material.hasTextures ? v : 0; mark('tex', material.uniforms.uTextured.value > 0.5); });
-on('wire', () => { material.wireframe = !material.wireframe; mark('wire', material.wireframe); });
-on('reseed', () => { seed = (seed * 1103515245 + 12345) >>> 0; planet = new Planet({ ...PLANET, seed }); rebuild(); });
+on('wire', () => { material.wireframe = !material.wireframe; for (const m of Object.values(materials)) m.wireframe = material.wireframe; mark('wire', material.wireframe); });
+on('reseed', () => { seed = (seed * 1103515245 + 12345) >>> 0; rebuild(); });
 document.getElementById('res').addEventListener('change', rebuild);
 mark('tex', material.hasTextures);
 
 rebuild();
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+let last = performance.now();
+renderer.setAnimationLoop((now) => {
+  const dt = (now - last) / 1000; last = now;
+  if (walker.active) { walker.update(dt); document.getElementById('walkstat').textContent = walker.stat; } else controls.update();
+  renderer.render(scene, camera);
+});
 // For a harness that wants one frame rather than a loop (the screenshots in docs/img).
-window.__mock = { renderer, scene, camera, controls };
+window.__mock = { renderer, scene, camera, controls, walker, get towns() { return towns; }, get planet() { return planet; }, lotFrame, walkMode };
 </script>

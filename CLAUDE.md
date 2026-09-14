@@ -236,6 +236,51 @@ anywhere and nothing of any size may point in.
    Material Maker sets, which `docs/mockups/common.js` already does in GLSL
    and the WGSL transcribes.
 
+## A town is where a mesher is judged, and the walker is the judge
+
+The two mockups carry the same planet (sixty four metres, a sea half a metre
+under the mean radius, sand to a metre and a half above it, grass beyond),
+the same three towns and the same first person walker, because a slope, a
+kerb, a wall and a doorway are what a terrain system is FOR in a game about
+walking out of a ship. The town plan is shared (`planTowns` in
+`docs/mockups/common.js`: sites where the land is nearly level a little
+above the sea, the port first, a grid of ten metre blocks and four metre
+streets, a building on most lots, taller near the middle) and what differs
+is what a building is and what the ground does under it:
+
+| | the field, marched | the tiles, stacked |
+| --- | --- | --- |
+| the ground under a town | the field is FLATTENED under it (`Planet.surface` blends the relief to the site's height and fades the volumetric term), so the plateau has a smooth skirt cut by the same field | the tiles are LEVELLED, so the plateau has a wall of blocks wherever the hill was higher |
+| a building | a block kit: slab, panels, panes, pillars, parapet or gable, placed free on the lot, each building plumb on its own patch of the sphere | the lot's tiles raised by the storeys and tagged concrete, windows lit by the shader; nothing placed and nothing to align |
+| a wall on foot | a box the body is pushed out of along the face it came in least by | any tile round the body standing higher than a step, pushed off along the line from its middle |
+
+**The walker is one class and the page supplies two functions.** `Walker`
+is a direction on the sphere and a height off the ground, a heading carried
+as a tangent vector and squared to the local up every frame (the surface
+walker as a basis), velocity with acceleration and friction, a body radius
+of 35 cm, a step of 60 cm, a jump that clears a metre, and the sea holding
+it at wading depth. The page answers `ground(dir)` (the field's first
+crossing from space; the tile under the direction by a greedy walk from the
+last one, tenebris's `find_tile`) and `resolve(dir, foot)` (the direction
+pushed out of whatever solid the body overlaps below its step). **Resolve,
+never "may I".** The first cut asked `blocked(from, to)` and a walker that
+touched a wall stood glued to it, because every step from a touching
+position touches. A walker that is pushed OUT of what it overlaps slides
+along a wall for free, and the two pages' walkers then do the same thing on
+the same seed to a few decimetres: seven metres up the port's main street
+to the first face, nineteen along it, a jump of 1.4 m. Driven headless,
+with the numbers printed, because a walker that feels right is a walker
+whose numbers a second person can check.
+
+**Two pictures found what no number did.** The block kit drew black but
+for its windows: the lot frame was built as east, up, north, which is left
+handed, so every box wound inside out and only the emissive panes survived
+the cull. And a hex walker could stand in a column's corner and see the
+inside of the world, because the body was held off the hexagon's flats and
+not its corners; the reach is the circumradius now. Both are the kind of
+defect a headless screenshot catches and a test suite does not, which is
+the reason the mockups have a screenshot harness at all.
+
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
 Every planet, moon and station's position is a closed form function of the
@@ -292,9 +337,10 @@ time it was broken.
   under Xvfb and lavapipe with the forward_plus renderer, and only that one:
   the mobile and GL renderers crash under lavapipe while this one exports
   cleanly, which took an afternoon to find and is written here so nobody
-  finds it twice. Five sets ship: basalt, regolith, ice, dunes and hull
-  plate, all authored SHALLOW, because a normal map at full strength on a
-  flat quad reads as gravel (swarm-demo runs its finishes at a fifth).
+  finds it twice. Seven sets ship: basalt, regolith, ice, dunes, hull
+  plate, grass and concrete, all authored SHALLOW, because a normal map at
+  full strength on a flat quad reads as gravel (swarm-demo runs its finishes
+  at a fifth).
 - **Models are Blender's, or a generator's, never hand edited in a text
   editor.** A baked model is a `.blend` beside its glTF export in
   `assets/models/<thing>/`, metres, Y up, origin at the pivot the game will
