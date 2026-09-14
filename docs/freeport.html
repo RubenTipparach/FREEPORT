@@ -100,8 +100,9 @@ figcaption { font-family: var(--mono); font-size: 12.5px; color: var(--dim); mar
 
 /* the roadmap is a real sequence, so it is numbered */
 .stages { counter-reset: st; list-style: none; padding: 0; margin: 8px 0 0; max-width: 74ch; }
-.stages li { counter-increment: st; display: grid; grid-template-columns: 54px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--rule); margin: 0; }
-.stages li::before { content: "M" counter(st, decimal-leading-zero); font-family: var(--display); font-size: 30px; font-weight: 700; color: var(--cargo); line-height: 1; }
+.stages li { counter-increment: st; display: grid; grid-template-columns: 54px 1fr; grid-template-rows: auto auto; column-gap: 12px; row-gap: 4px; padding: 12px 0; border-top: 1px solid var(--rule); margin: 0; }
+.stages li::before { content: "M" counter(st, decimal-leading-zero); grid-column: 1; grid-row: 1 / 3; font-family: var(--display); font-size: 30px; font-weight: 700; color: var(--cargo); line-height: 1; }
+.stages li b, .stages li span { grid-column: 2; }
 .stages li b { display: block; font-weight: 600; }
 .stages li.now b::after { content: "here"; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cargo-ink); background: var(--cargo); padding: 2px 6px; border-radius: 2px; margin-left: 8px; vertical-align: middle; }
 .stages li span { color: var(--dim); font-size: 14.5px; }
