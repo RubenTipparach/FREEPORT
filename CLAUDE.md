@@ -602,21 +602,22 @@ Numbers in the commit message. What is measured so far:
   first face, 19.4 m along it, a jump to 1.4 m, the same to a few
   decimetres; then in at a door, up two flights to floor two, 6.04 m over
   the base on the blocks; and on the marched page, in at the house's door,
-  up the ramp to floor one (3.37 m over the base) and the second to floor
-  two (6.40 m), the page naming the recipe, the building and the floor at
+  up the ramp to floor one (3.39 m over the base) and the second to floor
+  two (6.38 m), the page naming the recipe, the building and the floor at
   every stage, and never a fall through the opening over either ramp.
 - The towns in the field: 284 structures (twenty buildings, the streets in
-  pieces) in 33,554 coarse cells replaced by 0.22 m ones over 929 chunks,
-  dual contoured from 17.5 million samples into 893,398 triangles in 9.6 s
+  pieces) in 33,466 coarse cells replaced by 0.22 m ones over 929 chunks,
+  dual contoured from 17.4 million samples into 885,862 triangles in 8.2 to
+  9.9 s over three runs
   (marched, the same cells were 11.5 million samples, 908,807 triangles and
   5.5 s: the crossings are bisected now, and a quad per crossing edge is
   about as many triangles as marching cubes' one to five per cell), against
   84,174 triangles and 0.9 s for the rest of the planet. The join between
   the lattices: 9,404 vertices on it, 5 mm apart on average, 108 mm at the
-  worst. A sculpted slab remarches its one chunk in 71 ms and a cut doorway
-  its four in 198 ms, and the walker steps up onto the slab (58 cm) or
+  worst. A sculpted slab remarches its one chunk in 67 ms and a cut doorway
+  its four in 215 ms, and the walker steps up onto the slab (58 cm) or
   walks through the doorway into the house, the same frame; taking both
-  back is 205 ms.
+  back is 210 ms.
 - Material Maker under lavapipe: seven graphs, twenty eight maps at 2048,
   exported in about six minutes on four cores, and byte identical on a
   re-export of the same graphs on the same machine (five sets unchanged when
