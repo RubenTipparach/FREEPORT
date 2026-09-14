@@ -694,10 +694,12 @@ Numbers in the commit message. What is measured so far:
   about as many triangles as marching cubes' one to five per cell), against
   84,174 triangles and 0.9 s for the rest of the planet. The join between
   the lattices: 9,404 vertices on it, 5 mm apart on average, 108 mm at the
-  worst. A sculpted slab remarches its one chunk in 105 ms and a cut doorway
-  its four in 166 ms, and the walker steps up onto the slab (58 cm) or
-  walks through the doorway into the house, the same frame; taking both
-  back is 197 ms. The fine mesh with its vertices welded by position: edges
+  worst. A sculpted slab remarches the eight chunks it touches or borders
+  in 335 ms and a cut doorway its eight in 545 ms, and the walker steps up
+  onto the slab (49 cm) or walks through the doorway into the house, the
+  same frame; taking both back is 859 ms. (A chunk's neighbours are remeshed
+  with it since border edges have one owner, which is why a slab that
+  touched one chunk now touches eight.) The fine mesh with its vertices welded by position: edges
   shared by more than two triangles, which is where a quad is twisted
   through a cell holding two surfaces, were 905 with one vertex a cell and
   are 11 with one a surface, on 898,432 triangles, since a quad is one per
@@ -705,7 +707,7 @@ Numbers in the commit message. What is measured so far:
   holes, 7,093 before the chunks agreed on a shell cell's normal, 655
   before a border edge had one owner, nought since, and one triangle in
   898,432 facing into the rock, before and after a house is built. The
-  towns load in 12.7 s now against 9.9, the gradient at the middle of every
+  towns load in 13.0 s now against 9.9, the gradient at the middle of every
   half quad being most of the difference.
 - The builder, headless: a 6 m pad of flat ground remarches 48 chunks in
   1.4 s, a wall from two clicks 1.3 s, a room cut, a door and a lamp about
