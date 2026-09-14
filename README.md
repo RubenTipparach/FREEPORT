@@ -19,6 +19,12 @@ tools/get_material_maker.sh                 # fetch Material Maker into tools/ (
 tools/bake_materials.sh                     # bake materials/*.ptex to assets/textures/terrain
 ```
 
+The workspace also contains `crates/hex_planet`, a separate engine-free experiment
+for a ten kilometre Goldberg planet. It keeps a dense, camera-local hex patch
+near the observer, fades to height-map terrain at distance, reserves stable
+procedural city anchors, uses authored Material Maker terrain sets, and shares a
+ray-marched atmosphere between the sky and ambient-light sampling.
+
 The two mockups compare the meshers on the same seed, field, sea, towns and
 textures, with a first person walker on each (Walk the port, then WASD,
 Shift, Space and the mouse): open `docs/mockups/marching-cubes.html` and
