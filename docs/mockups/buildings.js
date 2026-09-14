@@ -69,12 +69,12 @@ export const BUILDINGS = {
     "op": "cut",
     "shape": "box",
     "at": [
-     -2.475,
+     -2.6,
      0.625,
      3.2
     ],
     "size": [
-     1.35,
+     1.2,
      4.05,
      0.5
     ]
@@ -105,12 +105,12 @@ export const BUILDINGS = {
     "mat": "plate",
     "at": [
      -1.85,
-     0.4,
-     2.55
+     0.0,
+     2.28
     ],
     "size": [
      0.3,
-     3.9,
+     3.4,
      0.9
     ],
     "pitch": 34.3
@@ -840,12 +840,12 @@ export const BUILDINGS = {
     "op": "cut",
     "shape": "box",
     "at": [
-     -2.475,
+     -2.6,
      0.625,
      3.2
     ],
     "size": [
-     1.35,
+     1.2,
      4.05,
      0.5
     ]
@@ -876,12 +876,12 @@ export const BUILDINGS = {
     "mat": "plate",
     "at": [
      -1.85,
-     0.4,
-     2.55
+     0.0,
+     2.28
     ],
     "size": [
      0.3,
-     3.9,
+     3.4,
      0.9
     ],
     "pitch": 34.3
@@ -1186,12 +1186,12 @@ export const BUILDINGS = {
     "op": "cut",
     "shape": "box",
     "at": [
-     -1.475,
+     -1.55,
      0.55,
      3.2
     ],
     "size": [
-     1.25,
+     1.1,
      3.7,
      0.5
     ]
@@ -1222,8 +1222,8 @@ export const BUILDINGS = {
     "mat": "plate",
     "at": [
      -0.85,
-     0.26,
-     2.58
+     -0.14,
+     2.2
     ],
     "size": [
      0.3,

@@ -702,6 +702,10 @@ export class Walker {
       const g = this.rules.ground(d, this);
       if (g - foot > this.step) return null;
       if (g < this.planet.sea - this.wade) return null;
+      // A step is a rise onto ground that can be stood on: a page that knows
+      // its slopes refuses a face too steep, or a rail's end is a stair. It
+      // is told where the step came from, so it can look past the face.
+      if (this.rules.canStand && !this.rules.canStand(d, g, this, this.dir)) return null;
       return { d, g };
     };
     let moved = tryStep(this.vel.x, this.vel.y) || tryStep(this.vel.x, 0) || tryStep(0, this.vel.y);

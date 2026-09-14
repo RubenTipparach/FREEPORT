@@ -421,7 +421,7 @@ coarse one there (the cells outside the fine region get their vertex sunk
 along the normal) so no crack between the two can show. The gap is
 MEASURED anyway: every crossing on a join face is checked against the
 bilinear coarse field on that face and the page reports the mean and the
-worst. On this seed 6,413 crossings lie on the join, 5 mm apart on average
+worst. On this seed 9,404 crossings lie on the join, 5 mm apart on average
 and 108 mm at worst, the worst where a street runs out of the levelled site
 into the skirt, which is the chord sag this file already knows about; the
 game's streamer keeps the skirt for the same reason.
@@ -433,15 +433,21 @@ body meets between its step and its head, pushed out along the field's own
 gradient, sideways only. There is no collider list to keep in step with
 the picture because the picture is the collider, a ramp is walkable at any
 pitch the ground query can follow, and a sculpted block is walkable the
-frame it is placed. Three things the numbers found: the push
+frame it is placed. Four things the numbers found: the push
 was scaled by the gradient's DIFFERENCE rather than the gradient, so a one
 centimetre contact threw the body fourteen and a pane threw it out through
 the glass; the local panel frame was built at the fragment, and a point on
 a sphere projected on its own tangent plane is nought everywhere, so the
 panels were float noise until they were measured as arcs from the pole;
-and a body that steps DOWN by less than a step was airborne every frame of
+a body that steps DOWN by less than a step was airborne every frame of
 a downslope, flickering down every plinth's fillet, until a small drop
-became a step.
+became a step; and a walker that climbs anything rising less than a step
+per stride walks up the END of a ramp's rail, which leans back a third,
+so ground steeper than fifty degrees is refused, and refused outright it
+stopped at every door, because a plinth's fillet is a kerb with a
+shoulder. A steep face is climbed only where it tops out within a step of
+the feet two body widths on: the fillet does, and a rail's end, a cliff
+and a wall do not.
 
 **Sculpting is the same list, longer.** On foot, B: a brush at the point
 the crosshair meets the field (a march along the look ray, the field's
@@ -588,16 +594,21 @@ Numbers in the commit message. What is measured so far:
   first face, 19.4 m along it, a jump to 1.4 m, the same to a few
   decimetres; then in at a door, up two flights to floor two, 6.04 m over
   the base on the blocks; and on the marched page, in at the house's door,
-  up the ramp to floor one and the second to floor two, the page naming
-  the recipe, the building and the floor at every stage.
+  up the ramp to floor one (3.37 m over the base) and the second to floor
+  two (6.40 m), the page naming the recipe, the building and the floor at
+  every stage, and never a fall through the opening over either ramp.
 - The towns in the field: 284 structures (twenty buildings, the streets in
-  pieces) in 33,564 coarse cells replaced by 0.22 m ones over 924 chunks,
-  11.5 million samples and 908,807 triangles in 5.5 s, against 84,179
-  triangles and 0.9 s for the rest of the planet. The join between the
-  lattices: 6,413 vertices on it, 5 mm apart on average, 108 mm at the
-  worst. A sculpted slab or a cut doorway remarches the chunk or two it
-  touches in about 150 ms and the walker stands on it, or walks through it
-  into the house, the same frame.
+  pieces) in 33,554 coarse cells replaced by 0.22 m ones over 929 chunks,
+  dual contoured from 17.5 million samples into 893,398 triangles in 9.6 s
+  (marched, the same cells were 11.5 million samples, 908,807 triangles and
+  5.5 s: the crossings are bisected now, and a quad per crossing edge is
+  about as many triangles as marching cubes' one to five per cell), against
+  84,174 triangles and 0.9 s for the rest of the planet. The join between
+  the lattices: 9,404 vertices on it, 5 mm apart on average, 108 mm at the
+  worst. A sculpted slab remarches its one chunk in 71 ms and a cut doorway
+  its four in 198 ms, and the walker steps up onto the slab (58 cm) or
+  walks through the doorway into the house, the same frame; taking both
+  back is 205 ms.
 - Material Maker under lavapipe: seven graphs, twenty eight maps at 2048,
   exported in about six minutes on four cores, and byte identical on a
   re-export of the same graphs on the same machine (five sets unchanged when

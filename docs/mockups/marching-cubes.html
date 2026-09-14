@@ -521,6 +521,20 @@ const walker = new Walker(camera, canvas, new Planet(PLANET), {
     for (r -= step; r > floor; r -= step) { if (solidAt(dir, r)) return bisect(dir, r, prev); prev = r; }
     return floor;
   },
+  // Ground steeper than fifty degrees is a wall, unless it tops out within
+  // a step of the feet two body widths on: a face rising less than a step
+  // per stride is otherwise climbed like a stair, and the first cut walked
+  // up the end of a ramp's rail; refused outright, a plinth's fillet, which
+  // is a kerb with a shoulder, stopped the walker at every door.
+  canStand: (dir, g, w, from) => {
+    field.gradient(dir.x * g, dir.y * g, dir.z * g, 0.04, g3);
+    const len = Math.hypot(g3[0], g3[1], g3[2]);
+    if (len < 1e-6 || -(g3[0] * dir.x + g3[1] * dir.y + g3[2] * dir.z) / len > 0.64) return true;
+    const stride = from ? dir.distanceTo(from) : 0;
+    if (stride < 1e-12) return false;
+    const ahead = dir.clone().sub(from).multiplyScalar(2 * w.radius / (stride * planet.radius)).add(dir).normalize();
+    return walker.rules.ground(ahead, w) - w.foot <= w.step;
+  },
   ceiling: (dir, w) => {
     let r = w.foot + 0.25;
     for (let i = 0; i < 24; i++) { r += 0.15; if (solidAt(dir, r)) return r - 0.075; }
