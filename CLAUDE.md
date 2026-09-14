@@ -244,9 +244,9 @@ the two levels below is the whole of it.
    coarsest ring is 32 km across and holds the whole planet, so nothing is
    past the rings yet; a planet ten times the size is where this comes due.
 3. **The rest of the materials.** The sets are on the field in the harness
-   (the section on the sets below), concrete is in the town's frame and the
-   array textures carry their mip chains; what is left is the sand band by
-   height along the shore.
+   (the section on the sets below), concrete is in the town's frame, the
+   array textures carry their mip chains and the sand band is on the shore;
+   what is left is a second rock by latitude and ice at the poles.
 
 ## A town is where a mesher is judged, and the walker is the judge
 
@@ -733,11 +733,12 @@ reason, and the rule here is the cover rather than the distance.
   generation on every job, and a result from before the edit touches no
   bookkeeping either, or the chunk it named was contoured a third time).
 A block sculpted on the port's main street dirties eight
-  chunks and they are contoured again in 39 ms of work, a fiftieth of the
-  twenty seconds the first load spends; they are drawn six seconds later
-  on lavapipe, and that wait is the frame rate of a city at eight hundred
-  thousand triangles on a software rasteriser rather than the mesher,
-  which is why the number that matters is the work and not the clock.
+  chunks and they are contoured again in 30 to 39 ms of work, a five
+  hundredth of the seventeen seconds the first load spends; they are drawn
+  five seconds later on lavapipe, and that wait is the frame rate of a city
+  at eight hundred thousand triangles on a software rasteriser rather than
+  the mesher, which is why the number that matters is the work and not the
+  clock.
 - **The harness is the planet.** `freeport_app` is a 10 km planet (`RADIUS`
   5,000 m, the sea 12 m under the mean radius, eleven levels of 0.25 m to
   256 m cells, so the coarsest box is 32 km across and holds the whole
@@ -945,19 +946,28 @@ into the world), rock on the steep and grass on the flat by the same
 smoothstep, concrete, plate and street where the triangle says so and mapped
 in the nearest town's frame (the section on the cities above), glass, lamp
 and lit as flat colours with an emissive, because what they are is a colour
-and a glow and not a surface, and Bevy's own PBR lighting after. Every
+and a glow and not a surface, and Bevy's own PBR lighting after. Sand is
+the mockup's band by height, all sand to 1.3 m over the sea and all grass
+past 2.8, measured off the sea's own radius, so a beach is what a walker
+wades out onto. Every
 sample is taken whatever the material and blended by weight, because a
 texture sample under a branch is not in uniform control flow and the
 compiler refuses it; the mockup's GLSL was allowed the branch. The sets are
-four, basalt, grass, concrete and hull plate, as three array textures of
-four layers each (`terrain.rs`; `FREEPORT_ASSETS` or the checkout the
+five, basalt, dunes, grass, concrete and hull plate, as three array
+textures of five layers each (`terrain.rs`; `FREEPORT_ASSETS` or the checkout the
 binary was built from), and a missing map is a flat layer with a warning so
 the harness runs anywhere. Every layer carries its MIP CHAIN, built at load
 by a box filter down to one texel and laid out layer major, which is the
 order wgpu reads, with eight samples of anisotropy: without the chain a
 four metre tile of grass seen from seventy metres up is one texel a pixel
 picked at random, which is the noise the far ground read as, and without
-the anisotropy a street looked along is a stripe of one texel.
+the anisotropy a street looked along is a stripe of one texel. The
+ground's tile is two metres and not four, because a strand of the hay is a
+quarter of a tile and at four a blade was a metre long, which read as a
+ploughed field at a grazing angle; and the grass set's own normal is worn
+at `GRASS_BUMP` (0.45) toward the surface's, because a hay normal at full
+strength on ground seen at a grazing angle speckles, which is swarm-demo's
+finishes at a fifth on a field.
 
 **The walker is the mockup's, in the core.** `walker.rs` is the `Walker`
 class and the marched page's three rules ported number for number: an eye
@@ -1036,7 +1046,11 @@ time it was broken.
   says (measured), and puts them in `assets/textures/terrain`. `--check`
   re-exports and holds the committed maps within half a percent of pixels,
   a tolerance rather than `cmp` because a GPU render is not bit exact across
-  drivers. `tools/get_material_maker.sh` fetches the tool; it runs headless
+  drivers, and `tools/pngdiff.py` is what measures it: its `--max` left
+  the limit's own value in the positional list, so every call with one
+  exited on the usage text and the check reported every map as drifted,
+  which is a check that cannot pass reading as a check that always fails.
+  `tools/get_material_maker.sh` fetches the tool; it runs headless
   under Xvfb and lavapipe with the forward_plus renderer, and only that one:
   the mobile and GL renderers crash under lavapipe while this one exports
   cleanly, which took an afternoon to find and is written here so nobody
@@ -1126,15 +1140,16 @@ Numbers in the commit message. What is measured so far:
   and 807,367 on its main street; 7.3 to 8.5 ms a chunk on three workers,
   16 to 21 s of work, settled in 17 s from the air and 56 to 77 s on the
   street, the difference the frame rate of a software rasteriser drawing a
-  city. An edit on that street: a block dirties eight chunks, 39 ms of
-  work to contour them again, drawn 6.2 s later at that frame rate; the
+  city. An edit on that street: a block dirties eight chunks, 30 to 39 ms
+  of work to contour them again, drawn 4.7 s later at that frame rate; the
   walker stands on it the frame it lands.
 - The towns: eight planned in 1.23 s (four thousand candidates on a golden
   spiral, the port first), 699 buildings from eight recipes and 7,744 pieces
   of street built in 14 to 20 ms, 2,132 lamps of which the nearest 48 are
   lights.
-- The sets: four, at 1024 a side, three array textures of four layers, each
-  layer with an eleven level mip chain built at load.
+- The sets: five on the ground (basalt, dunes, grass, concrete and hull
+  plate), at 1024 a side, three array textures of five layers, each layer
+  with an eleven level mip chain built at load.
 - The walker, headless in the core, on a 2 km ball: 8 to 10 m in two
   seconds walking and over 14 running, a jump to between 1.0 and 1.6 m
   landing inside 1.3 s, a 0.4 m kerb climbed, a 1.2 m wall stopping the

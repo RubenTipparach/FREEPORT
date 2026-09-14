@@ -22,9 +22,11 @@ use freeport_core::town::Frame;
 use std::path::PathBuf;
 
 /// The sets, in the order the shader's layers name them.
-pub const SETS: [&str; 4] = ["basalt", "grass", "concrete", "hull_plate"];
-/// Metres a tile, on the ground and on concrete.
-const GROUND_TILE: f32 = 4.0;
+pub const SETS: [&str; 5] = ["basalt", "dunes", "grass", "concrete", "hull_plate"];
+/// Metres a tile, on the ground and on concrete. The ground's is what a
+/// strand of the hay is long: at four metres a blade was a metre and the
+/// grass read as a ploughed field at a grazing angle.
+const GROUND_TILE: f32 = 2.0;
 const CONCRETE_TILE: f32 = 3.0;
 
 pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, Terrain>;
@@ -37,7 +39,8 @@ pub const FRAMES: usize = 16;
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 pub struct Terrain {
     /// x: metres a tile on the ground, y: on concrete, z: how many town
-    /// frames are set.
+    /// frames are set, w: the sea's radius, which is what the sand band is
+    /// measured from.
     #[uniform(100)]
     pub params: Vec4,
     /// The planet's centre in the render frame.
@@ -228,6 +231,7 @@ pub fn terrain_material(
     images: &mut Assets<Image>,
     materials: &mut Assets<TerrainMaterial>,
     frames: &[Frame],
+    sea: f32,
 ) -> Handle<TerrainMaterial> {
     let dir = textures_dir();
     match &dir {
@@ -245,7 +249,7 @@ pub fn terrain_material(
             ..default()
         },
         extension: Terrain {
-            params: Vec4::new(GROUND_TILE, CONCRETE_TILE, count, 0.0),
+            params: Vec4::new(GROUND_TILE, CONCRETE_TILE, count, sea),
             centre: Vec4::ZERO,
             frames: lanes,
             albedo,

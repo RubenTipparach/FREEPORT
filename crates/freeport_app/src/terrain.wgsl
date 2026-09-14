@@ -17,7 +17,7 @@ const FRAMES: i32 = 16;
 
 struct Terrain {
     // x: metres a tile on the ground, y: metres a tile on concrete, z: how
-    // many town frames are set.
+    // many town frames are set, w: the sea's radius.
     params: vec4<f32>,
     // The planet's centre in the render frame: every coordinate here is
     // planet local, which is the rule for any shader that reasons about a
@@ -38,9 +38,15 @@ struct Terrain {
 
 // The layers, in the order `terrain::SETS` stacks them.
 const L_ROCK: i32 = 0;
-const L_GRASS: i32 = 1;
-const L_CONCRETE: i32 = 2;
-const L_PLATE: i32 = 3;
+const L_SAND: i32 = 1;
+const L_GRASS: i32 = 2;
+const L_CONCRETE: i32 = 3;
+const L_PLATE: i32 = 4;
+
+// The sand band: all sand to this over the sea, all grass past the second,
+// metres. The mockup's numbers, which is a beach a walker wades out of.
+const SAND_TO: f32 = 1.3;
+const GRASS_FROM: f32 = 2.8;
 
 // The materials, as `freeport_core::field` numbers them.
 const M_TERRAIN: f32 = 0.0;
@@ -66,6 +72,16 @@ fn tri(t: texture_2d_array<f32>, s: sampler, layer: i32, p: vec3<f32>, w: vec3<f
     return textureSample(t, s, p.yz, layer) * w.x
         + textureSample(t, s, p.xz, layer) * w.y
         + textureSample(t, s, p.xy, layer) * w.z;
+}
+
+// How much of the grass set's own normal is kept: a hay normal at full
+// strength on ground seen at a grazing angle speckles, which is the
+// swarm-demo lesson (its finishes run at a fifth) on a field.
+const GRASS_BUMP: f32 = 0.45;
+
+// A normal toward the surface's own, so a map can be worn lightly.
+fn soften(mapped: vec3<f32>, n: vec3<f32>, k: f32) -> vec3<f32> {
+    return normalize(mix(n, mapped, k));
 }
 
 // A normal map read on three planes and turned into the world, the
@@ -143,7 +159,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let slope = 1.0 - clamp(dot(n, up), 0.0, 1.0);
     let steep = smoothstep(0.34, 0.6, slope);
     let w_rock = steep * ground;
-    let w_grass = (1.0 - steep) * ground;
+    // Sand along the shore and under the shallows, grass above it: the
+    // mockup's band by height, measured off the sea's own radius.
+    let over_sea = length(rel) - terrain.params.w;
+    let sand = 1.0 - smoothstep(SAND_TO, GRASS_FROM, over_sea);
+    let level = (1.0 - steep) * ground;
+    let w_sand = level * sand;
+    let w_grass = level * (1.0 - sand);
     let street = is(material, M_STREET);
     let w_conc = is(material, M_CONCRETE) + street;
     let w_plate = is(material, M_PLATE);
@@ -160,14 +182,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let local = in_frame(nearest_frame(up), rel, up, n);
     let pc = local.p / terrain.params.y;
     let wc = tri_weights(local.n);
-    let mapped = w_rock + w_grass + w_conc + w_plate;
+    let mapped = w_rock + w_sand + w_grass + w_conc + w_plate;
     var albedo = tri(albedo_maps, albedo_sampler, L_ROCK, pg, w).rgb * w_rock
+        + tri(albedo_maps, albedo_sampler, L_SAND, pg, w).rgb * w_sand
         + tri(albedo_maps, albedo_sampler, L_GRASS, pg, w).rgb * w_grass
         + tri(albedo_maps, albedo_sampler, L_CONCRETE, pc, wc).rgb * w_conc
         + tri(albedo_maps, albedo_sampler, L_PLATE, pc, wc).rgb * w_plate;
     // A street is the concrete set, darker, as paving is.
     albedo = albedo * (1.0 - street * 0.45);
     var orm = tri(orm_maps, orm_sampler, L_ROCK, pg, w).rgb * w_rock
+        + tri(orm_maps, orm_sampler, L_SAND, pg, w).rgb * w_sand
         + tri(orm_maps, orm_sampler, L_GRASS, pg, w).rgb * w_grass
         + tri(orm_maps, orm_sampler, L_CONCRETE, pc, wc).rgb * w_conc
         + tri(orm_maps, orm_sampler, L_PLATE, pc, wc).rgb * w_plate;
@@ -175,7 +199,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         * (tri_normal(L_CONCRETE, pc, wc, local.n) * w_conc
             + tri_normal(L_PLATE, pc, wc, local.n) * w_plate);
     var nm = tri_normal(L_ROCK, pg, w, n) * w_rock
-        + tri_normal(L_GRASS, pg, w, n) * w_grass
+        + tri_normal(L_SAND, pg, w, n) * w_sand
+        + soften(tri_normal(L_GRASS, pg, w, n), n, GRASS_BUMP) * w_grass
         + built_n;
     albedo = albedo * mapped
         + vec3<f32>(0.05, 0.08, 0.1) * glass

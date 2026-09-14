@@ -482,7 +482,7 @@ fn spawn_world(
         .iter()
         .map(|t| town::lot_frame(RADIUS, t, 0.0, 0.0))
         .collect();
-    let material = terrain_material(&mut images, &mut materials, &frames);
+    let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
     let sheet = water_material(&mut waters, SEA);
     info!(
         "planet of {} m, the sea at {} m, {} levels of {} m to {} m cells, the eye at {:.0}, the shore {:.0} m off at {:.0}",
