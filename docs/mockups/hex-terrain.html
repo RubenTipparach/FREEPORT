@@ -9,7 +9,7 @@
 <div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span></div>
 <aside class="panel">
   <h1>Freeport <span>hex terrain</span></h1>
-  <p>The same planet, sea, field and seed as <b>tenebris</b> would draw it: a Goldberg polyhedron, one <b>column per tile</b> in one metre blocks. The same three towns, but here a town is tiles <b>levelled</b> to one height and a building is a <b>stack of concrete hex blocks</b>, windows lit by the shader. Walk it.</p>
+  <p>The same planet, sea, field and seed as <b>tenebris</b> would draw it: a Goldberg polyhedron, one <b>column of blocks</b> per tile. Half metre blocks, so a block is a step. The same three towns, tiles <b>levelled</b>, a building the ground grown up in concrete blocks with a doorway on the street, a floor per storey, a flight of stairs along a wall, and a lamp on every ceiling. Walk in.</p>
   <div class="hud" id="hud"></div>
   <div class="controls">
     <button id="walk">Walk the port</button>
@@ -21,17 +21,23 @@
   </div>
   <div class="look">What to judge on foot, against the marching cubes mockup on the same seed:
     <ul>
-      <li>every hill is a stair: a metre block is a jump, a half metre kerb is a step, and a beach is a terrace</li>
-      <li>the town's level sits in the hillside as a cut, with a wall wherever the hill was higher</li>
-      <li>a building is the ground grown up: nothing to place, nothing to align, and every wall is on the grid</li>
-      <li>the pentagons, and what a hex footprint does to a street corner</li>
+      <li>every hill is a stair of half metre steps; a beach is a terrace; the town's level sits in the hill as a cut</li>
+      <li>a building is the ground grown up: walk through the door, up the stairs, floor by floor, under the lamps</li>
+      <li>the concrete panels line up with the blocks and the floors, because the UVs are laid in the town's own frame</li>
+      <li>the pentagons, and what a hex footprint does to a room's corner</li>
     </ul></div>
 </aside>
 <script type="module">
 import { THREE, Planet, PLANET, planTowns, lotFrame, makeScene, makeSea, terrainMaterial, viewOrbit, surfaceRadius, Walker, hud, fmt } from './common.js';
 
-const BLOCK = 1.0;   // metres, tenebris's own block height
-const STOREY = 3.0;  // metres, three blocks
+// Half tenebris's metre, so a block is a step (60 cm) and not a jump, and a
+// stair is five of them a storey. A storey is six blocks, a door is four.
+const BLOCK = 0.5;
+const STOREY_B = 6;
+const DOOR_B = 4;
+const TREAD = 0.55;      // metres a step runs, a tile and a bit, so every step is at least one tile
+const STAIR_GAP = 1.0;   // metres a flight stands clear of the wall it faces, so a walker gets on at the bottom
+const TEX = 3.0;   // metres a concrete tile spans, one storey, so panel seams meet the floors
 
 // An icosahedron subdivided `sub` times, with the faces round every vertex,
 // which is all the dual needs: a tile is a vertex, its corners are the
@@ -94,67 +100,203 @@ function findTile(tiles, d, hint) {
   return cur;
 }
 
-// Heights and tags: the field's first crossing quantised to blocks, then
-// the towns: a site's tiles levelled to its height, streets tagged paved,
-// and a building's tiles raised by its storeys and tagged built. Nothing is
-// placed: the ground grows up into the building, on the grid it is on.
+// Runs of solid blocks in a column, [lo, hi) pairs in block indices off the
+// base radius, sorted and merged. A plain terrain tile is one run from the
+// bottom, which is not stored; a built tile is a list. This is tenebris's
+// own column of blocks with the air between the floors in it, which is what
+// a heightmap of tiles cannot hold and a building needs.
+function mergeRuns(rs) {
+  rs.sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (const r of rs) {
+    if (r[1] <= r[0]) continue;
+    const last = out[out.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else out.push([r[0], r[1]]);
+  }
+  return out;
+}
+function subtractRuns(rs, cut) {
+  const out = [];
+  for (const r of rs) {
+    let lo = r[0], hi = r[1];
+    if (cut[1] <= lo || cut[0] >= hi) { out.push([lo, hi]); continue; }
+    if (cut[0] > lo) out.push([lo, cut[0]]);
+    if (cut[1] < hi) out.push([cut[1], hi]);
+  }
+  return out;
+}
+// A minus B: the intervals where this column is solid and the neighbour is air.
+function diffRuns(A, B) {
+  const out = [];
+  for (const [a0, a1] of A) {
+    let cur = a0;
+    for (const [b0, b1] of B) {
+      if (b1 <= cur) continue;
+      if (b0 >= a1) break;
+      if (b0 > cur) out.push([cur, Math.min(b0, a1)]);
+      cur = Math.max(cur, b1);
+      if (cur >= a1) break;
+    }
+    if (cur < a1) out.push([cur, a1]);
+  }
+  return out;
+}
+
+// Heights, runs and tags. The field's first crossing quantised to blocks,
+// then the towns: a site's tiles levelled, streets tagged paved, and a
+// building GROWN: its ring of tiles is wall to the parapet with a doorway
+// cut in the street side, its inside is a floor slab a storey, a flight of
+// steps along one wall between floors (west rising north, then east rising
+// south, so the next flight is across the room), a hole in the slab over the
+// flight, and a lamp under every ceiling. Nothing is placed: every one of
+// those is a run of blocks in a column on the grid it is on.
 function plan(tiles, planet, towns) {
-  const R = planet.radius;
-  const h = new Float64Array(tiles.length), tag = new Uint8Array(tiles.length), base = new Float64Array(tiles.length);
-  const q = (r) => R + Math.round((r - R) / BLOCK) * BLOCK;
-  for (let i = 0; i < tiles.length; i++) { const t = tiles[i]; h[i] = q(surfaceRadius(planet, new THREE.Vector3(t.dir[0], t.dir[1], t.dir[2]))); base[i] = h[i]; }
-  let hint = 0, builtTiles = 0;
-  for (const town of towns) {
-    const level = q(R + town.h);
+  const R = planet.radius, B0 = planet.radius - planet.relief * 0.6 - planet.overhang - 3;
+  const bi = (r) => Math.round((r - B0) / BLOCK), rad = (k) => B0 + k * BLOCK;
+  const n = tiles.length;
+  const tb = new Int32Array(n), tag = new Uint8Array(n), townOf = new Int16Array(n).fill(-1), inside = new Int32Array(n).fill(-1);
+  const base = new Float64Array(n), runs = new Map(), lampTiles = new Set(), lamps = [];
+  for (let i = 0; i < n; i++) { const t = tiles[i]; tb[i] = bi(surfaceRadius(planet, new THREE.Vector3(t.dir[0], t.dir[1], t.dir[2]))); base[i] = rad(tb[i]); }
+  let hint = 0, builtTiles = 0, buildingId = 0, doors = 0, steps = 0;
+  towns.forEach((town, ti) => {
+    const lb = bi(R + town.h), level = rad(lb);
     const centre = [town.dir.x, town.dir.y, town.dir.z];
     hint = findTile(tiles, centre, hint);
-    // Every tile within the town's radius and a skirt: level it. Found by a
-    // flood from the centre tile, which is the neighbour table doing what a
-    // scan of every tile would.
-    const seen = new Set([hint]), queue = [hint];
-    const reach = Math.cos((town.radius + 4) / R);
+    const seen = new Set([hint]), queue = [hint], reach = Math.cos((town.radius + 4) / R);
+    const local = new Map();
+    const lots = town.lots.map(() => []);
     while (queue.length) {
       const i = queue.pop();
-      h[i] = level; base[i] = level; tag[i] = 0;
+      tb[i] = lb; base[i] = level; tag[i] = 0; townOf[i] = ti;
       const rel = [tiles[i].dir[0] - centre[0], tiles[i].dir[1] - centre[1], tiles[i].dir[2] - centre[2]];
       const x = (rel[0] * town.east.x + rel[1] * town.east.y + rel[2] * town.east.z) * R;
       const z = (rel[0] * town.north.x + rel[1] * town.north.y + rel[2] * town.north.z) * R;
+      local.set(i, [x, z]);
       for (const st of town.streets) if (Math.abs(x - st.x) < st.w / 2 && Math.abs(z - st.z) < st.d / 2) tag[i] = 2;
-      for (const lot of town.lots) if (Math.abs(x - lot.x) < lot.w / 2 && Math.abs(z - lot.z) < lot.d / 2) { tag[i] = 1; h[i] = level + lot.storeys * STOREY; builtTiles++; }
-      for (const n of tiles[i].neighbours) if (!seen.has(n) && dot(tiles[n].dir, centre) > reach) { seen.add(n); queue.push(n); }
+      town.lots.forEach((lot, li) => { if (Math.abs(x - lot.x) < lot.w / 2 && Math.abs(z - lot.z) < lot.d / 2) lots[li].push(i); });
+      for (const nb of tiles[i].neighbours) if (!seen.has(nb) && dot(tiles[nb].dir, centre) > reach) { seen.add(nb); queue.push(nb); }
     }
-  }
-  return { h, tag, base, builtTiles };
+    town.lots.forEach((lot, li) => {
+      const F = new Set(lots[li]);
+      if (F.size < 12) return;
+      const S = lot.storeys, top = lb + S * STOREY_B;
+      const id = buildingId++;
+      const xmin = lot.x - lot.w / 2, xmax = lot.x + lot.w / 2, zmin = lot.z - lot.d / 2, zmax = lot.z + lot.d / 2;
+      const ring = [], interior = [];
+      for (const i of F) (tiles[i].neighbours.some((nb) => !F.has(nb)) ? ring : interior).push(i);
+      // The doorway: the ring tiles nearest the middle of the street side.
+      // On the street side, east of the middle: the flights hang off the
+      // west wall, and a door on the middle of a five metre lot opened onto
+      // the bottom of the stair.
+      const doorX = lot.x + lot.w / 4;
+      let door = null, best = Infinity;
+      for (const i of ring) { const [x, z] = local.get(i); const score = Math.abs(x - doorX) + (z - zmin); if (z - zmin < 1.2 && score < best) { best = score; door = i; } }
+      const doorSet = new Set();
+      if (door !== null) { const [dx] = local.get(door); for (const i of ring) { const [x, z] = local.get(i); if (Math.abs(x - dx) < 0.62 && z - zmin < 1.2) doorSet.add(i); } }
+      for (const i of ring) {
+        tag[i] = 1; base[i] = level; builtTiles++;
+        runs.set(i, doorSet.has(i) ? [[0, lb], [lb + DOOR_B, top + 1]] : [[0, lb], [lb, top + 1]]);
+        if (doorSet.has(i)) doors++;
+      }
+      for (const i of interior) {
+        tag[i] = 3; base[i] = level; inside[i] = id; builtTiles++;
+        const rs = [[0, lb]];
+        for (let s = 1; s <= S; s++) rs.push([lb + s * STOREY_B - 1, lb + s * STOREY_B]);
+        const [x, z] = local.get(i);
+        // The flight: a strip two metres wide off one wall, starting a
+        // stride clear of the wall it faces so a walker gets on at the
+        // bottom step, a block a step and five steps a storey, and the top
+        // step a half block under the next floor's slab, which is its
+        // landing. The slab above is cut over the steps that need the head
+        // room (the second up) and nowhere else: the first cut cut it past
+        // the top step too, and a walker stepping off the flight fell
+        // through its own stairwell.
+        for (let s = 0; s < S - 1; s++) {
+          const west = s % 2 === 0;
+          const sx = west ? x - xmin : xmax - x;
+          const along = west ? z - (zmin + STAIR_GAP) : (zmax - STAIR_GAP) - z;
+          const k = Math.floor(along / TREAD) + 1;
+          if (sx > 0.35 && sx < 2.3 && k >= 1 && k < STOREY_B) {
+            rs.push([lb + s * STOREY_B, lb + s * STOREY_B + k]); steps++;
+            if (k >= 2) {
+              const slab = [lb + (s + 1) * STOREY_B - 1, lb + (s + 1) * STOREY_B];
+              const kept = subtractRuns(rs, slab); rs.length = 0; rs.push(...kept);
+            }
+          }
+        }
+        runs.set(i, mergeRuns(rs));
+        if (Math.abs(x - lot.x) < 0.6 && Math.abs(z - lot.z) < 0.6) lampTiles.add(i);
+      }
+      const f = lotFrame(planet, town, lot.x, lot.z);
+      for (let s = 0; s < S; s++) {
+        const r = rad(lb + (s + 1) * STOREY_B - 1) - 0.4;
+        lamps.push(new THREE.Vector4(f.dir.x * r, f.dir.y * r, f.dir.z * r, Math.max(lot.w, lot.d) * 0.8 + 1.5));
+      }
+    });
+  });
+  return { tb, tag, townOf, inside, base, runs, lampTiles, lamps, builtTiles, buildings: buildingId, doors, steps, B0, bi, rad };
 }
-
-// Columns: a cap per tile at its height and a wall down to every lower
-// neighbour, carrying the tile's tag and base so the shader can dress a
-// building and light its windows.
-function columns(tiles, p) {
-  const pos = [], nrm = [], idx = [], tags = [], bases = [];
+// Columns from runs: a cap at the top of every run, a cap under every run
+// that is not the bottom of the world (a ceiling), and a wall wherever this
+// column is solid and the neighbour is air. Tags and UVs ride the vertices:
+// a face toward the inside of a building is inside, the underside of a slab
+// over a lamp tile is the lamp, and in a town the UVs are the town's own
+// east and north for a cap and along and up for a wall, so the concrete
+// panels meet the blocks and the floors.
+function columns(tiles, p, planet, towns) {
+  const R = planet.radius, rad = p.rad;
+  const pos = [], nrm = [], idx = [], tags = [], bases = [], uvs = [];
   let walls = 0;
-  const push = (v, n, t, b) => { pos.push(v[0], v[1], v[2]); nrm.push(n[0], n[1], n[2]); tags.push(t); bases.push(b); return pos.length / 3 - 1; };
+  const push = (v, n, t, b, u, w) => { pos.push(v[0], v[1], v[2]); nrm.push(n[0], n[1], n[2]); tags.push(t); bases.push(b); uvs.push(u, w); return pos.length / 3 - 1; };
+  const runsOf = (i) => p.runs.get(i) || [[0, p.tb[i]]];
+  const town = (i) => p.townOf[i] >= 0 ? towns[p.townOf[i]] : null;
+  const capUv = (c, tw) => {
+    if (!tw) return [0, 0];
+    const rel = [c[0] - tw.dir.x, c[1] - tw.dir.y, c[2] - tw.dir.z];
+    return [(rel[0] * tw.east.x + rel[1] * tw.east.y + rel[2] * tw.east.z) * R / TEX, (rel[0] * tw.north.x + rel[1] * tw.north.y + rel[2] * tw.north.z) * R / TEX];
+  };
   tiles.forEach((t, i) => {
-    const r = p.h[i], k = t.corners.length, tg = p.tag[i], b = p.base[i];
-    const centre = push([t.dir[0] * r, t.dir[1] * r, t.dir[2] * r], t.dir, tg, b);
-    const ring = t.corners.map((c) => push([c[0] * r, c[1] * r, c[2] * r], t.dir, tg, b));
-    for (let e = 0; e < k; e++) idx.push(centre, ring[e], ring[(e + 1) % k]);
+    const rs = runsOf(i), k = t.corners.length, tg = p.tag[i], b = p.base[i], tw = town(i);
+    for (const [lo, hi] of rs) {
+      const rTop = rad(hi);
+      const c0 = push([t.dir[0] * rTop, t.dir[1] * rTop, t.dir[2] * rTop], t.dir, tg, b, ...capUv(t.dir, tw));
+      const ring = t.corners.map((c) => push([c[0] * rTop, c[1] * rTop, c[2] * rTop], t.dir, tg, b, ...capUv(c, tw)));
+      for (let e = 0; e < k; e++) idx.push(c0, ring[e], ring[(e + 1) % k]);
+      if (lo > 0) {
+        const rBot = rad(lo), down = [-t.dir[0], -t.dir[1], -t.dir[2]];
+        const ct = p.lampTiles.has(i) ? 4 : (tg === 3 ? 3 : tg);
+        const c1 = push([t.dir[0] * rBot, t.dir[1] * rBot, t.dir[2] * rBot], down, ct, b, ...capUv(t.dir, tw));
+        const ring2 = t.corners.map((c) => push([c[0] * rBot, c[1] * rBot, c[2] * rBot], down, ct, b, ...capUv(c, tw)));
+        for (let e = 0; e < k; e++) idx.push(c1, ring2[(e + 1) % k], ring2[e]);
+      }
+    }
     for (let e = 0; e < k; e++) {
-      const rn = p.h[t.neighbours[e]];
-      if (!(rn < r)) continue;
+      const nb = t.neighbours[e];
+      const open = diffRuns(rs, runsOf(nb));
+      if (!open.length) continue;
       const a = t.corners[e], c2 = t.corners[(e + 1) % k];
       let n = norm3(cross([c2[0] - a[0], c2[1] - a[1], c2[2] - a[2]], t.dir));
-      const toward = tiles[t.neighbours[e]].dir;
+      const toward = tiles[nb].dir;
       if (dot(n, [toward[0] - t.dir[0], toward[1] - t.dir[1], toward[2] - t.dir[2]]) < 0) n = [-n[0], -n[1], -n[2]];
-      const q = [push([a[0] * r, a[1] * r, a[2] * r], n, tg, b), push([c2[0] * r, c2[1] * r, c2[2] * r], n, tg, b),
-                 push([c2[0] * rn, c2[1] * rn, c2[2] * rn], n, tg, b), push([a[0] * rn, a[1] * rn, a[2] * rn], n, tg, b)];
-      idx.push(q[0], q[3], q[2], q[0], q[2], q[1]);
-      walls++;
+      const wt = p.inside[nb] >= 0 ? 3 : tg;
+      // A wall's u runs along the town axis it mostly faces across, so a
+      // zigzag of hex faces along one side of a room reads as one wall.
+      let ua = null;
+      if (tw) { const ne = dot(n, [tw.east.x, tw.east.y, tw.east.z]), nn = dot(n, [tw.north.x, tw.north.y, tw.north.z]); ua = Math.abs(ne) > Math.abs(nn) ? [tw.north.x, tw.north.y, tw.north.z] : [tw.east.x, tw.east.y, tw.east.z]; }
+      const uOf = (c) => ua ? dot([c[0] * R, c[1] * R, c[2] * R], ua) / TEX : 0;
+      for (const [lo, hi] of open) {
+        const rLo = rad(lo), rHi = rad(hi), vLo = (rLo - b) / TEX, vHi = (rHi - b) / TEX;
+        const q = [push([a[0] * rHi, a[1] * rHi, a[2] * rHi], n, wt, b, uOf(a), vHi), push([c2[0] * rHi, c2[1] * rHi, c2[2] * rHi], n, wt, b, uOf(c2), vHi),
+                   push([c2[0] * rLo, c2[1] * rLo, c2[2] * rLo], n, wt, b, uOf(c2), vLo), push([a[0] * rLo, a[1] * rLo, a[2] * rLo], n, wt, b, uOf(a), vLo)];
+        idx.push(q[0], q[3], q[2], q[0], q[2], q[1]);
+        walls++;
+      }
     }
   });
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   g.setAttribute('tag', new THREE.Float32BufferAttribute(tags, 1));
   g.setAttribute('base', new THREE.Float32BufferAttribute(bases, 1));
   g.setIndex(idx);
@@ -165,32 +307,44 @@ const canvas = document.getElementById('c');
 const { renderer, scene, camera, controls } = makeScene(canvas);
 const material = await terrainMaterial(renderer);
 let seed = PLANET.seed, planet = null, towns = null;
-let mesh = null, stats = {}, tiles = null, tilesSub = -1, heights = null;
+let mesh = null, stats = {}, tiles = null, tilesSub = -1, plan_ = null;
 scene.add(makeSea(new Planet(PLANET)));
 
-// On foot the ground is the tile's top, and a wall is any tile round the
-// body that stands higher than a step: a building, a terrace, a cliff. The
-// same rule for all three, because on a column world they are the same
-// thing. The body is pushed off each such tile along the line from the
-// tile's middle, a few times over, so a wall is slid along.
+// On foot: the ground is the highest run top no more than a step above the
+// feet, so a floor with a floor over it is a floor; the ceiling is the
+// lowest run bottom above the feet; and a wall is any run in a tile round
+// the body between knee and head, pushed off along the line from the
+// tile's middle. A building, a terrace, a cliff and a doorway's lintel are
+// all the same rule, because on a column world they are the same thing.
 const RING = [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]];
+const runsAt = (i) => plan_.runs.get(i) || [[0, plan_.tb[i]]];
 const walker = new Walker(camera, canvas, new Planet(PLANET), {
-  ground: (dir, w) => { w.hint = findTile(tiles, [dir.x, dir.y, dir.z], w.hint); return heights[w.hint]; },
+  ground: (dir, w) => {
+    w.hint = findTile(tiles, [dir.x, dir.y, dir.z], w.hint);
+    let best = -Infinity, lowest = Infinity;
+    for (const [, hi] of runsAt(w.hint)) { const r = plan_.rad(hi); lowest = Math.min(lowest, r); if (r <= w.foot + w.step + 0.01 && r > best) best = r; }
+    return best > -Infinity ? best : lowest;
+  },
+  ceiling: (dir, w) => {
+    const i = findTile(tiles, [dir.x, dir.y, dir.z], w.hint);
+    let c = Infinity;
+    for (const [lo] of runsAt(i)) { const r = plan_.rad(lo); if (lo > 0 && r > w.foot + 0.2 && r < c) c = r; }
+    return c;
+  },
   resolve: (to, footTop, w) => {
-    // The circumradius, not the inradius: a body held off a hexagon's
-    // flats can still stand in its corner, and a camera in a column sees
-    // the inside of the world.
-    const R = planet.radius, reach = stats.width * 0.62 + w.radius;
+    const R = planet.radius, reach = stats.width * 0.62 + w.radius, headR = w.foot + w.head;
     let d = to.clone();
     let hint = w.hint;
     for (let pass = 0; pass < 4; pass++) {
       const up = d, pole = Math.abs(up.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-      const e = new THREE.Vector3().crossVectors(pole, up).normalize(), n = new THREE.Vector3().crossVectors(up, e).normalize();
+      const e = new THREE.Vector3().crossVectors(pole, up).normalize(), nn = new THREE.Vector3().crossVectors(up, e).normalize();
       let pushed = false;
       for (const [a, b] of RING) {
-        const s = d.clone().addScaledVector(e, a * w.radius / R).addScaledVector(n, b * w.radius / R).normalize();
+        const s = d.clone().addScaledVector(e, a * w.radius / R).addScaledVector(nn, b * w.radius / R).normalize();
         hint = findTile(tiles, [s.x, s.y, s.z], hint);
-        if (heights[hint] <= footTop) continue;
+        let solid = false;
+        for (const [lo, hi] of runsAt(hint)) { if (plan_.rad(lo) < headR && plan_.rad(hi) > footTop) { solid = true; break; } }
+        if (!solid) continue;
         const c = tiles[hint].dir;
         const away = d.clone().sub(new THREE.Vector3(c[0], c[1], c[2]));
         away.addScaledVector(d, -away.dot(d));
@@ -205,6 +359,11 @@ const walker = new Walker(camera, canvas, new Planet(PLANET), {
     }
     return d;
   },
+  where: (dir, w) => {
+    const i = w.hint, b = plan_.inside[i];
+    if (b >= 0) return `inside building ${b + 1}, floor ${Math.max(0, Math.round((w.foot - plan_.base[i]) / (STOREY_B * BLOCK)))}`;
+    return plan_.tag[i] === 2 ? 'on a street' : 'outside';
+  },
 });
 
 function rebuild() {
@@ -218,14 +377,14 @@ function rebuild() {
     const tTiles = performance.now() - t0;
     const t1 = performance.now();
     towns = planTowns(planet, 3, seed);
-    const p = plan(tiles, planet, towns);
-    heights = p.h;
+    plan_ = plan(tiles, planet, towns);
+    material.setLamps(plan_.lamps);
     const tPlan = performance.now() - t1;
     const t2 = performance.now();
-    const built = columns(tiles, p);
+    const built = columns(tiles, plan_, planet, towns);
     const tMesh = performance.now() - t2;
     const pent = tiles.filter((t) => t.corners.length === 5).length;
-    stats = { sub, tTiles, tPlan, tMesh, tiles: tiles.length, pent, width: 1.05 * planet.radius / Math.pow(2, sub), builtTiles: p.builtTiles, ...built };
+    stats = { sub, tTiles, tPlan, tMesh, tiles: tiles.length, pent, width: 1.05 * planet.radius / Math.pow(2, sub), builtTiles: plan_.builtTiles, buildings: plan_.buildings, doors: plan_.doors, steps: plan_.steps, lamps: plan_.lamps.length, ...built };
     if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
     mesh = new THREE.Mesh(built.geometry, material);
     scene.add(mesh);
@@ -238,7 +397,8 @@ function say() {
   hud(document.getElementById('hud'), [
     ['seed', seed], ['tiles', `${fmt(stats.tiles)} (${stats.pent} pentagons), ${stats.width.toFixed(2)} m`],
     ['columns', `${fmt(stats.triangles)} triangles, ${fmt(stats.walls)} walls`],
-    ['towns', `${towns.length}, ${fmt(stats.builtTiles)} built tiles`],
+    ['towns', `${towns.length}, ${stats.buildings} buildings on ${fmt(stats.builtTiles)} tiles`],
+    ['inside', `${stats.doors} door tiles, ${stats.steps} steps, ${stats.lamps} lamps`],
     ['timed', `tiles ${stats.tTiles.toFixed(0)} ms, plan ${stats.tPlan.toFixed(0)} ms, mesh ${stats.tMesh.toFixed(0)} ms`],
     ['textures', material.hasTextures ? 'Material Maker bakes' : 'not found, flat colours'],
   ]);
@@ -273,5 +433,5 @@ renderer.setAnimationLoop((now) => {
   renderer.render(scene, camera);
 });
 // For a harness that wants one frame rather than a loop (the screenshots in docs/img).
-window.__mock = { renderer, scene, camera, controls, walker, get towns() { return towns; }, get planet() { return planet; }, lotFrame, walkMode, findTile: (d) => findTile(tiles, d, 0) };
+window.__mock = { renderer, scene, camera, controls, walker, get towns() { return towns; }, get planet() { return planet; }, get plan() { return plan_; }, lotFrame, walkMode, findTile: (d) => findTile(tiles, d, 0) };
 </script>

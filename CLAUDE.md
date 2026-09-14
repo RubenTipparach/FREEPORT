@@ -251,19 +251,26 @@ is what a building is and what the ground does under it:
 | | the field, marched | the tiles, stacked |
 | --- | --- | --- |
 | the ground under a town | the field is FLATTENED under it (`Planet.surface` blends the relief to the site's height and fades the volumetric term), so the plateau has a smooth skirt cut by the same field | the tiles are LEVELLED, so the plateau has a wall of blocks wherever the hill was higher |
-| a building | a block kit: slab, panels, panes, pillars, parapet or gable, placed free on the lot, each building plumb on its own patch of the sphere | the lot's tiles raised by the storeys and tagged concrete, windows lit by the shader; nothing placed and nothing to align |
+| a building | a block kit: slab, panels, panes, pillars, parapet or gable, a doorway, a floor a storey, a flight of stairs, a lamp, placed free on the lot, each building plumb on its own patch of the sphere | the lot's tiles raised by the storeys in half metre blocks and tagged concrete, windows lit by the shader; the doorway, the floors, the stairs and the lamps are RUNS of blocks in a column, nothing placed and nothing to align |
 | a wall on foot | a box the body is pushed out of along the face it came in least by | any tile round the body standing higher than a step, pushed off along the line from its middle |
+| a room | the sun casts a shadow map over the port, so a room is dark because the walls are between it and the sky, and a point light per lamp warms it | a face toward the inside is TAGGED inside and the shader lights it from the building's lamps and nothing else, with the sun ignored |
+| the concrete | box UVs in metres | UVs in the TOWN's frame: a cap on east and north, a wall along the town axis it faces across and up from its base, so the panel seams meet the blocks and the floors |
 
-**The walker is one class and the page supplies two functions.** `Walker`
+**The walker is one class and the page supplies three functions.** `Walker`
 is a direction on the sphere and a height off the ground, a heading carried
 as a tangent vector and squared to the local up every frame (the surface
 walker as a basis), velocity with acceleration and friction, a body radius
-of 35 cm, a step of 60 cm, a jump that clears a metre, and the sea holding
-it at wading depth. The page answers `ground(dir)` (the field's first
-crossing from space; the tile under the direction by a greedy walk from the
-last one, tenebris's `find_tile`) and `resolve(dir, foot)` (the direction
-pushed out of whatever solid the body overlaps below its step). **Resolve,
-never "may I".** The first cut asked `blocked(from, to)` and a walker that
+of 35 cm, a step of 60 cm, a head at 1.85 m, a jump that clears a metre,
+and the sea holding it at wading depth. The page answers `ground(dir)` (the
+highest floor, step or roof no more than a step above the feet, else the
+field's first crossing from space; on the hex page the highest run top in
+the tile under the direction, found by a greedy walk from the last one,
+tenebris's `find_tile`), `ceiling(dir)` (the lowest solid above the feet,
+which is what stops a jump under a slab and clamps the head under a
+lintel) and `resolve(dir, foot)` (the direction pushed out of whatever solid
+the body overlaps between its step and its head). A floor with a floor
+over it is a floor, and a step is a wall from the front and a floor from
+above, which is what a step is. **Resolve, never "may I".** The first cut asked `blocked(from, to)` and a walker that
 touched a wall stood glued to it, because every step from a touching
 position touches. A walker that is pushed OUT of what it overlaps slides
 along a wall for free, and the two pages' walkers then do the same thing on
@@ -291,6 +298,52 @@ the kind of defect a screenshot catches and a test suite does not, which is
 the reason the mockups have a screenshot harness at all, and the third is
 the kind only a second pair of eyes catches, which is the reason they are
 published.
+
+**Inside, and up the stairs, on both.** Every building has a doorway on the
+street side, a floor a storey, a flight along one wall (west rising north,
+then east rising south, so the next flight is across the room), a hole in
+the slab over the flight, and a lamp under every ceiling. The block kit
+builds them as boxes; the hex page GROWS them, because on a column world a
+step, a floor, a lintel and a wall are all the same thing, a run of blocks
+in a column: a ring tile is wall to the parapet with a gap of four blocks
+where the door is, an interior tile is the ground, a slab a storey and, on
+the stair strip, a step of k blocks, with the slab above cut where a
+climber's head would meet it. The walker climbs both the same way, and the
+harness proves it: in at the door, west to the wall, north up the flight to
+floor one (3.35 m over the base on the kit, 3.04 on the blocks), east
+across, south up the second flight to floor two, and `where` naming the
+building and the floor at every stage. Four things the numbers found before
+a picture could:
+
+- **The flight topped out over a drop.** The slab's hole was cut a stride
+  past the top step on both pages, so a walker stepping off the flight fell
+  through its own stairwell. The hole ends at the top step's far edge and
+  starts a little short of the first step whose climber's head would meet
+  the slab, and nowhere else.
+- **A flight against the wall it faces cannot be got onto.** The hex flight
+  started flush with the south wall and the kit's a step from it with the
+  handrail running to the floor, so the only way on was from the side, over
+  a metre of riser. A flight stands a stride clear of the wall it faces
+  (`GAP`, `STAIR_GAP`) so a walker gets on at the bottom step, and the rail
+  starts at the third step, because the two low ones are climbable from the
+  side and a rail to the floor is a wall to go round the end of.
+- **The exterior floor line was a box the size of the lot.** Drawn, it was
+  hidden inside the walls and the slab; as a collider it caught a climber's
+  head at the fourth step and, pushing out along the least penetrated face,
+  shoved the walker through the west wall and out of the building. It is
+  four bars round the outside now and decoration never collides.
+- **Two risers are exactly a step.** 0.3 twice against 0.6, and on the
+  frames the sum rounded up the second step was a wall. The collider gives
+  the same centimetre of slack the ground query already had. A tie on a
+  threshold is a coin toss, and the coin is the rounding mode.
+
+A lamp is the one thing the shader is handed: up to `MAX_LAMPS` (96) of
+them as position and reach, a fixed uniform array because GLSL has no
+other kind, and only a fragment tagged inside pays for the loop. The lamp's
+own diffuse is wrapped, because a lamp a hand under a ceiling lights the
+whole ceiling at a grazing angle and a plain cosine there lights every
+grain of the normal map on one side: the ceiling came out as gravel and the
+map is at half strength inside for the same reason.
 
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
@@ -414,16 +467,19 @@ Numbers in the commit message. What is measured so far:
   plain, on a 16 by 16 grid.
 - The marching cubes mockup: a 64 m planet with a sea and three towns on a
   112^3 lattice of 1.33 m cells, 95,200 triangles of ground marched in 0.9 s
-  in Chromium on swiftshader, the towns planned in 54 ms and their twenty
-  buildings built from the kit in 50 ms (12,192 triangles). The hex mockup
-  on the same seed: 163,842 tiles at 0.53 m, 74,754 walls, 1,132,548
-  triangles, 2,876 of the tiles built, in 5.7 s of which the plan (a first
-  crossing per tile) is 2.6 and the mesh 1.9. Twelve times the triangles for
-  the same ground, which is the cost of a terrace: a flat plain is cheap and
-  every step is a wall.
+  in Chromium on swiftshader, the towns planned in 52 ms and their twenty
+  buildings built from the kit in 76 ms (25,080 triangles with the floors,
+  stairs and lamps; 59 lamps, the port's 23 as point lights). The hex mockup
+  on the same seed: 163,842 tiles at 0.53 m, 153,009 walls, 1,363,296
+  triangles, 2,876 of the tiles built (56 door tiles, 636 steps, 59 lamps),
+  in about 6.6 s of which the plan (a first crossing per tile, then the
+  runs) is 2.5 to 2.9 and the mesh 0.8 to 2.4. Fourteen times the triangles
+  for the same ground, which is the cost of a terrace: a flat plain is cheap
+  and every step is a wall, and a room is walls all the way round.
 - The walker, both pages, headless: 7 m up the port's main street to the
   first face, 19.4 m along it, a jump to 1.4 m, the same to a few
-  decimetres.
+  decimetres; then in at a door, up two flights to floor two, 6.35 m over
+  the base on the kit and 6.04 on the blocks.
 - Material Maker under lavapipe: seven graphs, twenty eight maps at 2048,
   exported in about six minutes on four cores, and byte identical on a
   re-export of the same graphs on the same machine (five sets unchanged when

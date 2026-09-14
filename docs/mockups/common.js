@@ -219,29 +219,40 @@ const VERT = /* glsl */`
   attribute float base;
   varying vec3 vPos;
   varying vec3 vNrm;
+  varying vec2 vUv;
   varying float vTag;
   varying float vBase;
   void main() {
     vPos = (modelMatrix * vec4(position, 1.0)).xyz;
     vNrm = normalize(mat3(modelMatrix) * normal);
-    vTag = tag; vBase = base;
+    vUv = uv; vTag = tag; vBase = base;
     gl_Position = projectionMatrix * viewMatrix * vec4(vPos, 1.0);
   }
 `;
 
+// How many lamps the shader can hold. A uniform array is a fixed size in
+// GLSL, so this is the ceiling on lit rooms in a scene, not a budget.
+export const MAX_LAMPS = 96;
+
 // Five sets blended by slope and height, sampled on three planes each: rock
 // on the steep, sand up to the shore line, grass above it, ice above the snow
-// line, and concrete on anything a mesh tags as built (1) or paved (2).
-// Windows on a built wall are the shader's: a storey is three metres up from
-// the tag's base, a pane is the middle of the storey along the wall, lit or
-// not off a hash. Lighting is a sun and a dim sky, GGX for the highlight, no
-// fog: this is vacuum.
+// line. Anything a mesh TAGS is built and wears concrete on the mesh's own
+// UVs, which a hex page lays in the town's frame so the panels line up with
+// the blocks: 1 is a building's outside (windows are the shader's: a storey
+// is three metres up from the tag's base, a pane is the middle of the storey
+// along the wall, lit or not off a hash), 2 is a street, 3 is INSIDE, where
+// the sun does not reach and the light is the room's lamps, and 4 is a lamp,
+// which glows and is lit by nothing. Outside, lighting is a sun and a dim
+// sky, GGX for the highlight, no fog: this is vacuum.
 const FRAG = /* glsl */`
   precision highp float;
   varying vec3 vPos;
   varying vec3 vNrm;
+  varying vec2 vUv;
   varying float vTag;
   varying float vBase;
+  uniform vec4 uLamps[${MAX_LAMPS}];
+  uniform int uLampCount;
   uniform vec3 uSun;
   uniform vec3 uCentre;
   uniform float uRadius;
@@ -281,14 +292,25 @@ const FRAG = /* glsl */`
     vec3 w = triW(n);
     vec3 albedo; float rough; vec3 nm; float ao = 1.0; vec3 glow = vec3(0.0);
 
+    bool inside = vTag > 2.5 && vTag < 3.5;
+    bool lamp = vTag > 3.5;
     if (vTag > 0.5) {
-      // Built or paved: concrete, and windows on the walls of a building.
+      // Built: concrete on the mesh's own UVs, and windows on an outside wall.
       if (uTextured > 0.5) {
-        vec3 orm = tri(tConcR, p * 1.6, w).rgb;
-        albedo = tri(tConcC, p * 1.6, w).rgb; rough = orm.g; ao = orm.r; nm = triN(tConcN, p * 1.6, w, n);
+        vec3 orm = texture2D(tConcR, vUv).rgb;
+        albedo = texture2D(tConcC, vUv).rgb; rough = orm.g; ao = orm.r;
+        // The map's tangent frame is the UV's; a wall's u runs along it and v up it.
+        vec3 tn = texture2D(tConcN, vUv).xyz * 2.0 - 1.0;
+        vec3 t1 = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+        vec3 t2 = cross(t1, n);
+        // At half strength: a lamp a metre off a wall lights every grain of
+        // a full strength map from the side, and the panel reads as stipple.
+        nm = normalize(mix(n, normalize(t1 * tn.x + t2 * tn.y + n * tn.z), 0.5));
       } else { albedo = uConcFlat; rough = 0.85; nm = n; }
-      if (vTag > 1.5) { albedo *= 0.42; rough = 0.95; }
-      else if (slope > 0.5) {
+      if (vTag > 1.5 && vTag < 2.5) { albedo *= 0.42; rough = 0.95; }
+      if (inside) { albedo *= 1.15; }
+      if (lamp) { albedo = vec3(0.8); glow = vec3(1.0, 0.86, 0.66) * 0.9; }
+      if (vTag < 1.5 && slope > 0.5) {
         float storey = (r - vBase) / 3.0;
         float f = fract(storey);
         vec3 t = normalize(cross(n, up));
@@ -318,19 +340,44 @@ const FRAG = /* glsl */`
       albedo *= 1.0 - 0.35 * wet; rough = mix(rough, 0.35, wet);
     }
     vec3 v = normalize(cameraPosition - vPos);
-    vec3 l = normalize(uSun);
-    vec3 h = normalize(l + v);
-    float nl = max(dot(nm, l), 0.0);
-    float nh = max(dot(nm, h), 0.0);
-    float nv = max(dot(nm, v), 0.001);
     float a = max(rough * rough, 0.02);
     float f0 = 0.04;
-    float fres = f0 + (1.0 - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
-    float spec = ggx(nh, a) * fres / (4.0 * nv + 0.5);
-    vec3 sunColour = vec3(1.0, 0.96, 0.9) * 3.2;
-    float skyish = 0.5 + 0.5 * dot(nm, up);
-    vec3 fill = mix(vec3(0.10, 0.09, 0.08), vec3(0.20, 0.23, 0.28), skyish);
-    vec3 colour = albedo * (sunColour * nl + fill * ao) + sunColour * spec * nl + glow;
+    float nv = max(dot(nm, v), 0.001);
+    vec3 colour;
+    if (inside || lamp) {
+      // A room: its lamps, warm, falling off as a lamp does, and a little
+      // bounce off the walls so a corner is dark and not black.
+      vec3 lit = vec3(0.0);
+      for (int i = 0; i < ${MAX_LAMPS}; i++) {
+        if (i >= uLampCount) break;
+        vec3 L = uLamps[i].xyz - vPos;
+        float d2 = dot(L, L);
+        float reach = uLamps[i].w;
+        if (d2 > reach * reach) continue;
+        vec3 l = L * inversesqrt(d2);
+        float att = (1.0 - d2 / (reach * reach)) / (1.0 + d2 * 0.35);
+        vec3 h = normalize(l + v);
+        // Wrapped, because a lamp a hand under a ceiling lights the whole
+        // ceiling at a grazing angle, and a plain cosine there is every
+        // grain of the map lit on one side: gravel, not concrete.
+        float nl = max(dot(nm, l) * 0.7 + 0.3, 0.0);
+        float fres = f0 + (1.0 - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
+        float spec = ggx(max(dot(nm, h), 0.0), a) * fres / (4.0 * nv + 0.5);
+        lit += vec3(1.0, 0.86, 0.66) * 2.2 * att * (nl + spec * nl);
+      }
+      colour = albedo * (lit + vec3(0.09, 0.08, 0.07) * ao) + glow;
+    } else {
+      vec3 l = normalize(uSun);
+      vec3 h = normalize(l + v);
+      float nl = max(dot(nm, l), 0.0);
+      float nh = max(dot(nm, h), 0.0);
+      float fres = f0 + (1.0 - f0) * pow(1.0 - max(dot(h, v), 0.0), 5.0);
+      float spec = ggx(nh, a) * fres / (4.0 * nv + 0.5);
+      vec3 sunColour = vec3(1.0, 0.96, 0.9) * 3.2;
+      float skyish = 0.5 + 0.5 * dot(nm, up);
+      vec3 fill = mix(vec3(0.10, 0.09, 0.08), vec3(0.20, 0.23, 0.28), skyish);
+      colour = albedo * (sunColour * nl + fill * ao) + sunColour * spec * nl + glow;
+    }
     gl_FragColor = vec4(colour, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -374,6 +421,8 @@ export async function terrainMaterial(renderer) {
     uRockFlat: { value: new THREE.Color(0.30, 0.28, 0.27) }, uSandFlat: { value: new THREE.Color(0.78, 0.66, 0.45) },
     uGrassFlat: { value: new THREE.Color(0.25, 0.4, 0.14) }, uSnowFlat: { value: new THREE.Color(0.86, 0.90, 0.95) },
     uConcFlat: { value: new THREE.Color(0.6, 0.6, 0.58) },
+    uLamps: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4(0, 0, 0, 0)) },
+    uLampCount: { value: 0 },
   };
   const blank = new THREE.DataTexture(new Uint8Array([255, 220, 0, 255]), 1, 1); blank.needsUpdate = true;
   const textures = {};
@@ -392,6 +441,12 @@ export async function terrainMaterial(renderer) {
   const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: VERT, fragmentShader: FRAG });
   mat.hasTextures = uniforms.uTextured.value > 0.5;
   mat.textures = textures;
+  // Hand the shader its lamps: world position and reach, at most MAX_LAMPS.
+  mat.setLamps = (lamps) => {
+    const n = Math.min(lamps.length, MAX_LAMPS);
+    for (let i = 0; i < n; i++) uniforms.uLamps.value[i].set(lamps[i].x, lamps[i].y, lamps[i].z, lamps[i].w);
+    uniforms.uLampCount.value = n;
+  };
   return mat;
 }
 
@@ -405,6 +460,11 @@ export function dressed(textures, name, extra) {
     m.normalScale = new THREE.Vector2(0.6, 0.6);
   } else { m.color = new THREE.Color(0.6, 0.6, 0.58); m.roughness = 0.85; m.metalness = 0; }
   return m;
+}
+
+// The lamp on a ceiling, as a standard material: it glows and casts nothing.
+export function lampMaterial() {
+  return new THREE.MeshStandardMaterial({ color: 0x2a2620, roughness: 0.4, metalness: 0.1, emissive: 0xffd9a8, emissiveIntensity: 2.4 });
 }
 
 // ------------------------------------------------------------- the scene --
@@ -449,7 +509,7 @@ export function makeScene(canvas) {
   }
   window.addEventListener('resize', resize);
   resize();
-  return { renderer, scene, camera, controls, resize };
+  return { renderer, scene, camera, controls, resize, sun };
 }
 
 // The sea: a sphere at the sea level, glossy and a little transparent, so
@@ -522,6 +582,11 @@ export function viewOrbit(controls, camera) {
 //   resolve(dir, footTop) -> that direction pushed out of anything solid
 //     the body overlaps below footTop, so a wall is slid along rather than
 //     stuck to: the walker never asks "may I", it asks "where do I end up"
+//   ceiling(dir), optional -> the lowest solid above the feet, so a jump
+//     under a floor stops at it
+// A page's ground answers relative to the walker's FEET (`foot`, a radius):
+// the highest support no more than a step above them, which is what lets a
+// walker stand on a floor with another floor over it.
 // which is exactly the line between the two meshers under test.
 export class Walker {
   constructor(camera, canvas, planet, rules) {
@@ -530,6 +595,7 @@ export class Walker {
     this.accel = 28; this.friction = 14; this.jumpV = 5.3; this.gravity = 9.81; this.wade = 1.1;
     this.active = false; this.dir = new THREE.Vector3(0, 1, 0); this.fwd = new THREE.Vector3(1, 0, 0);
     this.pitch = 0; this.h = 0; this.vy = 0; this.vel = new THREE.Vector2(0, 0); this.onGround = true;
+    this.foot = Infinity; this.head = 1.85;
     this.keys = new Set(); this.hint = 0; this.stat = '';
     document.addEventListener('keydown', (e) => { if (!this.active) return; this.keys.add(e.code); if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) e.preventDefault(); });
     document.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -546,6 +612,7 @@ export class Walker {
     this.fwd.copy(heading || new THREE.Vector3(1, 0, 0));
     this.fwd.addScaledVector(this.dir, -this.fwd.dot(this.dir)).normalize();
     this.h = 0; this.vy = 0; this.vel.set(0, 0); this.pitch = -0.05;
+    this.foot = Infinity; this.foot = this.rules.ground(this.dir, this);
     this.canvas.requestPointerLock && this.canvas.requestPointerLock();
   }
   exit() { this.active = false; if (document.pointerLockElement === this.canvas) document.exitPointerLock(); }
@@ -591,12 +658,18 @@ export class Walker {
     this.h += this.vy * dt;
     if (this.h <= 0) { this.h = 0; this.vy = 0; this.onGround = true; } else { this.onGround = false; }
     const ground = this.rules.ground(this.dir, this);
+    if (this.rules.ceiling) {
+      const c = this.rules.ceiling(this.dir, this);
+      const room = c - (ground + this.h + this.head);
+      if (room < 0) { this.h = Math.max(0, this.h + room); if (this.vy > 0) this.vy = 0; }
+    }
+    this.foot = ground + this.h;
     const pos = this.dir.clone().multiplyScalar(ground + this.h + this.eye);
     this.camera.position.copy(pos);
     this.camera.up.copy(up);
     const look = pos.clone().addScaledVector(this.fwd, Math.cos(this.pitch)).addScaledVector(up, Math.sin(this.pitch));
     this.camera.lookAt(look);
-    this.stat = `${(ground - this.planet.sea).toFixed(1)} m above the sea, ${Math.hypot(this.vel.x, this.vel.y).toFixed(1)} m/s${this.onGround ? '' : ', airborne'}`;
+    this.stat = `${(ground - this.planet.sea).toFixed(1)} m above the sea, ${Math.hypot(this.vel.x, this.vel.y).toFixed(1)} m/s${this.onGround ? '' : ', airborne'}${this.rules.where ? ', ' + this.rules.where(this.dir, this) : ''}`;
   }
 }
 

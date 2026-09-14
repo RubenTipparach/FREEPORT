@@ -9,7 +9,7 @@
 <div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span></div>
 <aside class="panel">
   <h1>Freeport <span>marching cubes</span></h1>
-  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. Three towns stand on ground the field itself was <b>flattened</b> under, built from a <b>block kit</b>: slabs, wall panels, glass, pillars, parapets and gables placed free on a local grid. Walk it.</p>
+  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. Three towns stand on ground the field itself was <b>flattened</b> under, built from a <b>block kit</b>: slabs, wall panels, glass, pillars, parapets, gables, a doorway on the street, a floor a storey, a flight of stairs along a wall, a lamp on every ceiling. Walk in.</p>
   <div class="hud" id="hud"></div>
   <div class="controls">
     <button id="walk">Walk the port</button>
@@ -23,12 +23,12 @@
     <ul>
       <li>a slope is a slope: you walk up a hill and down to the beach without a step anywhere, and a cliff stops you</li>
       <li>the town's plateau meets the hillside in a smooth skirt, cut by the field rather than laid on it</li>
-      <li>buildings stand plumb on their own patch of a curved world, and their walls stop you cold</li>
+      <li>buildings stand plumb on their own patch of a curved world; walk through the door, up the stairs, floor by floor, in the sun's shadow and the lamps' light</li>
       <li>the shore: wet sand at the water line, and the sea holds you at wading depth</li>
     </ul></div>
 </aside>
 <script type="module">
-import { THREE, Planet, PLANET, planTowns, lotFrame, makeScene, makeSea, terrainMaterial, dressed, viewOrbit, surfaceRadius, hash3, Walker, hud, fmt } from './common.js';
+import { THREE, Planet, PLANET, planTowns, lotFrame, makeScene, makeSea, terrainMaterial, dressed, lampMaterial, viewOrbit, surfaceRadius, hash3, Walker, hud, fmt } from './common.js';
 import { EDGE_TABLE, TRI_TABLE } from './mc_tables.js';
 
 // `march.rs`, transcribed: Bourke's corners and edges, a corner bit set when
@@ -85,53 +85,112 @@ function march(field, corner, cell, n) {
 }
 
 // ------------------------------------------------------------ the block kit --
-// A building is a list of boxes in its own frame (x east, y up, z north,
+// A building is a list of boxes in its own frame (x east, y up, z SOUTH,
 // origin at the middle of its footprint on the ground), each box in one of
-// four materials. Boxes rather than a modelled facade because a kit is what
-// a game ships: a slab, a panel, a pane, a pillar, a parapet, a gable, each
-// a size and a place, and a building is a plan that names them.
-const STOREY = 3.0;
+// the materials and one of four KINDS the walker reads: a wall stops it, a
+// floor and a step hold it up, a lamp is nothing to it. Boxes rather than a
+// modelled facade because a kit is what a game ships: a slab, a panel, a
+// pane, a pillar, a parapet, a gable, a flight of steps, a lamp, each a size
+// and a place, and a building is a plan that names them. The doorway is on
+// the street side, the floors have a hole over the flight below, the flight
+// runs along the west wall northward and then the east wall southward so the
+// next one is across the room.
+const STOREY = 3.0, WALL = 0.3, SLAB = 0.35, FLOOR = 0.25, DOOR_W = 1.3, DOOR_H = 2.2;
+// Ten risers of 0.3 m up a three metre storey, on 0.3 m treads: a flight is
+// three metres long, and with the stride it stands clear of the wall it fits
+// a five metre lot with a hand's width to spare.
+const RISE = 0.3, RUN = 0.3, STEPS = 10, STAIR_W = 1.0, GAP = 1.3;
 function kit(lot, seed) {
   const boxes = [];
-  const box = (mat, w, h, d, x, y, z, ry) => boxes.push({ mat, size: [w, h, d], pos: [x, y, z], ry: ry || 0 });
+  const box = (mat, kind, w, h, d, x, y, z, ry) => boxes.push({ mat, kind, size: [w, h, d], pos: [x, y, z], ry: ry || 0 });
   const { w, d, storeys } = lot;
   const H = storeys * STOREY;
-  box('concrete', w + 0.6, 0.35, d + 0.6, 0, 0.17, 0);                     // the ground slab
+  const xIn = w / 2 - WALL, zIn = d / 2 - WALL;
+  // The door is east of the middle of the street side, because the flights
+  // hang off the west wall and a door in the middle of a five metre lot
+  // opened onto the bottom of the stair.
+  const doorX = w / 4;
+  box('concrete', 'floor', w + 0.6, SLAB, d + 0.6, 0, SLAB / 2, 0);                    // the ground slab
+  // A flight starts GAP clear of the wall it faces, so a walker can get on
+  // at its bottom step: the first cut started it a step from the wall and
+  // the rail's end and the wall left a body's width between them.
+  const flightZ = (s, j) => (s % 2 === 0 ? zIn - GAP - (j - 0.5) * RUN : -zIn + GAP + (j - 0.5) * RUN);
+  const flightX = (s) => (s % 2 === 0 ? -1 : 1) * (xIn - STAIR_W / 2 - 0.1);
   for (let s = 0; s < storeys; s++) {
-    const y0 = 0.35 + s * STOREY;
-    box('concrete', w, STOREY, 0.3, 0, y0 + STOREY / 2, d / 2 - 0.15);     // north and south panels
-    box('concrete', w, STOREY, 0.3, 0, y0 + STOREY / 2, -d / 2 + 0.15);
-    box('concrete', 0.3, STOREY, d, w / 2 - 0.15, y0 + STOREY / 2, 0);      // east and west panels
-    box('concrete', 0.3, STOREY, d, -w / 2 + 0.15, y0 + STOREY / 2, 0);
-    box('trim', w + 0.5, 0.25, d + 0.5, 0, y0 + STOREY - 0.12, 0);          // the floor line
-    // Panes: one every 2.2 m along each long side, lit or dark off a hash.
+    const ys = SLAB + s * STOREY;
+    box('concrete', 'wall', w, STOREY, WALL, 0, ys + STOREY / 2, -d / 2 + WALL / 2);     // north
+    if (s === 0) {
+      const west = doorX - DOOR_W / 2 + w / 2, east = w / 2 - doorX - DOOR_W / 2;
+      box('concrete', 'wall', west, STOREY, WALL, -w / 2 + west / 2, ys + STOREY / 2, d / 2 - WALL / 2);
+      box('concrete', 'wall', east, STOREY, WALL, w / 2 - east / 2, ys + STOREY / 2, d / 2 - WALL / 2);
+      box('concrete', 'wall', DOOR_W, STOREY - DOOR_H, WALL, doorX, ys + DOOR_H + (STOREY - DOOR_H) / 2, d / 2 - WALL / 2);   // the lintel
+      box('trim', 'wall', 0.18, DOOR_H, WALL + 0.1, doorX - DOOR_W / 2 - 0.09, ys + DOOR_H / 2, d / 2 - WALL / 2);          // the jambs
+      box('trim', 'wall', 0.18, DOOR_H, WALL + 0.1, doorX + DOOR_W / 2 + 0.09, ys + DOOR_H / 2, d / 2 - WALL / 2);
+    } else {
+      box('concrete', 'wall', w, STOREY, WALL, 0, ys + STOREY / 2, d / 2 - WALL / 2);    // south
+    }
+    box('concrete', 'wall', WALL, STOREY, d, w / 2 - WALL / 2, ys + STOREY / 2, 0);      // east and west
+    box('concrete', 'wall', WALL, STOREY, d, -w / 2 + WALL / 2, ys + STOREY / 2, 0);
+    // The floor line, outside: four bars round the walls and not a slab the
+    // size of the lot, which filled the stairwell at head height and, as a
+    // collider, shoved a climber out through the west wall at the fourth step.
+    const yl = ys + STOREY - 0.12;
+    box('trim', 'deco', w + 0.5, 0.25, 0.25, 0, yl, d / 2 + 0.12); box('trim', 'deco', w + 0.5, 0.25, 0.25, 0, yl, -d / 2 - 0.12);
+    box('trim', 'deco', 0.25, 0.25, d + 0.5, w / 2 + 0.12, yl, 0); box('trim', 'deco', 0.25, 0.25, d + 0.5, -w / 2 - 0.12, yl, 0);
+    // Panes: one every 2.2 m along each side, lit or dark off a hash.
     for (const [side, len, sx, sz] of [[0, w, 0, 1], [1, w, 0, -1], [2, d, 1, 0], [3, d, -1, 0]]) {
       const count = Math.max(1, Math.floor((len - 1.2) / 2.2));
       for (let i = 0; i < count; i++) {
         const along = (i + 0.5) / count * (len - 1.2) - (len - 1.2) / 2;
+        if (s === 0 && side === 0 && Math.abs(along - doorX) < DOOR_W / 2 + 0.7) continue;      // not over the door
         const lit = hash3(lot.id, s * 4 + side, i, seed) > 0.42 && s > 0 || (s === 0 && hash3(lot.id, 99, i, seed) > 0.7);
         const mat = lit ? 'lit' : 'glass';
-        if (side < 2) box(mat, 1.3, 1.4, 0.12, along, y0 + STOREY * 0.55, sz * (d / 2 + 0.02));
-        else box(mat, 0.12, 1.4, 1.3, sx * (w / 2 + 0.02), y0 + STOREY * 0.55, along);
+        if (side < 2) box(mat, 'wall', 1.3, 1.4, 0.12, along, ys + STOREY * 0.55, sz * (d / 2 + 0.02));
+        else box(mat, 'wall', 0.12, 1.4, 1.3, sx * (w / 2 + 0.02), ys + STOREY * 0.55, along);
       }
     }
+    // The floor of this storey, with a hole over the flight up from below:
+    // from a little short of the third step, which is the first whose
+    // climber's head would meet the slab, to the far edge of the top step
+    // and not a centimetre past it, or the flight tops out over a drop.
+    if (s > 0) {
+      const below = s - 1, west = below % 2 === 0, sgn = west ? 1 : -1;
+      const hx0 = west ? -xIn : xIn - STAIR_W - 0.5, hx1 = west ? -xIn + STAIR_W + 0.5 : xIn;
+      const zA = flightZ(below, 3) + sgn * (RUN / 2 + 0.35), zB = flightZ(below, STEPS) - sgn * RUN / 2;
+      const hz0 = Math.min(zA, zB), hz1 = Math.max(zA, zB);
+      const y = ys - FLOOR / 2;
+      const mainX0 = west ? hx1 : -xIn, mainX1 = west ? xIn : hx0;
+      box('concrete', 'floor', mainX1 - mainX0, FLOOR, 2 * zIn, (mainX0 + mainX1) / 2, y, 0);
+      if (hz0 > -zIn) box('concrete', 'floor', hx1 - hx0, FLOOR, hz0 + zIn, (hx0 + hx1) / 2, y, (-zIn + hz0) / 2);
+      if (hz1 < zIn) box('concrete', 'floor', hx1 - hx0, FLOOR, zIn - hz1, (hx0 + hx1) / 2, y, (hz1 + zIn) / 2);
+    }
+    // The flight up to the next floor.
+    if (s < storeys - 1) {
+      for (let j = 1; j <= STEPS; j++) box('trim', 'step', STAIR_W, j * RISE, RUN, flightX(s), ys + j * RISE / 2, flightZ(s, j));
+      // A handrail on the open side, from the third step up: the two low
+      // steps are climbable from the side, and a rail down to the floor is
+      // a wall a walker has to go round the end of to get on.
+      box('trim', 'wall', 0.08, 1.0, (STEPS - 2) * RUN, flightX(s) + (s % 2 === 0 ? STAIR_W / 2 : -STAIR_W / 2), ys + STOREY / 2 + 0.2, flightZ(s, (STEPS + 3) / 2));
+    }
+    // The lamp under the ceiling.
+    box('lamp', 'lamp', 0.7, 0.08, 0.7, 0, ys + STOREY - FLOOR - 0.06, 0);
   }
-  for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) box('trim', 0.45, H + 0.5, 0.45, x * (w / 2 - 0.1), 0.35 + (H + 0.5) / 2 - 0.2, z * (d / 2 - 0.1)); // the pillars
-  box('trim', 1.2, 2.2, 0.2, 0, 0.35 + 1.1, d / 2 + 0.06);                   // the door
+  for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) box('trim', 'wall', 0.45, H + 0.5, 0.45, x * (w / 2 - 0.1), 0.35 + (H + 0.5) / 2 - 0.2, z * (d / 2 - 0.1)); // the pillars
   if (lot.kind === 'gable') {
     const rise = w * 0.32;
     const slant = Math.hypot(w / 2, rise), ang = Math.atan2(rise, w / 2);
-    box('roof', slant + 0.4, 0.22, d + 0.8, -w / 4, 0.35 + H + rise / 2, 0, ang);
-    box('roof', slant + 0.4, 0.22, d + 0.8, w / 4, 0.35 + H + rise / 2, 0, -ang);
-    box('concrete', w - 0.3, rise, 0.25, 0, 0.35 + H + rise / 2 - 0.05, d / 2 - 0.2);   // the gable ends, plain
-    box('concrete', w - 0.3, rise, 0.25, 0, 0.35 + H + rise / 2 - 0.05, -d / 2 + 0.2);
+    box('roof', 'roof', slant + 0.4, 0.22, d + 0.8, -w / 4, 0.35 + H + rise / 2, 0, ang);
+    box('roof', 'roof', slant + 0.4, 0.22, d + 0.8, w / 4, 0.35 + H + rise / 2, 0, -ang);
+    box('concrete', 'wall', w - 0.3, rise, 0.25, 0, 0.35 + H + rise / 2 - 0.05, d / 2 - 0.2);   // the gable ends, plain
+    box('concrete', 'wall', w - 0.3, rise, 0.25, 0, 0.35 + H + rise / 2 - 0.05, -d / 2 + 0.2);
+    box('concrete', 'roof', w - 0.4, FLOOR, d - 0.4, 0, 0.35 + H - FLOOR / 2, 0);            // the top ceiling
   } else {
-    box('roof', w + 0.4, 0.3, d + 0.4, 0, 0.35 + H + 0.15, 0);
-    box('trim', w + 0.5, 0.7, 0.25, 0, 0.35 + H + 0.5, d / 2 + 0.12);       // the parapet
-    box('trim', w + 0.5, 0.7, 0.25, 0, 0.35 + H + 0.5, -d / 2 - 0.12);
-    box('trim', 0.25, 0.7, d + 0.5, w / 2 + 0.12, 0.35 + H + 0.5, 0);
-    box('trim', 0.25, 0.7, d + 0.5, -w / 2 - 0.12, 0.35 + H + 0.5, 0);
-    if (storeys > 2) box('trim', 2.2, 1.6, 2.2, w * 0.2, 0.35 + H + 1.1, -d * 0.15);   // the plant room
+    box('roof', 'roof', w + 0.4, 0.3, d + 0.4, 0, 0.35 + H + 0.15, 0);
+    box('trim', 'wall', w + 0.5, 0.7, 0.25, 0, 0.35 + H + 0.5, d / 2 + 0.12);       // the parapet
+    box('trim', 'wall', w + 0.5, 0.7, 0.25, 0, 0.35 + H + 0.5, -d / 2 - 0.12);
+    box('trim', 'wall', 0.25, 0.7, d + 0.5, w / 2 + 0.12, 0.35 + H + 0.5, 0);
+    box('trim', 'wall', 0.25, 0.7, d + 0.5, -w / 2 - 0.12, 0.35 + H + 0.5, 0);
+    if (storeys > 2) box('trim', 'wall', 2.2, 1.6, 2.2, w * 0.2, 0.35 + H + 1.1, -d * 0.15);   // the plant room
   }
   return boxes;
 }
@@ -167,10 +226,11 @@ function mergeBoxes(list) {
   return merged;
 }
 
-// Every town's buildings and streets as world geometry, and the box
-// colliders the walker runs into: one per building, in the lot's own frame.
+// Every town's buildings and streets as world geometry, every box of every
+// building as a collider in its lot's frame (x east, y up, z south), and a
+// lamp's position per storey for the lights.
 function buildTowns(planet, towns, seed) {
-  const list = [], colliders = [];
+  const list = [], colliders = [], lamps = [];
   let id = 0, count = 0;
   for (const town of towns) {
     for (const lot of town.lots) {
@@ -180,12 +240,16 @@ function buildTowns(planet, towns, seed) {
       // frame is what keeps a box's faces winding outward. The first cut
       // used north and every building drew inside out, black but for its
       // windows.
-      const m = new THREE.Matrix4().makeBasis(f.east, f.up, f.north.clone().negate()).setPosition(f.dir.clone().multiplyScalar(f.base));
+      const south = f.north.clone().negate();
+      const m = new THREE.Matrix4().makeBasis(f.east, f.up, south).setPosition(f.dir.clone().multiplyScalar(f.base));
+      const boxes = [];
       for (const b of kit(lot, seed)) {
         const local = new THREE.Matrix4().makeRotationZ(b.ry).setPosition(b.pos[0], b.pos[1], b.pos[2]);
         list.push({ mat: b.mat, size: b.size, matrix: m.clone().multiply(local) });
+        if (b.kind === 'lamp') lamps.push({ town, pos: new THREE.Vector3(b.pos[0], b.pos[1] - 0.3, b.pos[2]).applyMatrix4(m) });
+        else if (b.kind !== 'deco') boxes.push({ kind: b.kind, x: b.pos[0], y: b.pos[1], z: b.pos[2], hw: Math.abs(Math.cos(b.ry)) * b.size[0] / 2 + Math.abs(Math.sin(b.ry)) * b.size[1] / 2, hh: Math.abs(Math.cos(b.ry)) * b.size[1] / 2 + Math.abs(Math.sin(b.ry)) * b.size[0] / 2, hd: b.size[2] / 2 });
       }
-      colliders.push({ dir: f.dir, east: f.east, north: f.north, hw: lot.w / 2 + 0.3, hd: lot.d / 2 + 0.3, top: f.base + lot.storeys * STOREY + 0.4 });
+      colliders.push({ id: lot.id, dir: f.dir, east: f.east, south, base: f.base, hw: lot.w / 2 + 1.2, hd: lot.d / 2 + 1.2, boxes });
       count++;
     }
     // A street is laid in short pieces, each on its own patch of the sphere:
@@ -209,11 +273,21 @@ function buildTowns(planet, towns, seed) {
       }
     }
   }
-  return { geometries: mergeBoxes(list), colliders, buildings: count };
+  return { geometries: mergeBoxes(list), colliders, lamps, buildings: count };
 }
 
 const canvas = document.getElementById('c');
-const { renderer, scene, camera, controls } = makeScene(canvas);
+const { renderer, scene, camera, controls, sun } = makeScene(canvas);
+// The sun casts shadows over the port, which is what makes the inside of a
+// building dark: a room is a room because the walls are between it and the
+// sky. The shadow camera is fitted to the port and nothing else, because a
+// map that covered the planet would have no pixels left for a doorway.
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
+const sunTarget = new THREE.Object3D(); scene.add(sunTarget); sun.target = sunTarget;
 const material = await terrainMaterial(renderer);
 const materials = {
   concrete: dressed(material.textures, 'concrete'),
@@ -222,32 +296,78 @@ const materials = {
   street: dressed(material.textures, 'concrete', { color: 0x4a4b4a }),
   glass: new THREE.MeshStandardMaterial({ color: 0x0b1319, roughness: 0.15, metalness: 0.7 }),
   lit: new THREE.MeshStandardMaterial({ color: 0x1a1a14, roughness: 0.2, metalness: 0.2, emissive: 0xffc070, emissiveIntensity: 1.5 }),
+  lamp: lampMaterial(),
 };
 let seed = PLANET.seed, planet = null, towns = null, colliders = [];
-let meshes = [], stats = {};
+let meshes = [], lights = [], stats = {};
 const sea = makeSea(new Planet(PLANET)); scene.add(sea);
 
-// The walker's ground is the field's own first crossing; a building is a box
-// the body is pushed out of along whichever face it has come in least by,
-// which is what lets it slide along a wall; a cliff is the step rule.
+// On foot the ground is the field's own first crossing, or the highest
+// floor, step or roof of a building no more than a step above the feet;
+// the ceiling is the lowest box above the feet; and a wall is any box
+// between knee and head, which the body is pushed out of along the face it
+// came in least by, so it slides. A step is a wall from the front and a
+// floor from above, which is what a step is.
+const SPAN = 30;   // metres round a lot inside which its boxes are looked at
+function near(to, foot) {
+  const R = planet.radius, out = [];
+  for (const c of colliders) {
+    if (c.dir.dot(to) < Math.cos(SPAN / R)) continue;
+    const rel = to.clone().sub(c.dir).multiplyScalar(R);
+    const x = rel.dot(c.east), z = rel.dot(c.south);
+    if (Math.abs(x) > c.hw || Math.abs(z) > c.hd) continue;
+    out.push({ c, x, z, y: foot - c.base });
+  }
+  return out;
+}
 const walker = new Walker(camera, canvas, new Planet(PLANET), {
-  ground: (dir) => surfaceRadius(planet, dir),
+  ground: (dir, w) => {
+    let best = surfaceRadius(planet, dir);
+    for (const { c, x, z } of near(dir, w.foot)) {
+      for (const b of c.boxes) {
+        if (b.kind === 'wall' || Math.abs(x - b.x) > b.hw || Math.abs(z - b.z) > b.hd) continue;
+        const top = c.base + b.y + b.hh;
+        if (top <= w.foot + w.step + 0.01 && top > best) best = top;
+      }
+    }
+    return best;
+  },
+  ceiling: (dir, w) => {
+    let ceil = Infinity;
+    for (const { c, x, z } of near(dir, w.foot)) {
+      for (const b of c.boxes) {
+        if (Math.abs(x - b.x) > b.hw || Math.abs(z - b.z) > b.hd) continue;
+        const bottom = c.base + b.y - b.hh;
+        if (bottom > w.foot + 0.2 && bottom < ceil) ceil = bottom;
+      }
+    }
+    return ceil;
+  },
   resolve: (to, footTop, w) => {
     const R = planet.radius;
     let d = to.clone();
     for (let pass = 0; pass < 2; pass++) {
-      for (const c of colliders) {
-        if (c.dir.dot(d) < Math.cos(24 / R)) continue;
-        if (footTop > c.top) continue;
-        const rel = d.clone().sub(c.dir).multiplyScalar(R);
-        const x = rel.dot(c.east), z = rel.dot(c.north);
-        const px = c.hw + w.radius - Math.abs(x), pz = c.hd + w.radius - Math.abs(z);
-        if (px <= 0 || pz <= 0) continue;
-        if (px < pz) d.addScaledVector(c.east, Math.sign(x || 1) * px / R); else d.addScaledVector(c.north, Math.sign(z || 1) * pz / R);
-        d.normalize();
+      for (const { c, x, z } of near(d, w.foot)) {
+        for (const b of c.boxes) {
+          const bottom = c.base + b.y - b.hh, top = c.base + b.y + b.hh;
+          // The same centimetre of slack the ground query gives: two risers
+          // are exactly a step, and without it the second step up was a
+          // wall on the frames the sum rounded up.
+          if (top <= footTop + 0.01 || bottom >= w.foot + w.head) continue;
+          const px = b.hw + w.radius - Math.abs(x - b.x), pz = b.hd + w.radius - Math.abs(z - b.z);
+          if (px <= 0 || pz <= 0) continue;
+          if (px < pz) d.addScaledVector(c.east, Math.sign(x - b.x || 1) * px / R); else d.addScaledVector(c.south, Math.sign(z - b.z || 1) * pz / R);
+          d.normalize();
+        }
       }
     }
     return d;
+  },
+  where: (dir, w) => {
+    for (const { c, x, z } of near(dir, w.foot)) {
+      if (Math.abs(x) < c.hw - 1.2 && Math.abs(z) < c.hd - 1.2) return `inside building ${c.id + 1}, floor ${Math.max(0, Math.round((w.foot - c.base - SLAB) / STOREY))}`;
+    }
+    return 'outside';
   },
 });
 
@@ -270,11 +390,25 @@ function rebuild() {
     colliders = city.colliders;
     const tCity = performance.now() - t2;
     for (const m of meshes) { scene.remove(m); m.geometry.dispose(); }
+    for (const l of lights) scene.remove(l);
     meshes = [new THREE.Mesh(built.geometry, material)];
     let cityTris = 0;
-    for (const [mat, g] of Object.entries(city.geometries)) { meshes.push(new THREE.Mesh(g, materials[mat])); cityTris += g.index.count / 3; }
+    for (const [mat, g] of Object.entries(city.geometries)) {
+      const m = new THREE.Mesh(g, materials[mat]);
+      if (mat !== 'lamp' && mat !== 'glass' && mat !== 'lit') { m.castShadow = true; m.receiveShadow = true; }
+      meshes.push(m); cityTris += g.index.count / 3;
+    }
     for (const m of meshes) scene.add(m);
-    stats = { n, cell, tMarch, tCity, tTowns, cityTris, buildings: city.buildings, ...built };
+    // A point light per lamp in the PORT: a standard material pays for every
+    // light in every fragment, so the other towns keep their glowing lamps
+    // and no light, and the port is where the walker starts.
+    lights = city.lamps.filter((l) => l.town === towns[0]).map((l) => { const p = new THREE.PointLight(0xffcf9a, 14, 9, 2); p.position.copy(l.pos); return p; });
+    for (const l of lights) scene.add(l);
+    const port = towns[0], centre = port.dir.clone().multiplyScalar(planet.radius + port.h);
+    sunTarget.position.copy(centre);
+    sun.position.copy(centre).addScaledVector(sun.position.clone().normalize(), 220);
+    const sc = sun.shadow.camera; sc.left = -44; sc.right = 44; sc.top = 44; sc.bottom = -44; sc.near = 100; sc.far = 340; sc.updateProjectionMatrix();
+    stats = { n, cell, tMarch, tCity, tTowns, cityTris, buildings: city.buildings, lights: lights.length, lamps: city.lamps.length, ...built };
     busy.hidden = true;
     say();
   }, 20));
@@ -285,6 +419,7 @@ function say() {
     ['seed', seed], ['lattice', `${stats.n}³ cells of ${stats.cell.toFixed(2)} m`],
     ['terrain', `${fmt(stats.triangles)} triangles, ${stats.tMarch.toFixed(0)} ms`],
     ['towns', `${towns.length}, ${stats.buildings} buildings, ${fmt(stats.cityTris)} triangles`],
+    ['inside', `${stats.lamps} lamps, ${stats.lights} of them lights, sun shadows over the port`],
     ['planned in', `${stats.tTowns.toFixed(0)} ms, built in ${stats.tCity.toFixed(0)} ms`],
     ['textures', material.hasTextures ? 'Material Maker bakes' : 'not found, flat colours'],
   ]);
