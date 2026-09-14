@@ -237,9 +237,10 @@ the two levels below is the whole of it.
    retired it before the streamer existed.
 2. **The impostor tier.** Past the streaming radius a body is tenebris's
    baked equirect on an icosphere, lit per body from its own star.
-3. **Materials on the field.** Triplanar, blended by slope and height off the
-   Material Maker sets, which `docs/mockups/common.js` already does in GLSL
-   and the WGSL transcribes.
+3. **The rest of the materials.** The sets are on the field in the harness
+   (the section on the sets below); what is left is the sand band by height
+   once there is a sea, concrete panels in a building's own frame rather
+   than the planet's, and mipmaps for the array textures.
 
 ## A town is where a mesher is judged, and the walker is the judge
 
@@ -629,17 +630,69 @@ mesh is closed by construction. The rules that make that hold:
   plane to two millimetres, which is what dual contouring is for.
 
 `freeport_app` draws it: a 40 m planetoid on 96 cells of a metre, a site of
-fine cells at a quarter under a pad, a wall and a step, coarse vertices in
-sand and fine in blue so a seam polygon blends the two, a fly camera (click
+fine cells at a quarter under a pad, a wall and a step, a fly camera (click
 takes the mouse, Escape gives it back, WASD and Q E, Shift, Tab for the
-wireframe) and `--shot out.png` for a picture taken headless under Xvfb and
-lavapipe, which is how the join was looked at here from the owner's angle
-before anybody flew round it. Vertices are split per triangle for Bevy, and
-a corner whose smooth normal disagrees with its triangle's face by more than
-a crease takes the face's, so a box is shaded flat on each face, the ground
-stays round, and where the ground meets a wall only the corner on the crease
-changes. A first cut flattened the whole triangle and the shading jumped
-along every crease.
+wireframe, `--fly` to start in the air) and `--shot out.png` for a picture
+taken headless under Xvfb and lavapipe, which is how the join was looked at
+here from the owner's angle before anybody flew round it; the first cut
+coloured coarse vertices sand and fine ones blue so a seam polygon blended
+the two, and those pictures are the design page's. Vertices are split per
+triangle for Bevy, and a corner whose smooth normal disagrees with its
+triangle's face by more than a crease takes the face's, so a box is shaded
+flat on each face, the ground stays round, and where the ground meets a
+wall only the corner on the crease changes. A first cut flattened the whole
+triangle and the shading jumped along every crease.
+
+## The sets on the field, and the walker on it, in Bevy
+
+**A triangle is made of what the field says a hand inside its middle.**
+`Density::material` answers `TERRAIN` or `CONCRETE` at a point, `Built`
+says concrete wherever a block's density beats the ground's (the deepest
+solid, the mockup's rule), and `dc.rs` asks it half a fine cell inside every
+triangle's middle (`HAND`) and carries the answer per triangle; the built
+planet test holds the slab's top concrete and the ground terrain. The app
+puts it in the vertex colour's red, every corner of the triangle the same,
+so no driver's choice of provoking vertex can change it, which is the
+mockup's hatched walls not happening twice.
+
+**The shader is the mockup's, transcribed.** `terrain.wgsl` is an
+extension on Bevy's standard material: `tri` and `triN` line for line
+(three planes weighted by the normal's fourth power, a normal map read on
+each and turned into the world), rock on the steep and grass on the flat
+by the same smoothstep, concrete where the triangle says so, and Bevy's
+own PBR lighting after. Every sample is taken whatever the material and
+blended by weight, because a texture sample under a branch is not in
+uniform control flow and the compiler refuses it; the mockup's GLSL was
+allowed the branch. The sets are three array textures, a layer a set,
+which is the mockup's answer to a real GPU's sixteen samplers, decoded
+straight off the checkout at startup (`terrain.rs`; `FREEPORT_ASSETS` or
+the checkout the binary was built from), and a missing map is a flat layer
+with a warning so the harness runs anywhere. Every coordinate the shader
+reasons in is planet local, from a centre it is handed.
+
+**The walker is the mockup's, in the core.** `walker.rs` is the `Walker`
+class and the marched page's three rules ported number for number: an eye
+at 1.7 m, a body of 35 cm, a step of 60 cm, a head at 1.85 m, five metres
+a second walking and eight and a half running, a jump at 5.3 m/s that
+clears a metre; `ground` (the highest solid no more than a step over the
+feet, else the first solid going down, else the first crossing from space
+when the feet are not yet known), `ceiling`, `resolve` (a ring of twelve
+points at three heights pushed out along the field's gradient, sideways
+only, three passes) and `can_stand` (fifty degrees, unless it tops out
+within a step two body widths on). The field it walks is the same `Built`
+the mesher contoured, so the picture is the collider. The harness is
+`walk.rs`: WASD, Shift, Space, the mouse, F to swap with the fly camera
+from wherever it is, and a line of text saying where the feet are and what
+they stand on. Four walks are the tests: two seconds on a ball walks 8 to
+10 m and running further; a jump peaks between 1.0 and 1.6 m and lands
+inside 1.3 s; a 0.4 m kerb is walked up and a 1.2 m wall stops the body
+its own radius short; a wall walked into diagonally is slid along, and a
+lintel a stride ahead holds a jump under it to 0.6 m. One lesson from
+writing them: on a 20 m ball a flat block three metres from the pole stood
+0.22 m higher than the curving ground, so a 0.4 kerb was a 0.63 wall and a
+wall's far end stood clear of the ground; the test ball is two kilometres,
+and a real block on a planet is built plumb on its own patch, which is the
+mockup's lot frame and the streets in pieces again.
 
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
@@ -724,7 +777,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 35, the core
+cargo test -p freeport_core                       # 39, the core
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -732,8 +785,8 @@ tools/bake_materials.sh --check                   # the maps match their graphs
 python3 tools/bundle_buildings.py --check         # the mockup's recipes match assets/buildings
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
-./target/release/freeport_app                     # a window: the planetoid, a pad, a wall and a step on the fine level, a fly camera, Tab for wire
-./target/release/freeport_app --sub 6 --wire --eye 9.5,41.6,0.5 --look 0,40.6,0 --shot join.png   # a picture, headless under xvfb-run with VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+./target/release/freeport_app                     # a window: on foot at the site, the pad, the wall and the step in the baked sets; F flies, Tab wires, Esc frees the mouse
+./target/release/freeport_app --fly --sub 6 --wire --eye 9.5,41.6,0.5 --look 0,40.6,0 --shot join.png   # a picture, headless under xvfb-run with VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
 ```
 
 The mockups are `docs/mockups/marching-cubes.html` and
@@ -758,15 +811,21 @@ correctness and A/B only.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 35 tests in 0.27 s. A 6 m sphere on a 32^3 lattice at half
+- `freeport_core`: 39 tests in 0.27 s. A 6 m sphere on a 32^3 lattice at half
   a metre marches to 5,288 triangles, a closed shell within 3% of the
   sphere's area, and dual contours to one at both one level and two.
-- The harness's planetoid, in release: 96^3 cells of a metre, 1,272 of them
-  subdivided four ways under the site and none grown, 1,838 chunks with
-  triangles in them, 69,300 triangles of which 226 polygons are seams,
-  contoured in 780 ms of which 208 is the coarse samples, audited in 135 ms:
+- The harness's planetoid, in release: 96^3 cells of a metre, 1,283 of them
+  subdivided four ways under the site and 2 grown, 1,835 chunks with
+  triangles in them, 69,682 triangles of which 248 polygons are seams,
+  contoured in 836 ms of which 208 is the coarse samples, audited in 142 ms:
   nought open edges, nought pinches, nought facing in, nought missing
-  corners, 21,154 m^2 of surface.
+  corners, 21,154 m^2 of surface; the three sets decoded and stacked at
+  startup, 1024 a side, three layers each.
+- The walker, headless in the core, on a 2 km ball: 8 to 10 m in two
+  seconds walking and over 14 running, a jump to between 1.0 and 1.6 m
+  landing inside 1.3 s, a 0.4 m kerb climbed, a 1.2 m wall stopping the
+  body 35 cm short, a diagonal walk sliding over 4 m along it, and a jump
+  under a lintel held to under 0.6 m.
 - The mockup's join, measured at every fine crossing on it: 622 of 6,542
   with the fine surface over a centimetre above the coarse, 139 with the
   coarse above the fine, by up to 7.5 cm; a pad on a slope makes those 850,

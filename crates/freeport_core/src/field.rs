@@ -17,7 +17,19 @@ use glam::DVec3;
 pub trait Density {
     /// The density at `p`, in the field's own frame, in metres.
     fn at(&self, p: DVec3) -> f64;
+
+    /// What the rock at `p` is made of: `TERRAIN` unless something built is
+    /// the deepest solid there, which is how a mesher names a triangle.
+    fn material(&self, _p: DVec3) -> u8 {
+        TERRAIN
+    }
 }
+
+/// The ground, whatever the planet is made of; the shader picks rock,
+/// grass or sand by slope and height.
+pub const TERRAIN: u8 = 0;
+/// Poured concrete: what a block is made of.
+pub const CONCRETE: u8 = 1;
 
 /// A ball of rock and nothing else.
 pub struct Sphere {
@@ -125,6 +137,18 @@ impl Density for Built<'_> {
             d = d.max(b.at(p));
         }
         d
+    }
+
+    /// The deepest solid at `p`: a block whose density beats the ground's
+    /// is what the rock there is made of, so a slab poured into a hillside
+    /// meets the rock on a line and never as a blend.
+    fn material(&self, p: DVec3) -> u8 {
+        let ground = self.ground.at(p);
+        if self.blocks.iter().any(|b| b.at(p) > ground) {
+            CONCRETE
+        } else {
+            TERRAIN
+        }
     }
 }
 
@@ -314,6 +338,9 @@ mod tests {
         };
         assert_eq!(built.at(b.centre), 0.5);
         assert_eq!(built.at(DVec3::ZERO), 1.0);
+        assert_eq!(built.material(b.centre), CONCRETE);
+        assert_eq!(built.material(DVec3::ZERO), TERRAIN);
+        assert_eq!(ground.material(DVec3::ZERO), TERRAIN);
     }
 
     #[test]

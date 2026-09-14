@@ -1,27 +1,30 @@
 //! freeport_app: the Bevy harness. It draws what `freeport_core` says.
 //!
-//! A planetoid dual contoured on the two level lattice, with a slab and a
-//! wall built on its top on the fine level, drawn a chunk a mesh with the
-//! coarse and the fine vertices in two colours so the seam between them can
-//! be looked at. A fly camera, a wireframe toggle, and a screenshot flag so
-//! the picture can be taken headless under Xvfb and lavapipe, which is how
-//! the join was checked here before anybody flew round it. The floating
-//! origin, the streamer, the ship and the walker arrive in the stages
+//! A planetoid dual contoured on the two level lattice, with a pad, a wall
+//! and a step built on its top on the fine level, wearing the baked sets
+//! (`terrain.rs`), with the core's walker on it (`walk.rs`) and a fly
+//! camera for looking at the join, a wireframe toggle, and a screenshot
+//! flag so a picture can be taken headless under Xvfb and lavapipe. The
+//! floating origin, the streamer and the ship arrive in the stages
 //! `CLAUDE.md` lays out, each behind its own mockup.
 //!
 //! ```text
-//! freeport_app [--sub N] [--wire] [--eye x,y,z] [--look x,y,z]
+//! freeport_app [--sub N] [--wire] [--fly] [--eye x,y,z] [--look x,y,z]
 //!              [--shot out.png] [--frames N]
 //! ```
 //!
-//! On foot: left click takes the mouse, Escape gives it back, WASD and Q E
-//! fly, Shift is faster, Tab toggles the wireframe.
+//! Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
+//! runs, Space jumps. Flying: WASD and Q E, Shift is faster. F swaps the
+//! two, Tab toggles the wireframe. `--eye` is where to start (on foot, the
+//! spot under it) and `--look` what to face.
 
-use bevy::asset::RenderAssetUsages;
+mod terrain;
+mod walk;
+
 use bevy::camera::Exposure;
+use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::MouseMotion;
 use bevy::math::DVec3;
-use bevy::mesh::PrimitiveTopology;
 use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
@@ -30,7 +33,10 @@ use freeport_core::audit::{audit, Audit};
 use freeport_core::dc::{contour, Coarse, DcMesh};
 use freeport_core::field::{Block, Built, Density, Planet};
 use freeport_core::lattice::{Lattice, CH};
+use freeport_core::walker::{Bounds, Walker};
 use std::time::Instant;
+use terrain::{terrain_material, to_mesh, TerrainMaterial, TerrainPlugin};
+use walk::{place_camera, toggle_walk, walk, OnFoot, Stat};
 
 /// The planetoid the harness shows: its radius and the lattice it is
 /// contoured on. A metre a cell over 96 cells holds a 40 m ball with room
@@ -45,17 +51,18 @@ const SITE_REACH: f64 = 6.0;
 /// a face that does puts its crease on a lattice edge and the cells either
 /// side of it solve to one point, which the core's audit counts as a pinch.
 const SNAP: f64 = 0.5;
-
-/// The coarse and the fine level's vertex colours, so a seam polygon, whose
-/// corners are cells of both sizes, blends the two.
-const COARSE_COLOUR: [f32; 4] = [0.70, 0.60, 0.40, 1.0];
-const FINE_COLOUR: [f32; 4] = [0.42, 0.52, 0.66, 1.0];
+/// Radians of look per pixel of mouse.
+pub(crate) const LOOK: f32 = 0.0022;
+/// Flying: metres a second, and the factor Shift puts on it.
+const SPEED: f32 = 4.0;
+const SPRINT: f32 = 4.0;
 
 /// What the command line asked for.
 #[derive(Resource, Clone, Debug)]
 struct Args {
     sub: usize,
     wire: bool,
+    fly: bool,
     eye: Option<Vec3>,
     look: Option<Vec3>,
     shot: Option<String>,
@@ -66,6 +73,7 @@ fn parse_args() -> Args {
     let mut args = Args {
         sub: 4,
         wire: false,
+        fly: false,
         eye: None,
         look: None,
         shot: None,
@@ -86,6 +94,7 @@ fn parse_args() -> Args {
                     .clamp(1, 8)
             }
             "--wire" => args.wire = true,
+            "--fly" => args.fly = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),
             "--shot" => args.shot = it.next(),
@@ -100,26 +109,88 @@ fn main() {
     let args = parse_args();
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(WireframePlugin::default())
+        .add_plugins((WireframePlugin::default(), TerrainPlugin))
         .insert_resource(WireframeConfig {
             global: args.wire,
             default_color: Color::srgb(0.1, 0.1, 0.12),
         })
         .insert_resource(args)
         .add_systems(Startup, spawn_world)
-        .add_systems(Update, (grab_mouse, fly, toggle_wireframe, take_shot))
+        .add_systems(
+            Update,
+            (
+                grab_mouse,
+                toggle_walk,
+                walk,
+                fly,
+                toggle_wireframe,
+                take_shot,
+            )
+                .chain(),
+        )
         .run();
 }
 
-/// The camera's heading, kept as angles so a look cannot roll.
-#[derive(Component)]
-struct Fly {
-    yaw: f32,
-    pitch: f32,
+/// What a frame of input is read from: the clock, the keys, the mouse's
+/// motion and whether the window holds it. One thing, so a system that
+/// reads the player is not a system with eight arguments.
+#[derive(SystemParam)]
+pub(crate) struct Controls<'w, 's> {
+    pub time: Res<'w, Time>,
+    pub keys: Res<'w, ButtonInput<KeyCode>>,
+    motion: MessageReader<'w, 's, MouseMotion>,
+    cursor: Query<'w, 's, &'static CursorOptions, With<PrimaryWindow>>,
 }
 
-/// The planet, and the slab and wall on its top.
-fn world(top_of: impl Fn(&Planet) -> f64) -> (Planet, Vec<Block>, f64) {
+impl Controls<'_, '_> {
+    /// This frame's look, radians about the local up and of tilt, from the
+    /// mouse while the window holds it. One event carrying a whole screen
+    /// is a window handing focus back, never a look; it is clamped rather
+    /// than turned twice round.
+    pub fn look(&mut self) -> Vec2 {
+        let taken = self
+            .cursor
+            .single()
+            .map(|c| c.grab_mode == CursorGrabMode::Locked)
+            .unwrap_or(false);
+        let mut look = Vec2::ZERO;
+        for m in self.motion.read() {
+            if taken {
+                look += m.delta.clamp(Vec2::splat(-200.0), Vec2::splat(200.0)) * LOOK;
+            }
+        }
+        look
+    }
+}
+
+/// The fly camera's heading, kept as angles so a look cannot roll.
+#[derive(Component)]
+pub(crate) struct Fly {
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+/// The field the harness stands on: the planet, what is built on it, and
+/// where the walker may look for the ground.
+#[derive(Resource)]
+pub(crate) struct Ground {
+    pub planet: Planet,
+    pub blocks: Vec<Block>,
+    pub bounds: Bounds,
+}
+
+impl Ground {
+    /// The same field the mesher contoured.
+    pub fn field(&self) -> Built<'_> {
+        Built {
+            ground: &self.planet,
+            blocks: self.blocks.clone(),
+        }
+    }
+}
+
+/// The planet, and the pad, the wall and the step on its top.
+fn world() -> Ground {
     let planet = Planet {
         radius: RADIUS,
         relief: 6.0,
@@ -150,7 +221,16 @@ fn world(top_of: impl Fn(&Planet) -> f64) -> (Planet, Vec<Block>, f64) {
             axes: frame,
         },
     ];
-    (planet, blocks, top)
+    let bounds = Bounds {
+        radius: RADIUS,
+        floor: RADIUS - planet.relief * 0.6 - planet.overhang - 2.0,
+        top: RADIUS + planet.relief * 0.6 + planet.overhang + 6.0,
+    };
+    Ground {
+        planet,
+        blocks,
+        bounds,
+    }
 }
 
 /// The height of the ground along +y, by bisection on the field.
@@ -205,63 +285,16 @@ fn build(field: &dyn Density, lat: &Lattice) -> (Vec<(DVec3, DcMesh)>, Audit) {
     (chunks, a)
 }
 
-/// A corner whose normal is further than this from its triangle's face is
-/// shaded on the face's normal, radians: a box's edge, never a slope of
-/// ground.
-const CREASE: f32 = 0.35;
-
-/// The chunk as Bevy draws it. Vertices are split per triangle, and each
-/// corner keeps the smooth normal the field gave it unless that normal
-/// disagrees with the triangle's face by more than a crease, in which case
-/// it takes the face's: a box face is shaded on its own plane and meets the
-/// next on an edge, the ground stays round, and where the ground meets a
-/// wall only the corner on the crease changes, so the shading on either
-/// side of it is continuous.
-fn to_mesh(m: &DcMesh) -> Mesh {
-    let mut positions = Vec::with_capacity(m.indices.len());
-    let mut normals = Vec::with_capacity(m.indices.len());
-    let mut colours = Vec::with_capacity(m.indices.len());
-    for t in m.indices.chunks(3) {
-        let p: Vec<Vec3> = t
-            .iter()
-            .map(|&i| Vec3::from(m.positions[i as usize]))
-            .collect();
-        let face = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or(Vec3::Y);
-        for (k, &i) in t.iter().enumerate() {
-            let n = Vec3::from(m.normals[i as usize]);
-            positions.push(p[k].to_array());
-            normals.push(if n.angle_between(face) > CREASE {
-                face.to_array()
-            } else {
-                n.to_array()
-            });
-            colours.push(if m.levels[i as usize] == 0 {
-                COARSE_COLOUR
-            } else {
-                FINE_COLOUR
-            });
-        }
-    }
-    Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colours)
-}
-
 fn spawn_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<TerrainMaterial>>,
     args: Res<Args>,
 ) {
-    let (planet, blocks, top) = world(top_of);
-    let built = Built {
-        ground: &planet,
-        blocks,
-    };
+    let ground = world();
+    let top = ground.blocks[0].centre.y + 0.5;
+    let built = ground.field();
     let half = CELLS as f64 * CELL * 0.5;
     let offset = 0.5 * CELL / args.sub as f64;
     let mut lat = Lattice::new(DVec3::splat(-half + offset), CELL, args.sub, CELLS);
@@ -270,19 +303,10 @@ fn spawn_world(
     let grown = lat.grow(&built);
     info!(
         "lattice: {}^3 cells of {} m, {} fine under the site at y = {:.2} and {} grown, {} m fine cells",
-        CELLS,
-        CELL,
-        masked,
-        top,
-        grown,
-        lat.fine
+        CELLS, CELL, masked, top, grown, lat.fine
     );
     let (chunks, _) = build(&built, &lat);
-    let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.92,
-        ..default()
-    });
+    let material = terrain_material(&mut images, &mut materials);
     for (corner, m) in &chunks {
         commands.spawn((
             Mesh3d(meshes.add(to_mesh(m))),
@@ -302,24 +326,53 @@ fn spawn_world(
         brightness: 60.0,
         ..default()
     });
-    let eye = args.eye.unwrap_or(Vec3::new(8.0, top as f32 + 3.0, 8.0));
+    commands.spawn((
+        Text::new(""),
+        TextFont {
+            font_size: 15.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.92, 0.9, 0.85)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(12.0),
+            bottom: Val::Px(10.0),
+            ..default()
+        },
+        Stat,
+    ));
+    spawn_camera(&mut commands, &ground, &args, top);
+    commands.insert_resource(ground);
+}
+
+/// The camera, flying from `--eye` toward `--look`, or on foot at the spot
+/// under `--eye` facing `--look`, by default at the site's south edge
+/// looking north at the pad.
+fn spawn_camera(commands: &mut Commands, ground: &Ground, args: &Args, top: f64) {
+    let eye = args.eye.unwrap_or(Vec3::new(0.5, top as f32, -6.5));
     let look = args.look.unwrap_or(Vec3::new(0.0, top as f32 + 0.8, 0.0));
     let d = (look - eye).normalize_or(Vec3::NEG_Z);
     let fly = Fly {
         yaw: (-d.x).atan2(-d.z),
         pitch: d.y.clamp(-1.0, 1.0).asin(),
     };
-    commands.spawn((
-        Camera3d::default(),
-        Exposure { ev100: 10.5 },
-        Transform::from_translation(eye).with_rotation(Quat::from_euler(
-            EulerRot::YXZ,
-            fly.yaw,
-            fly.pitch,
-            0.0,
-        )),
-        fly,
+    let mut tf = Transform::from_translation(eye).with_rotation(Quat::from_euler(
+        EulerRot::YXZ,
+        fly.yaw,
+        fly.pitch,
+        0.0,
     ));
+    if !args.fly {
+        let w = Walker::enter(
+            &ground.field(),
+            &ground.bounds,
+            eye.as_dvec3(),
+            d.as_dvec3(),
+        );
+        place_camera(&w, &mut tf);
+        commands.insert_resource(OnFoot(w));
+    }
+    commands.spawn((Camera3d::default(), Exposure { ev100: 10.5 }, tf, fly));
 }
 
 /// Left click takes the mouse, Escape gives it back.
@@ -341,39 +394,24 @@ fn grab_mouse(
     }
 }
 
-/// Radians of look per pixel of mouse.
-const LOOK: f32 = 0.0022;
-/// Metres a second, and the factor Shift puts on it.
-const SPEED: f32 = 4.0;
-const SPRINT: f32 = 4.0;
-
-/// Fly the camera: the mouse turns it while it is taken, and the keys move
-/// it in its own frame.
+/// Fly the camera while nobody is on foot: the mouse turns it while it is
+/// taken, and the keys move it in its own frame.
 fn fly(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut motion: MessageReader<MouseMotion>,
-    cursor: Query<&CursorOptions, With<PrimaryWindow>>,
+    mut controls: Controls,
+    on_foot: Option<Res<OnFoot>>,
     mut cam: Query<(&mut Transform, &mut Fly)>,
 ) {
+    let look = controls.look();
+    if on_foot.is_some() {
+        return;
+    }
     let Ok((mut tf, mut fly)) = cam.single_mut() else {
         return;
     };
-    let taken = cursor
-        .single()
-        .map(|c| c.grab_mode == CursorGrabMode::Locked)
-        .unwrap_or(false);
-    for m in motion.read() {
-        if !taken {
-            continue;
-        }
-        // One event carrying a whole screen is a window handing focus back,
-        // never a look; clamp it rather than turn twice round.
-        let d = m.delta.clamp(Vec2::splat(-200.0), Vec2::splat(200.0));
-        fly.yaw -= d.x * LOOK;
-        fly.pitch = (fly.pitch - d.y * LOOK).clamp(-1.5, 1.5);
-    }
+    fly.yaw -= look.x;
+    fly.pitch = (fly.pitch - look.y).clamp(-1.5, 1.5);
     tf.rotation = Quat::from_euler(EulerRot::YXZ, fly.yaw, fly.pitch, 0.0);
+    let keys = &controls.keys;
     let mut v = Vec3::ZERO;
     let axis =
         |neg: KeyCode, pos: KeyCode| (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f32;
@@ -385,7 +423,7 @@ fn fly(
     } else {
         SPEED
     };
-    let step = v.normalize_or_zero() * speed * time.delta_secs().min(0.1);
+    let step = v.normalize_or_zero() * speed * controls.time.delta_secs().min(0.1);
     if step.is_finite() {
         tf.translation += step;
     }

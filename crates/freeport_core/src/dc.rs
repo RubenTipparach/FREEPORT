@@ -45,6 +45,9 @@ pub struct DcMesh {
     /// Per vertex, the level of the cell that owns it: 0 coarse, 1 fine.
     pub levels: Vec<u8>,
     pub indices: Vec<u32>,
+    /// Per triangle, what it is made of: the field's material a hand inside
+    /// its middle, `field::TERRAIN` or `field::CONCRETE`.
+    pub materials: Vec<u8>,
     /// Polygons whose corners are cells of both levels.
     pub seams: usize,
     /// Corners a polygon wanted from a coarse cell with no vertex at all,
@@ -113,6 +116,11 @@ const FACE_EDGES: [[usize; 4]; 6] = [
 
 /// Bisection steps for a crossing: a cell over four thousand.
 const BISECT: usize = 12;
+
+/// How far inside a triangle's middle its material is read, in fine cells:
+/// a hand, so a thin skin on a thick host reads as the host and a plate
+/// thicker than a cell reads as itself.
+const HAND: f64 = 0.5;
 
 /// For a configuration, the surface each crossed edge is on (-1 if not
 /// crossed): the marching cubes triangles joined where they share an edge.
@@ -580,15 +588,21 @@ impl Chunk<'_> {
         }
     }
 
+    /// One triangle, wound to face out of the rock, made of whatever the
+    /// field says a hand inside its middle: the material rides the triangle
+    /// flat, so concrete meets rock on a line and never as a blend.
     fn triangle(&mut self, a: u32, b: u32, c: u32) {
         let (pa, pb, pc) = (self.world(a), self.world(b), self.world(c));
         let face = (pb - pa).cross(pc - pa);
-        let g = self.gradient((pa + pb + pc) / 3.0);
+        let mid = (pa + pb + pc) / 3.0;
+        let g = self.gradient(mid);
         if face.dot(g) <= 0.0 {
             self.mesh.indices.extend_from_slice(&[a, b, c]);
         } else {
             self.mesh.indices.extend_from_slice(&[a, c, b]);
         }
+        let inside = mid + g.normalize_or_zero() * (self.lat.fine * HAND);
+        self.mesh.materials.push(self.field.material(inside));
     }
 }
 
@@ -604,7 +618,7 @@ impl Verts {
 mod tests {
     use super::*;
     use crate::audit::audit;
-    use crate::field::{Block, Built, Planet, Sphere};
+    use crate::field::{Block, Built, Planet, Sphere, CONCRETE, TERRAIN};
     use crate::tables::EDGE_TABLE;
 
     /// Every chunk of the lattice with any triangles in it.
@@ -764,6 +778,33 @@ mod tests {
         }
         assert!(on_top > 50, "vertices over the slab {on_top}");
         assert!(worst < 0.002, "a slab vertex {worst} m off the plane");
+        // And the triangles over the slab are concrete, the ground's terrain.
+        let (mut concrete, mut terrain) = (0, 0);
+        for (corner, m) in &chunks {
+            for (t, mat) in m.indices.chunks(3).zip(&m.materials) {
+                let mid = t
+                    .iter()
+                    .map(|&i| DVec3::from(m.positions[i as usize].map(f64::from)))
+                    .sum::<DVec3>()
+                    / 3.0
+                    + *corner;
+                let over = mid.x.abs() < 2.0
+                    && mid.z.abs() < 2.0
+                    && (mid.y - top).abs() < 0.1
+                    && (mid.x - 2.0).abs() > 0.6;
+                if over {
+                    assert_eq!(*mat, CONCRETE, "a slab triangle at {mid}");
+                    concrete += 1;
+                } else if mid.y < top - 3.0 {
+                    assert_eq!(*mat, TERRAIN, "a ground triangle at {mid}");
+                    terrain += 1;
+                }
+            }
+        }
+        assert!(
+            concrete > 50 && terrain > 1000,
+            "{concrete} concrete, {terrain} terrain"
+        );
     }
 
     /// A box face laid exactly on a lattice plane puts its crease on a

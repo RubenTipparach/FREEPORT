@@ -17,3 +17,4 @@ pub mod pos;
 pub mod qef;
 pub mod sphere;
 pub mod tables;
+pub mod walker;
