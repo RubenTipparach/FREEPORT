@@ -401,16 +401,26 @@ Numbers in the commit message. What is measured so far:
   sphere's area.
 - The cube sphere's corner to centre cell area ratio: 1.42 warped, 5.2
   plain, on a 16 by 16 grid.
-- The marching cubes mockup: a 48 m planetoid with 20 m of relief on a 96^3
-  lattice of 1.4 m cells, 970,299 field samples and 60,404 triangles, marched
-  in 775 ms in Chromium on swiftshader. The hex mockup on the same seed:
-  40,962 tiles at 0.8 m, 52,983 walls, 351,726 triangles in 1,292 ms, which
-  is the cost of a terrace: a flat plain is cheap and every step is a wall.
-- Material Maker under lavapipe: five graphs, twenty maps at 2048, exported
-  in under four minutes on four cores, and byte identical on a re-export of
-  the same graphs on the same machine (four sets unchanged when the fifth
-  was re-tuned), so `--check`'s half a percent is slack for another driver
-  and not for this one.
+- The marching cubes mockup: a 64 m planet with a sea and three towns on a
+  112^3 lattice of 1.33 m cells, 95,200 triangles of ground marched in 0.9 s
+  in Chromium on swiftshader, the towns planned in 54 ms and their twenty
+  buildings built from the kit in 50 ms (12,192 triangles). The hex mockup
+  on the same seed: 163,842 tiles at 0.53 m, 74,754 walls, 1,132,548
+  triangles, 2,876 of the tiles built, in 5.7 s of which the plan (a first
+  crossing per tile) is 2.6 and the mesh 1.9. Twelve times the triangles for
+  the same ground, which is the cost of a terrace: a flat plain is cheap and
+  every step is a wall.
+- The walker, both pages, headless: 7 m up the port's main street to the
+  first face, 19.4 m along it, a jump to 1.4 m, the same to a few
+  decimetres.
+- Material Maker under lavapipe: seven graphs, twenty eight maps at 2048,
+  exported in about six minutes on four cores, and byte identical on a
+  re-export of the same graphs on the same machine (five sets unchanged when
+  two were added), so `--check`'s half a percent is slack for another driver
+  and not for this one. Handed a single graph the command line stalls, and
+  two of the new graphs' first settings (a voronoi with a stretch, a bricks
+  with no rounding) crashed it at load; every graph is on settings the
+  working ones already use, and the bake is always the whole set.
 - Tenebris, for scale: 300 m planets, 163,842 hex tiles a body, 21 MB of
   voxels and a 2.7 s full remesh, one flat 5 km detail cutoff and an impostor
   past it. Every number in that project's LOD is a number this one replaces,

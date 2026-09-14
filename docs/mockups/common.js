@@ -329,7 +329,7 @@ const FRAG = /* glsl */`
     float spec = ggx(nh, a) * fres / (4.0 * nv + 0.5);
     vec3 sunColour = vec3(1.0, 0.96, 0.9) * 3.2;
     float skyish = 0.5 + 0.5 * dot(nm, up);
-    vec3 fill = mix(vec3(0.06, 0.06, 0.08), vec3(0.14, 0.16, 0.2), skyish);
+    vec3 fill = mix(vec3(0.10, 0.09, 0.08), vec3(0.20, 0.23, 0.28), skyish);
     vec3 colour = albedo * (sunColour * nl + fill * ao) + sunColour * spec * nl + glow;
     gl_FragColor = vec4(colour, 1.0);
     #include <tonemapping_fragment>
@@ -425,7 +425,11 @@ export function makeScene(canvas) {
   const sun = new THREE.DirectionalLight(0xfff4e4, 3.0);
   sun.position.copy(SUN).multiplyScalar(500);
   scene.add(sun);
-  scene.add(new THREE.AmbientLight(0x30394a, 0.9));
+  // A hemisphere rather than a flat ambient: a wall facing away from the sun
+  // is lit by the ground's bounce and the sky's glow, and a flat term lit
+  // every south face the same near black. The terrain shader's fill is the
+  // same idea in its own words.
+  scene.add(new THREE.HemisphereLight(0x8fa4c4, 0x5a4a3a, 1.4));
 
   // Stars: points on a far shell, which survive any zoom a texel would not.
   const n = 2600, pos = new Float32Array(n * 3);
