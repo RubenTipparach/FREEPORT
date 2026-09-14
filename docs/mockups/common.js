@@ -260,6 +260,7 @@ export const MAX_LAMPS = 96;
 // lighting is a sun and a dim sky, GGX for the highlight, no fog: vacuum.
 const FRAG = /* glsl */`
   precision highp float;
+  precision highp sampler2DArray;
   varying vec3 vPos;
   varying vec3 vNrm;
   varying vec2 vUv;
@@ -279,20 +280,19 @@ const FRAG = /* glsl */`
   uniform float uTexScale;
   uniform float uTextured;
   uniform float uSnowLine;
-  uniform sampler2D tRockC, tRockN, tRockR;
-  uniform sampler2D tSandC, tSandN, tSandR;
-  uniform sampler2D tGrassC, tGrassN, tGrassR;
-  uniform sampler2D tSnowC, tSnowN, tSnowR;
-  uniform sampler2D tConcC, tConcN, tConcR;
-  uniform sampler2D tPlateC, tPlateN, tPlateR;
+  // The material sets are three ARRAY textures, a layer a set, because a
+  // set is three maps and six sets as eighteen samplers is past the sixteen
+  // a fragment shader is promised: it drew on swiftshader and not on a GPU.
+  uniform highp sampler2DArray tC, tN, tR;
   uniform vec3 uRockFlat, uSandFlat, uGrassFlat, uSnowFlat, uConcFlat, uPlateFlat;
+  const float L_ROCK = 0.0, L_SAND = 1.0, L_GRASS = 2.0, L_SNOW = 3.0, L_CONC = 4.0, L_PLATE = 5.0;
 
   vec3 triW(vec3 n) { vec3 w = pow(abs(n), vec3(4.0)); return w / (w.x + w.y + w.z); }
-  vec4 tri(sampler2D t, vec3 p, vec3 w) { return texture2D(t, p.yz) * w.x + texture2D(t, p.xz) * w.y + texture2D(t, p.xy) * w.z; }
-  vec3 triN(sampler2D t, vec3 p, vec3 w, vec3 n) {
-    vec3 tx = texture2D(t, p.yz).xyz * 2.0 - 1.0;
-    vec3 ty = texture2D(t, p.xz).xyz * 2.0 - 1.0;
-    vec3 tz = texture2D(t, p.xy).xyz * 2.0 - 1.0;
+  vec4 tri(sampler2DArray t, float l, vec3 p, vec3 w) { return texture(t, vec3(p.yz, l)) * w.x + texture(t, vec3(p.xz, l)) * w.y + texture(t, vec3(p.xy, l)) * w.z; }
+  vec3 triN(sampler2DArray t, float l, vec3 p, vec3 w, vec3 n) {
+    vec3 tx = texture(t, vec3(p.yz, l)).xyz * 2.0 - 1.0;
+    vec3 ty = texture(t, vec3(p.xz, l)).xyz * 2.0 - 1.0;
+    vec3 tz = texture(t, vec3(p.xy, l)).xyz * 2.0 - 1.0;
     tx = vec3(tx.xy + n.zy, abs(tx.z) * n.x);
     ty = vec3(ty.xy + n.xz, abs(ty.z) * n.y);
     tz = vec3(tz.xy + n.xy, abs(tz.z) * n.z);
@@ -300,11 +300,11 @@ const FRAG = /* glsl */`
   }
   // A built material's maps, on the mesh's UVs or on three local planes. The
   // normal comes back in the frame it was read in; the caller turns it out.
-  void builtMaps(sampler2D tc, sampler2D tn, sampler2D tr, vec2 uv, vec3 lp, vec3 lw, vec3 ln, out vec3 alb, out vec3 orm, out vec3 nml) {
+  void builtMaps(float l, vec2 uv, vec3 lp, vec3 lw, vec3 ln, out vec3 alb, out vec3 orm, out vec3 nml) {
     if (uBuiltUv > 0.5) {
-      alb = texture2D(tc, uv).rgb; orm = texture2D(tr, uv).rgb; nml = texture2D(tn, uv).xyz * 2.0 - 1.0;
+      alb = texture(tC, vec3(uv, l)).rgb; orm = texture(tR, vec3(uv, l)).rgb; nml = texture(tN, vec3(uv, l)).xyz * 2.0 - 1.0;
     } else {
-      alb = tri(tc, lp, lw).rgb; orm = tri(tr, lp, lw).rgb; nml = triN(tn, lp, lw, ln);
+      alb = tri(tC, l, lp, lw).rgb; orm = tri(tR, l, lp, lw).rgb; nml = triN(tN, l, lp, lw, ln);
     }
   }
   float ggx(float nh, float a) { float a2 = a * a; float d = nh * nh * (a2 - 1.0) + 1.0; return a2 / (3.14159 * d * d); }
@@ -351,8 +351,7 @@ const FRAG = /* glsl */`
       dbg = uDebug > 2.5 ? fract(lp) : lw;
       if (uTextured > 0.5 && m != 3 && m != 5) {
         vec3 alb, orm, nml;
-        if (m == 2) builtMaps(tPlateC, tPlateN, tPlateR, vUv, lp, lw, ln, alb, orm, nml);
-        else builtMaps(tConcC, tConcN, tConcR, vUv, lp, lw, ln, alb, orm, nml);
+        builtMaps(m == 2 ? L_PLATE : L_CONC, vUv, lp, lw, ln, alb, orm, nml);
         albedo = alb; rough = orm.g; ao = orm.r;
         vec3 bumped;
         if (uBuiltUv > 0.5) {
@@ -390,10 +389,10 @@ const FRAG = /* glsl */`
       float wSnow = smoothstep(uSnowLine - 1.5, uSnowLine + 1.5, above) * (1.0 - wRock) * (1.0 - wSand);
       float wGrass = max(0.0, 1.0 - wRock - wSand - wSnow);
       if (uTextured > 0.5) {
-        albedo = tri(tRockC, p, w).rgb * wRock + tri(tSandC, p, w).rgb * wSand + tri(tGrassC, p, w).rgb * wGrass + tri(tSnowC, p, w).rgb * wSnow;
-        vec3 orm = tri(tRockR, p, w).rgb * wRock + tri(tSandR, p, w).rgb * wSand + tri(tGrassR, p, w).rgb * wGrass + tri(tSnowR, p, w).rgb * wSnow;
+        albedo = tri(tC, L_ROCK, p, w).rgb * wRock + tri(tC, L_SAND, p, w).rgb * wSand + tri(tC, L_GRASS, p, w).rgb * wGrass + tri(tC, L_SNOW, p, w).rgb * wSnow;
+        vec3 orm = tri(tR, L_ROCK, p, w).rgb * wRock + tri(tR, L_SAND, p, w).rgb * wSand + tri(tR, L_GRASS, p, w).rgb * wGrass + tri(tR, L_SNOW, p, w).rgb * wSnow;
         rough = orm.g; ao = orm.r;
-        nm = normalize(triN(tRockN, p, w, n) * wRock + triN(tSandN, p, w, n) * wSand + triN(tGrassN, p, w, n) * wGrass + triN(tSnowN, p, w, n) * wSnow);
+        nm = normalize(triN(tN, L_ROCK, p, w, n) * wRock + triN(tN, L_SAND, p, w, n) * wSand + triN(tN, L_GRASS, p, w, n) * wGrass + triN(tN, L_SNOW, p, w, n) * wSnow);
       } else {
         albedo = uRockFlat * wRock + uSandFlat * wSand + uGrassFlat * wGrass + uSnowFlat * wSnow; rough = 0.85; nm = n;
       }
@@ -482,6 +481,36 @@ export function loadTex(loader, url, srgb) {
 
 export const SUN = new THREE.Vector3(0.55, 0.7, 0.45).normalize();
 
+// The maps of every set, one kind at a time, stacked into one array
+// texture with a layer a set, so the shader binds three samplers and not
+// three a set. The rows are turned over on the way in, because an image
+// is uploaded upside down and pixel data is not, and a normal map's green
+// would otherwise point the other way. Without the bakes it is one yellow
+// texel a layer and the shader draws its flat colours.
+export function stackMaps(texs, real, srgb, aniso) {
+  const n = texs.length;
+  const size = real ? texs[0].image.width : 1;
+  const data = new Uint8Array(size * size * 4 * n);
+  if (real) {
+    const cv = document.createElement('canvas'); cv.width = size; cv.height = size;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    for (let l = 0; l < n; l++) {
+      ctx.drawImage(texs[l].image, 0, 0, size, size);
+      const px = ctx.getImageData(0, 0, size, size).data, row = size * 4;
+      for (let y = 0; y < size; y++) data.set(px.subarray(y * row, (y + 1) * row), l * size * size * 4 + (size - 1 - y) * row);
+    }
+  } else {
+    for (let i = 0; i < data.length; i += 4) { data[i] = 255; data[i + 1] = 220; data[i + 2] = 0; data[i + 3] = 255; }
+  }
+  const t = new THREE.DataArrayTexture(data, size, size, n);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = true; t.anisotropy = aniso; t.needsUpdate = true;
+  return t;
+}
+
+
 // The terrain material, with its textures loaded if they can be found, and
 // the same textures handed back so a page can dress its own meshes in them.
 export async function terrainMaterial(renderer) {
@@ -499,20 +528,19 @@ export async function terrainMaterial(renderer) {
     uLamps: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4(0, 0, 0, 0)) },
     uLampCount: { value: 0 },
   };
-  const blank = new THREE.DataTexture(new Uint8Array([255, 220, 0, 255]), 1, 1); blank.needsUpdate = true;
-  const textures = {};
-  for (const [role, name] of Object.entries(sets)) {
+  const textures = {}, names = Object.values(sets), loaded = [];
+  for (const name of names) {
     const c = base ? await loadTex(loader, base + name + '_albedo.png', true) : null;
     const nrm = base ? await loadTex(loader, base + name + '_normal.png', false) : null;
     const orm = base ? await loadTex(loader, base + name + '_orm.png', false) : null;
-    if (!c) uniforms.uTextured.value = 0;
-    uniforms['t' + role + 'C'] = { value: c || blank }; uniforms['t' + role + 'N'] = { value: nrm || blank }; uniforms['t' + role + 'R'] = { value: orm || blank };
-    textures[name] = { albedo: c, normal: nrm, orm };
+    if (!c || !nrm || !orm) uniforms.uTextured.value = 0;
+    textures[name] = { albedo: c, normal: nrm, orm }; loaded.push([c, nrm, orm]);
   }
-  if (renderer) {
-    const aniso = renderer.capabilities.getMaxAnisotropy();
-    for (const u of Object.values(uniforms)) if (u.value && u.value.isTexture) u.value.anisotropy = aniso;
-  }
+  const aniso = renderer ? renderer.capabilities.getMaxAnisotropy() : 1;
+  const stacked = uniforms.uTextured.value > 0.5;
+  uniforms.tC = { value: stackMaps(loaded.map((l) => l[0]), stacked, true, aniso) };
+  uniforms.tN = { value: stackMaps(loaded.map((l) => l[1]), stacked, false, aniso) };
+  uniforms.tR = { value: stackMaps(loaded.map((l) => l[2]), stacked, false, aniso) };
   const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: VERT, fragmentShader: FRAG });
   mat.hasTextures = uniforms.uTextured.value > 0.5;
   mat.textures = textures;

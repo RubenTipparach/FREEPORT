@@ -345,6 +345,18 @@ whole ceiling at a grazing angle and a plain cosine there lights every
 grain of the normal map on one side: the ceiling came out as gravel and the
 map is at half strength inside for the same reason.
 
+**Six material sets are three samplers.** A set is three maps, and six
+sets bound one map to a sampler each is eighteen, past the sixteen a
+fragment shader is promised on a real GPU: the plate set took the mockups
+from fifteen to eighteen, they drew on swiftshader, which allows more, and
+the owner's browser refused the program with `MAX_TEXTURE_IMAGE_UNITS(16)`.
+The maps are stacked a kind at a time into three array textures
+(`stackMaps` in `common.js`, a layer a set, the rows turned over because
+pixel data is not flipped on upload the way an image is), so the shader
+binds three whatever the count of sets, and the pictures before and after
+differ by the HUD's digits alone (0.075% of pixels). The Bevy port has the
+same limit and the same answer.
+
 ## A building is a field too, on a finer lattice, and the material is flat
 
 The question was whether a building can be built out of the same marching
