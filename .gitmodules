@@ -1,0 +1,3 @@
+[submodule "external/tenebris"]
+	path = external/tenebris
+	url = https://github.com/RubenTipparach/tenebris.git
