@@ -786,6 +786,7 @@ python3 tools/bundle_buildings.py --check         # the mockup's recipes match a
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
 ./target/release/freeport_app                     # a window: on foot at the site, the pad, the wall and the step in the baked sets; F flies, Tab wires, Esc frees the mouse
+./run.sh --test                                   # the core suite and the shape and recipe checks, then the build and the window; run.bat is the Windows twin, --shot out.png takes the picture below with no display
 ./target/release/freeport_app --fly --sub 6 --wire --eye 9.5,41.6,0.5 --look 0,40.6,0 --shot join.png   # a picture, headless under xvfb-run with VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
 ```
 
