@@ -7,7 +7,8 @@ of. Bevy 0.18, Rust, `f64` world frame with a floating origin, planets as
 density fields marched into triangles.
 
 `CLAUDE.md` is the rules and the reasons. `docs/freeport.html` is the design
-page: what is being built, the stack, the tooling and the two terrain mockups.
+page ([published](https://claude.ai/code/artifact/7822c376-33d9-4391-9907-a958426efc29)): what is being built, the stack, the tooling and the
+two terrain mockups.
 
 ```sh
 cargo test -p freeport_core                 # the engine free core: positions, the cube sphere, the field, the mesher
@@ -20,7 +21,8 @@ tools/bake_materials.sh                     # bake materials/*.ptex to assets/te
 
 The two mockups compare the meshers on the same seed, field and textures:
 open `docs/mockups/marching-cubes.html` and `docs/mockups/hex-terrain.html`
-straight off the checkout. Drag to orbit, wheel to zoom, "Stand on it" for a
+straight off the checkout, or published: [marching cubes](https://claude.ai/code/artifact/342b7f52-5a1f-4000-94b3-1d3967b527d1) and
+[hex terrain](https://claude.ai/code/artifact/87905fd8-d47b-4f2e-8cc3-8c226251a799). Drag to orbit, wheel to zoom, "Stand on it" for a
 walker's eye height.
 
 On Linux the harness needs `libwayland-dev libxkbcommon-dev libudev-dev

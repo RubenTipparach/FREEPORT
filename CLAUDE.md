@@ -12,8 +12,8 @@ is built, in Bevy, with that project's code organisation, documentation habit
 and content tooling, and it takes its planet, orbit and floating origin
 lessons from [tenebris](https://github.com/RubenTipparach/tenebris), which
 solved those on a Mario Galaxy scale (a three hundred metre planet) and wrote
-down what it learned. The design page is `docs/freeport.html`; this file is
-the rules and the reasons.
+down what it learned. The design page is `docs/freeport.html`, published at
+https://claude.ai/code/artifact/7822c376-33d9-4391-9907-a958426efc29; this file is the rules and the reasons.
 
 No em dashes or en dashes anywhere, the same rule swarm-demo keeps.
 
@@ -331,7 +331,15 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 The mockups are `docs/mockups/marching-cubes.html` and
 `docs/mockups/hex-terrain.html`, opened straight off the checkout (they find
 the baked textures in `assets/textures/terrain` from there) or served from
-the repository root. `docs/freeport.html` is the design page and links both.
+the repository root, and published:
+
+- marching cubes: https://claude.ai/code/artifact/342b7f52-5a1f-4000-94b3-1d3967b527d1
+- hex terrain: https://claude.ai/code/artifact/87905fd8-d47b-4f2e-8cc3-8c226251a799
+
+`docs/freeport.html` is the design page and links both. **A published page
+is republished in the same change as the file it was made from**, which is
+swarm-demo's registry rule: a mockup a version behind is worse than none,
+because a reader cannot tell which.
 
 A headless Bevy run needs a Vulkan device; on a box with no GPU that is
 `mesa-vulkan-drivers` for lavapipe and Xvfb, the same rig Material Maker
@@ -353,7 +361,10 @@ Numbers in the commit message. What is measured so far:
   40,962 tiles at 0.8 m, 52,983 walls, 351,726 triangles in 1,292 ms, which
   is the cost of a terrace: a flat plain is cheap and every step is a wall.
 - Material Maker under lavapipe: five graphs, twenty maps at 2048, exported
-  in under four minutes on four cores.
+  in under four minutes on four cores, and byte identical on a re-export of
+  the same graphs on the same machine (four sets unchanged when the fifth
+  was re-tuned), so `--check`'s half a percent is slack for another driver
+  and not for this one.
 - Tenebris, for scale: 300 m planets, 163,842 hex tiles a body, 21 MB of
   voxels and a 2.7 s full remesh, one flat 5 km detail cutoff and an impostor
   past it. Every number in that project's LOD is a number this one replaces,

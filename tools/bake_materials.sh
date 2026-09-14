@@ -26,6 +26,11 @@
 # filtered down to --size by tools/shrink_png.py on the way in: a smaller
 # file, and the one resample that is bit exact on every machine.
 #
+# Bake ALL the graphs in one run, which is the default. Handed one graph on
+# its own, Material Maker's command line loaded it and then sat idle for
+# ever, three times out of three here, while every run given the whole set
+# exported all of them inside four minutes. Nothing in its log says why.
+#
 # --check is a TOLERANCE and not `cmp`: a GPU render is not bit exact between
 # drivers, so a map is judged by the share of its pixels that moved more than a
 # little, off tools/pngdiff.py, against a floor a re-export on the same machine

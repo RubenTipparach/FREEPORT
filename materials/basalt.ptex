@@ -43,12 +43,6 @@
    "to_port": 0
   },
   {
-   "from": "lift",
-   "from_port": 0,
-   "to": "albedo",
-   "to_port": 0
-  },
-  {
    "from": "height",
    "from_port": 0,
    "to": "rough",
@@ -93,7 +87,7 @@
   {
    "from": "relief",
    "from_port": 0,
-   "to": "lift",
+   "to": "albedo",
    "to_port": 0
   }
  ],
@@ -256,14 +250,14 @@
        "a": 1
       },
       {
-       "pos": 0.35,
+       "pos": 0.12,
        "r": 0.16,
        "g": 0.15,
        "b": 0.145,
        "a": 1
       },
       {
-       "pos": 0.7,
+       "pos": 0.4,
        "r": 0.27,
        "g": 0.26,
        "b": 0.25,
@@ -271,9 +265,9 @@
       },
       {
        "pos": 1.0,
-       "r": 0.4,
-       "g": 0.39,
-       "b": 0.38,
+       "r": 0.42,
+       "g": 0.41,
+       "b": 0.4,
        "a": 1
       }
      ]
@@ -348,18 +342,6 @@
    "node_position": {
     "x": 2720,
     "y": 0
-   }
-  },
-  {
-   "name": "lift",
-   "type": "brightness_contrast",
-   "parameters": {
-    "brightness": 0.22,
-    "contrast": 0.85
-   },
-   "node_position": {
-    "x": 1400,
-    "y": 40
    }
   }
  ],
