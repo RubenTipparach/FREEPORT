@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Bevy is unusable unoptimised and the core is what a test iterates on, so
+# dependencies are built optimised even in dev and our own crates stay fast to
+# rebuild. Lifted from swarm-demo, where the same two lines earned their keep.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# The release binary is what a player runs and what the linker has to write;
+# stripping takes the debug info out at link time, which is a smaller file and
+# a shorter link, and the link is the step that looks like a hang.
+[profile.release]
+strip = true

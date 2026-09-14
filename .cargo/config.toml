@@ -1,0 +1,21 @@
+# Linking, which is the step that looks like a hang.
+#
+# A Bevy binary is a very large link: a release build here is eighty five
+# megabytes stripped, and the last line a build prints is cargo waiting for
+# the linker. It is not stuck. On Windows, `link.exe` on a binary this size
+# routinely takes minutes, and Defender scanning every object file the linker
+# opens can multiply that several times over.
+#
+# `rust-lld` is the LLVM linker that ships with the Rust toolchain itself, so
+# there is nothing to install, and it is dramatically faster on a link of this
+# shape. This is Bevy's own recommendation for Windows, and swarm-demo's.
+#
+# IF THIS LINE BREAKS YOUR BUILD with "linker `rust-lld.exe` not found", delete
+# it: you will be back to the slow MSVC linker and everything else still works.
+# Nothing in the game depends on which linker built it.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+# Linux and macOS keep their defaults. `lld` or `mold` would help here too, but
+# neither ships with the toolchain, and a config that fails on a machine
+# without them is worse than a slower link on one that has neither.

@@ -1,0 +1,6 @@
+/target
+/tools/node_modules
+/tools/material_maker
+*.log
+__pycache__/
+/docs/mockups/shots/*.tmp.png

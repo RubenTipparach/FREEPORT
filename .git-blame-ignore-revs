@@ -1,0 +1,2 @@
+# Commits git blame should read through: formatting only, nothing else in them.
+# git config blame.ignoreRevsFile .git-blame-ignore-revs

@@ -1,0 +1,13 @@
+[package]
+name = "freeport_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Bevy harness: draws what freeport_core says, ticks the world, and collects input."
+
+[dependencies]
+freeport_core = { path = "../freeport_core" }
+# 0.18 rather than 0.19, on purpose: avian3d 0.6 and big_space 0.12 are on
+# 0.18 today and big_space has not followed 0.19 yet. The engine moves when
+# all three do together, in one commit that carries nothing else.
+bevy = "0.18.1"

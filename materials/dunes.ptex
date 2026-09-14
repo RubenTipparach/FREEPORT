@@ -1,0 +1,325 @@
+{
+ "connections": [
+  {
+   "from": "stripes",
+   "from_port": 0,
+   "to": "ripples",
+   "to_port": 0
+  },
+  {
+   "from": "bend",
+   "from_port": 0,
+   "to": "ripples",
+   "to_port": 1
+  },
+  {
+   "from": "ripples",
+   "from_port": 0,
+   "to": "form",
+   "to_port": 0
+  },
+  {
+   "from": "bodies",
+   "from_port": 0,
+   "to": "form",
+   "to_port": 1
+  },
+  {
+   "from": "grain",
+   "from_port": 0,
+   "to": "height",
+   "to_port": 0
+  },
+  {
+   "from": "form",
+   "from_port": 0,
+   "to": "height",
+   "to_port": 1
+  },
+  {
+   "from": "height",
+   "from_port": 0,
+   "to": "normal",
+   "to_port": 0
+  },
+  {
+   "from": "height",
+   "from_port": 0,
+   "to": "ao",
+   "to_port": 0
+  },
+  {
+   "from": "height",
+   "from_port": 0,
+   "to": "albedo",
+   "to_port": 0
+  },
+  {
+   "from": "albedo",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 0
+  },
+  {
+   "from": "metal",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 1
+  },
+  {
+   "from": "rough",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 2
+  },
+  {
+   "from": "normal",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 4
+  },
+  {
+   "from": "ao",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 5
+  },
+  {
+   "from": "height",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 6
+  }
+ ],
+ "label": "Graph",
+ "name": "dunes",
+ "node_position": {
+  "x": 0,
+  "y": 0
+ },
+ "nodes": [
+  {
+   "name": "stripes",
+   "type": "pattern",
+   "parameters": {
+    "mix": 0,
+    "x_wave": 0,
+    "x_scale": 14,
+    "y_wave": 4,
+    "y_scale": 1
+   },
+   "node_position": {
+    "x": 0,
+    "y": -200
+   }
+  },
+  {
+   "name": "bend",
+   "type": "fbm2",
+   "parameters": {
+    "noise": 1,
+    "folds": 0,
+    "iterations": 3,
+    "persistence": 0.5,
+    "scale_x": 3,
+    "scale_y": 3,
+    "offset": 0
+   },
+   "node_position": {
+    "x": 220,
+    "y": -20
+   },
+   "seed": 4201,
+   "seed_locked": true
+  },
+  {
+   "name": "ripples",
+   "type": "warp",
+   "parameters": {
+    "amount": 0.12,
+    "eps": 0.05,
+    "mode": 0
+   },
+   "node_position": {
+    "x": 440,
+    "y": -200
+   }
+  },
+  {
+   "name": "bodies",
+   "type": "fbm2",
+   "parameters": {
+    "noise": 1,
+    "folds": 0,
+    "iterations": 3,
+    "persistence": 0.6,
+    "scale_x": 2,
+    "scale_y": 2,
+    "offset": 0
+   },
+   "node_position": {
+    "x": 660,
+    "y": 160
+   },
+   "seed": 4202,
+   "seed_locked": true
+  },
+  {
+   "name": "form",
+   "type": "blend",
+   "parameters": {
+    "blend_type": 0,
+    "amount": 0.35
+   },
+   "node_position": {
+    "x": 880,
+    "y": -100
+   }
+  },
+  {
+   "name": "grain",
+   "type": "fbm2",
+   "parameters": {
+    "noise": 0,
+    "folds": 0,
+    "iterations": 3,
+    "persistence": 0.5,
+    "scale_x": 48,
+    "scale_y": 48,
+    "offset": 0
+   },
+   "node_position": {
+    "x": 1100,
+    "y": 320
+   },
+   "seed": 4203,
+   "seed_locked": true
+  },
+  {
+   "name": "height",
+   "type": "blend",
+   "parameters": {
+    "blend_type": 6,
+    "amount": 0.4
+   },
+   "node_position": {
+    "x": 1320,
+    "y": -100
+   }
+  },
+  {
+   "name": "normal",
+   "type": "normal_map",
+   "parameters": {
+    "param0": 10,
+    "param1": 0.7,
+    "param2": 0,
+    "param4": 0
+   },
+   "node_position": {
+    "x": 1540,
+    "y": -300
+   }
+  },
+  {
+   "name": "ao",
+   "type": "occlusion",
+   "parameters": {
+    "param0": 10,
+    "param2": 1.0
+   },
+   "node_position": {
+    "x": 1760,
+    "y": -200
+   }
+  },
+  {
+   "name": "albedo",
+   "type": "colorize",
+   "parameters": {
+    "gradient": {
+     "interpolation": 1,
+     "type": "Gradient",
+     "points": [
+      {
+       "pos": 0.0,
+       "r": 0.6,
+       "g": 0.44,
+       "b": 0.27,
+       "a": 1
+      },
+      {
+       "pos": 0.5,
+       "r": 0.78,
+       "g": 0.63,
+       "b": 0.42,
+       "a": 1
+      },
+      {
+       "pos": 1.0,
+       "r": 0.9,
+       "g": 0.78,
+       "b": 0.58,
+       "a": 1
+      }
+     ]
+    }
+   },
+   "node_position": {
+    "x": 1980,
+    "y": 20
+   }
+  },
+  {
+   "name": "rough",
+   "type": "uniform_greyscale",
+   "parameters": {
+    "color": 0.95
+   },
+   "node_position": {
+    "x": 2200,
+    "y": 140
+   }
+  },
+  {
+   "name": "metal",
+   "type": "uniform_greyscale",
+   "parameters": {
+    "color": 0.0
+   },
+   "node_position": {
+    "x": 2420,
+    "y": 260
+   }
+  },
+  {
+   "name": "Material",
+   "type": "material",
+   "parameters": {
+    "albedo_color": {
+     "r": 1,
+     "g": 1,
+     "b": 1,
+     "a": 1,
+     "type": "Color"
+    },
+    "metallic": 1,
+    "roughness": 1,
+    "emission_energy": 1,
+    "normal": 1,
+    "ao": 1,
+    "depth_scale": 0.06,
+    "sss": 0,
+    "size": 10
+   },
+   "node_position": {
+    "x": 2940,
+    "y": 0
+   }
+  }
+ ],
+ "parameters": {},
+ "shortdesc": "",
+ "longdesc": "",
+ "type": "graph"
+}

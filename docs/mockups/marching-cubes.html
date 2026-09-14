@@ -1,0 +1,130 @@
+<title>Freeport Marching Cubes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="mockup.css">
+<canvas id="c"></canvas>
+<div class="busy" id="busy">MARCHING THE FIELD</div>
+<aside class="panel">
+  <h1>Freeport <span>marching cubes</span></h1>
+  <p>A planetoid as a <b>density field</b> and the classic mesher on the classic tables,
+  the same tables <code>freeport_core</code> carries. The ground is a smooth surface with
+  <b>overhangs and undercuts</b> where the field says so. Drag to orbit, wheel to zoom.</p>
+  <div class="hud" id="hud"></div>
+  <div class="controls">
+    <button id="orbit" class="on">Orbit</button>
+    <button id="surface">Stand on it</button>
+    <button id="tex" class="on">Textured</button>
+    <button id="wire">Wire</button>
+    <select id="res"><option value="60">2 m cells</option><option value="96" selected>1.25 m cells</option><option value="132">0.9 m cells</option></select>
+    <button id="reseed">New seed</button>
+  </div>
+  <div class="look">What to look at, against the hex mockup on the same seed:
+    <ul>
+      <li>the lip of every crater and the ledges the volumetric term cuts: a hex column cannot lean out</li>
+      <li>the silhouette against the stars from orbit, which is a curve here and a staircase there</li>
+      <li>the same three materials on the same slopes, so only the mesher differs</li>
+      <li>the triangle count for the same ground, because that is what the GPU pays</li>
+    </ul></div>
+</aside>
+<script type="module">
+import { THREE, Planet, PLANET, makeScene, terrainMaterial, viewOrbit, viewSurface, surfaceRadius, hud, fmt } from './common.js';
+import { EDGE_TABLE, TRI_TABLE } from './mc_tables.js';
+
+// `march.rs`, transcribed: Bourke's corners and edges, a corner bit set when
+// it is air, shared vertices through an edge cache, normals off the field's
+// gradient by central differences and pointed out of the rock.
+const CORNER = [[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]];
+const EDGE_AT = [[[0,0,0],0],[[1,0,0],1],[[0,1,0],0],[[0,0,0],1],[[0,0,1],0],[[1,0,1],1],[[0,1,1],0],[[0,0,1],1],[[0,0,0],2],[[1,0,0],2],[[1,1,0],2],[[0,1,0],2]];
+
+function march(field, corner, cell, n) {
+  const s = n + 3, vals = new Float32Array(s * s * s);
+  const at = (i, j, k) => vals[((k + 1) * s + (j + 1)) * s + (i + 1)];
+  for (let k = -1; k <= n + 1; k++) for (let j = -1; j <= n + 1; j++) for (let i = -1; i <= n + 1; i++) {
+    vals[((k + 1) * s + (j + 1)) * s + (i + 1)] = field.at(corner + i * cell, corner + j * cell, corner + k * cell);
+  }
+  const L = n + 1, cache = new Int32Array(L * L * L * 3).fill(-1);
+  const pos = [], nrm = [], idx = [];
+  const grad = (i, j, k) => [(at(i + 1, j, k) - at(i - 1, j, k)) * 0.5, (at(i, j + 1, k) - at(i, j - 1, k)) * 0.5, (at(i, j, k + 1) - at(i, j, k - 1)) * 0.5];
+  const onEdge = new Int32Array(12);
+  for (let k = 0; k < n; k++) for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    let config = 0;
+    for (let c = 0; c < 8; c++) if (at(i + CORNER[c][0], j + CORNER[c][1], k + CORNER[c][2]) < 0) config |= 1 << c;
+    const crossed = EDGE_TABLE[config];
+    if (crossed === 0) continue;
+    for (let e = 0; e < 12; e++) {
+      if (!(crossed & (1 << e))) continue;
+      const [d, axis] = EDGE_AT[e];
+      const a = i + d[0], b = j + d[1], c = k + d[2];
+      const slot = ((c * L + b) * L + a) * 3 + axis;
+      if (cache[slot] < 0) {
+        const step = [0, 0, 0]; step[axis] = 1;
+        const va = at(a, b, c), vb = at(a + step[0], b + step[1], c + step[2]);
+        const t = Math.abs(vb - va) < 1e-12 ? 0.5 : Math.min(1, Math.max(0, (0 - va) / (vb - va)));
+        const p = [corner + a * cell, corner + b * cell, corner + c * cell]; p[axis] += t * cell;
+        const ga = grad(a, b, c), gb = grad(a + step[0], b + step[1], c + step[2]);
+        let nx = -(ga[0] + (gb[0] - ga[0]) * t), ny = -(ga[1] + (gb[1] - ga[1]) * t), nz = -(ga[2] + (gb[2] - ga[2]) * t);
+        const len = Math.hypot(nx, ny, nz) || 1; nx /= len; ny /= len; nz /= len;
+        cache[slot] = pos.length / 3;
+        pos.push(p[0], p[1], p[2]); nrm.push(nx, ny, nz);
+      }
+      onEdge[e] = cache[slot];
+    }
+    const row = config * 16;
+    for (let t = 0; t < 16 && TRI_TABLE[row + t] >= 0; t += 3) {
+      idx.push(onEdge[TRI_TABLE[row + t]], onEdge[TRI_TABLE[row + t + 1]], onEdge[TRI_TABLE[row + t + 2]]);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(idx);
+  return { geometry: g, triangles: idx.length / 3, vertices: pos.length / 3, samples: s * s * s };
+}
+
+const canvas = document.getElementById('c');
+const { renderer, scene, camera, controls } = makeScene(canvas);
+const material = await terrainMaterial(renderer);
+let seed = PLANET.seed, planet = new Planet({ ...PLANET, seed });
+let mesh = null, stats = {};
+
+function rebuild() {
+  const busy = document.getElementById('busy'); busy.hidden = false;
+  requestAnimationFrame(() => setTimeout(() => {
+    const n = parseInt(document.getElementById('res').value, 10);
+    const half = PLANET.radius + PLANET.relief * 0.5 + PLANET.overhang + 2;
+    const cell = (2 * half) / n;
+    const t0 = performance.now();
+    const built = march(planet, -half, cell, n);
+    stats = { n, cell, ms: performance.now() - t0, ...built };
+    if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
+    mesh = new THREE.Mesh(built.geometry, material);
+    scene.add(mesh);
+    busy.hidden = true;
+    say();
+  }, 20));
+}
+
+function say() {
+  hud(document.getElementById('hud'), [
+    ['seed', seed], ['lattice', `${stats.n}³ cells of ${stats.cell.toFixed(2)} m`],
+    ['samples', fmt(stats.samples)], ['triangles', fmt(stats.triangles)], ['vertices', fmt(stats.vertices)],
+    ['marched in', `${stats.ms.toFixed(0)} ms`], ['textures', material.hasTextures ? 'Material Maker bakes' : 'not found, flat colours'],
+  ]);
+}
+
+const on = (id, f) => document.getElementById(id).addEventListener('click', f);
+const mark = (id, state) => document.getElementById(id).classList.toggle('on', state);
+on('orbit', () => { viewOrbit(controls, camera); mark('orbit', true); mark('surface', false); });
+on('surface', () => { viewSurface(controls, camera, planet, (d) => surfaceRadius(planet, d)); mark('orbit', false); mark('surface', true); });
+on('tex', () => { const v = material.uniforms.uTextured.value > 0.5 ? 0 : 1; material.uniforms.uTextured.value = material.hasTextures ? v : 0; mark('tex', material.uniforms.uTextured.value > 0.5); });
+on('wire', () => { material.wireframe = !material.wireframe; mark('wire', material.wireframe); });
+on('reseed', () => { seed = (seed * 1103515245 + 12345) >>> 0; planet = new Planet({ ...PLANET, seed }); rebuild(); });
+document.getElementById('res').addEventListener('change', rebuild);
+mark('tex', material.hasTextures);
+
+rebuild();
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+// For a harness that wants one frame rather than a loop (the screenshots in docs/img).
+window.__mock = { renderer, scene, camera, controls };
+</script>

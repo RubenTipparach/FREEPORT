@@ -1,0 +1,398 @@
+{
+ "connections": [
+  {
+   "from": "floes",
+   "from_port": 1,
+   "to": "cracks",
+   "to_port": 0
+  },
+  {
+   "from": "fine",
+   "from_port": 1,
+   "to": "veins",
+   "to_port": 0
+  },
+  {
+   "from": "cracks",
+   "from_port": 0,
+   "to": "crackle",
+   "to_port": 0
+  },
+  {
+   "from": "veins",
+   "from_port": 0,
+   "to": "crackle",
+   "to_port": 1
+  },
+  {
+   "from": "frost",
+   "from_port": 0,
+   "to": "frostlift",
+   "to_port": 0
+  },
+  {
+   "from": "crackle",
+   "from_port": 0,
+   "to": "height",
+   "to_port": 0
+  },
+  {
+   "from": "frostlift",
+   "from_port": 0,
+   "to": "height",
+   "to_port": 1
+  },
+  {
+   "from": "height",
+   "from_port": 0,
+   "to": "normal",
+   "to_port": 0
+  },
+  {
+   "from": "height",
+   "from_port": 0,
+   "to": "ao",
+   "to_port": 0
+  },
+  {
+   "from": "height",
+   "from_port": 0,
+   "to": "albedo",
+   "to_port": 0
+  },
+  {
+   "from": "frost",
+   "from_port": 0,
+   "to": "rough",
+   "to_port": 0
+  },
+  {
+   "from": "albedo",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 0
+  },
+  {
+   "from": "metal",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 1
+  },
+  {
+   "from": "rough",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 2
+  },
+  {
+   "from": "normal",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 4
+  },
+  {
+   "from": "ao",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 5
+  },
+  {
+   "from": "height",
+   "from_port": 0,
+   "to": "Material",
+   "to_port": 6
+  }
+ ],
+ "label": "Graph",
+ "name": "ice",
+ "node_position": {
+  "x": 0,
+  "y": 0
+ },
+ "nodes": [
+  {
+   "name": "floes",
+   "type": "voronoi",
+   "parameters": {
+    "scale_x": 4,
+    "scale_y": 4,
+    "intensity": 1,
+    "randomness": 0.9,
+    "stretch_x": 1,
+    "stretch_y": 1
+   },
+   "node_position": {
+    "x": 0,
+    "y": -240
+   },
+   "seed": 3201,
+   "seed_locked": true
+  },
+  {
+   "name": "cracks",
+   "type": "colorize",
+   "parameters": {
+    "gradient": {
+     "interpolation": 1,
+     "type": "Gradient",
+     "points": [
+      {
+       "pos": 0.0,
+       "r": 0,
+       "g": 0,
+       "b": 0,
+       "a": 1
+      },
+      {
+       "pos": 0.025,
+       "r": 1,
+       "g": 1,
+       "b": 1,
+       "a": 1
+      }
+     ]
+    }
+   },
+   "node_position": {
+    "x": 220,
+    "y": -240
+   }
+  },
+  {
+   "name": "fine",
+   "type": "voronoi",
+   "parameters": {
+    "scale_x": 11,
+    "scale_y": 11,
+    "intensity": 1,
+    "randomness": 1,
+    "stretch_x": 1,
+    "stretch_y": 1
+   },
+   "node_position": {
+    "x": 440,
+    "y": -60
+   },
+   "seed": 3202,
+   "seed_locked": true
+  },
+  {
+   "name": "veins",
+   "type": "colorize",
+   "parameters": {
+    "gradient": {
+     "interpolation": 1,
+     "type": "Gradient",
+     "points": [
+      {
+       "pos": 0.0,
+       "r": 0.55,
+       "g": 0.55,
+       "b": 0.55,
+       "a": 1
+      },
+      {
+       "pos": 0.02,
+       "r": 1,
+       "g": 1,
+       "b": 1,
+       "a": 1
+      }
+     ]
+    }
+   },
+   "node_position": {
+    "x": 660,
+    "y": -60
+   }
+  },
+  {
+   "name": "crackle",
+   "type": "blend",
+   "parameters": {
+    "blend_type": 2,
+    "amount": 1
+   },
+   "node_position": {
+    "x": 880,
+    "y": -150
+   }
+  },
+  {
+   "name": "frost",
+   "type": "fbm2",
+   "parameters": {
+    "noise": 1,
+    "folds": 0,
+    "iterations": 6,
+    "persistence": 0.5,
+    "scale_x": 9,
+    "scale_y": 9,
+    "offset": 0
+   },
+   "node_position": {
+    "x": 1100,
+    "y": 140
+   },
+   "seed": 3203,
+   "seed_locked": true
+  },
+  {
+   "name": "frostlift",
+   "type": "brightness_contrast",
+   "parameters": {
+    "brightness": 0.35,
+    "contrast": 0.6
+   },
+   "node_position": {
+    "x": 1320,
+    "y": 140
+   }
+  },
+  {
+   "name": "height",
+   "type": "blend",
+   "parameters": {
+    "blend_type": 2,
+    "amount": 1
+   },
+   "node_position": {
+    "x": 1540,
+    "y": -40
+   }
+  },
+  {
+   "name": "normal",
+   "type": "normal_map",
+   "parameters": {
+    "param0": 10,
+    "param1": 0.6,
+    "param2": 0,
+    "param4": 0
+   },
+   "node_position": {
+    "x": 1760,
+    "y": -300
+   }
+  },
+  {
+   "name": "ao",
+   "type": "occlusion",
+   "parameters": {
+    "param0": 10,
+    "param2": 1.5
+   },
+   "node_position": {
+    "x": 1980,
+    "y": -180
+   }
+  },
+  {
+   "name": "albedo",
+   "type": "colorize",
+   "parameters": {
+    "gradient": {
+     "interpolation": 1,
+     "type": "Gradient",
+     "points": [
+      {
+       "pos": 0.0,
+       "r": 0.42,
+       "g": 0.6,
+       "b": 0.78,
+       "a": 1
+      },
+      {
+       "pos": 0.5,
+       "r": 0.72,
+       "g": 0.84,
+       "b": 0.92,
+       "a": 1
+      },
+      {
+       "pos": 1.0,
+       "r": 0.9,
+       "g": 0.95,
+       "b": 0.98,
+       "a": 1
+      }
+     ]
+    }
+   },
+   "node_position": {
+    "x": 2200,
+    "y": 40
+   }
+  },
+  {
+   "name": "rough",
+   "type": "colorize",
+   "parameters": {
+    "gradient": {
+     "interpolation": 1,
+     "type": "Gradient",
+     "points": [
+      {
+       "pos": 0.0,
+       "r": 0.22,
+       "g": 0.22,
+       "b": 0.22,
+       "a": 1
+      },
+      {
+       "pos": 1.0,
+       "r": 0.5,
+       "g": 0.5,
+       "b": 0.5,
+       "a": 1
+      }
+     ]
+    }
+   },
+   "node_position": {
+    "x": 2420,
+    "y": 160
+   }
+  },
+  {
+   "name": "metal",
+   "type": "uniform_greyscale",
+   "parameters": {
+    "color": 0.0
+   },
+   "node_position": {
+    "x": 2640,
+    "y": 280
+   }
+  },
+  {
+   "name": "Material",
+   "type": "material",
+   "parameters": {
+    "albedo_color": {
+     "r": 1,
+     "g": 1,
+     "b": 1,
+     "a": 1,
+     "type": "Color"
+    },
+    "metallic": 1,
+    "roughness": 1,
+    "emission_energy": 1,
+    "normal": 1,
+    "ao": 1,
+    "depth_scale": 0.06,
+    "sss": 0,
+    "size": 10
+   },
+   "node_position": {
+    "x": 3160,
+    "y": 0
+   }
+  }
+ ],
+ "parameters": {},
+ "shortdesc": "",
+ "longdesc": "",
+ "type": "graph"
+}

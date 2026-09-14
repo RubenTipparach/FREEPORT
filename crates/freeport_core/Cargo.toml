@@ -1,0 +1,12 @@
+[package]
+name = "freeport_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The game's own reasoning, with no engine in it: world positions, the cube sphere, density fields and the mesher."
+
+[dependencies]
+# The one dependency, and it is the vector library Bevy itself is built on, at
+# the version Bevy 0.18 pins, so a DVec3 here is a DVec3 there with no
+# conversion at the boundary. Nothing else: no engine, no ECS, no async.
+glam = "0.30"
