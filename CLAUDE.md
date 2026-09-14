@@ -391,31 +391,40 @@ most of a cell inside the surface, so a thin thing on a thick one (a street
 on the ground, a lamp under a slab) is SUNK into its host by at least a
 cell or it draws as its host, and a skin is thicker than a cell or is the
 whole of the solid. Nothing thinner than the lattice exists: at 0.22 m a
-wall is 0.35, a step 0.3, a lamp 0.3, and the kit warns on anything under
-0.3. A vertex on an edge that touches a structure is put where the field
-CROSSES, by bisection along the edge, because a box's distance curves round
-its corners and the straight line's guess beaded every edge of every
-building; and a box face is shaded FLAT on its own normal (`dFdx`, the
-curved brushes flagged to stay smooth), because a normal interpolated
-across a corner rounds it over a cell.
+wall is 0.35, a lamp 0.3, and the kit warns on anything under 0.3. A box
+face is shaded FLAT on its own normal (`dFdx`, the curved brushes flagged
+to stay smooth), because a normal interpolated across a corner rounds it
+over a cell.
 
-**A fine lattice under each town, in chunks, meeting the coarse one on cell
-faces.** The planet is marched at 1.33 m with no buildings in its field.
-Every coarse cell a structure's box touches is REPLACED by its subdivision
-(four, six or eight ways, the page's select; six is 0.22 m) marched with
-the buildings in the field, in chunks of four coarse cells a side, so an
-edit remarches the chunk or two its brush touches. The join is on coarse
-cell faces where the field is the terrain alone on both sides, because a
-structure's box is inside its cells, so the two surfaces differ there by
-the coarse lattice's own interpolation error and nothing else. That is
-MEASURED, not assumed: every fine vertex on a join face is checked against
-the bilinear coarse field on that face, and the page reports the mean and
-the worst gap. On this seed 6,413 vertices lie on the join, 5 mm apart on
-average and 108 mm at worst, the worst being where a street runs out of
-the levelled site into the skirt, which is the chord sag this file already
-knows about. The game's answer for a crack a pixel can see is still the
-skirt or transvoxel listed under the streamer; the number says when it is
-needed.
+**A fine lattice under each town, DUAL CONTOURED, in chunks, meeting the
+coarse one on cell faces.** The planet is marched at 1.33 m with no
+buildings in its field. Every coarse cell a structure's box touches is
+REPLACED by its subdivision (four, six or eight ways, the page's select;
+six is 0.22 m) with the buildings in the field, in chunks of four coarse
+cells a side, so an edit remeshes the chunk or two its brush touches. The
+fine lattice is not marched: marching cubes bevels every edge across the
+cell that holds it and can never make a right angle, and a building is
+right angles. It is dual contoured: one vertex per fine cell, at the least
+squares point of its edge crossings' positions and normals held a little
+toward their middle, and a quad for every crossing edge round the four
+cells that share it, so a box's corner is a corner and its wall a plane at
+any lattice, and a curved brush stays curved. The crossings are found by
+bisection along the edge where a structure is involved (a box's distance
+curves round its corners and the straight line's guess beaded every edge),
+their normals are the field's gradient there, and a chunk computes a shell
+of its neighbours' cells so the quads on its border are the same from
+either side. The join is on coarse cell faces where the field is the
+terrain alone on both sides, because a structure's box is inside its
+cells, so the two surfaces differ there by the coarse lattice's own
+interpolation error, and the fine mesh dives three centimetres under the
+coarse one there (the cells outside the fine region get their vertex sunk
+along the normal) so no crack between the two can show. The gap is
+MEASURED anyway: every crossing on a join face is checked against the
+bilinear coarse field on that face and the page reports the mean and the
+worst. On this seed 6,413 crossings lie on the join, 5 mm apart on average
+and 108 mm at worst, the worst where a street runs out of the levelled site
+into the skirt, which is the chord sag this file already knows about; the
+game's streamer keeps the skirt for the same reason.
 
 **The walker walks the field and nothing else.** The ground is the first
 solid under the feet going down from a step above them, the ceiling the

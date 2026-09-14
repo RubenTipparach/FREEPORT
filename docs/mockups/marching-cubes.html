@@ -9,7 +9,7 @@
 <div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>B</b> build <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span><span id="buildstat" hidden></span></div>
 <aside class="panel">
   <h1>Freeport <span>marching cubes</span></h1>
-  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. The towns are in the <b>same field</b>: a building is a list of <b>brushes</b> (boxes, cylinders, spheres and ramps, added or cut, in concrete or plate) composed into it and marched on a finer lattice under the town, so the ground, the walls, the floors and the stairs are one mesh with one collision rule. A material switches <b>hard</b>: a triangle is the deepest solid under it, and a plinth poured into the rock still meets it on a line. Press <b>B</b> on foot to place and cut blocks.</p>
+  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. The towns are in the <b>same field</b>: a building is a list of <b>brushes</b> (boxes, cylinders, spheres and ramps, added or cut, in concrete or plate) composed into it and <b>dual contoured</b> on a lattice six times finer under the town (one vertex a cell, where the crossings' planes meet, so a corner is a corner and a wall is a plane at any lattice, where marching cubes bevels every edge), so the ground, the walls, the floors and the ramps are one mesh with one collision rule. A material switches <b>hard</b>: a triangle is the deepest solid under it, and a plinth poured into the rock still meets it on a line. Press <b>B</b> on foot to place and cut blocks.</p>
   <div class="hud" id="hud"></div>
   <div class="controls">
     <button id="walk">Walk the port</button>
@@ -25,7 +25,7 @@
   <div class="look">What to judge on foot, against the hex mockup on the same seed:
     <ul>
       <li>a slope is a slope: you walk up a hill and down to the beach without a step anywhere, and a cliff stops you</li>
-      <li>the plinth melts into the ground and the concrete still stops on a line; the dome, the vault and the dugout are shapes a block kit cannot make</li>
+      <li>right angles are right angles and a wall is a plane, at 4x, 6x and 8x alike; the plinth melts into the ground and the concrete still stops on a line; the dome, the vault and the dugout are shapes a block kit cannot make</li>
       <li>walk through a door, up the ramp, floor by floor, under the lamps, and look out of a window, which is an opening onto the room and nothing in it</li>
       <li>B, then place a slab with the mouse and walk onto it, cut a hole in a wall and walk through: the picture is the collider</li>
     </ul></div>
@@ -174,76 +174,184 @@ class Field {
 }
 Field.prototype.tmp = { d: 0, mat: 0, room: -1, sid: -1 };
 
-// The fine lattice under a town: the coarse cells its structures touch,
-// each cut SUB ways and marched with the buildings in the field. A vertex
-// on an edge that touches a structure is put where the FIELD crosses,
-// found by bisection along the edge, not where a straight line between the
-// two samples would put it: a box's distance curves round its corners and
-// the line's guess beaded every edge of every building. Its normal is the
-// field's gradient at the vertex itself, because a wall thinner than two
-// cells has no gradient a lattice difference can find. Then every triangle
-// takes its material, its tag and its base from the field at its own
-// middle (a hand inside for the solid, a hand outside for the room), and
-// its last vertex, the one the flat varying hands the fragment, is a vertex
-// that carries them, duplicated where none does: a material boundary runs
-// along triangle edges and a lit pane wears no halo.
+// The fine lattice under a town is DUAL CONTOURED, not marched: one vertex
+// per fine cell, placed where the planes through its edge crossings meet
+// (the least squares point of the crossings' positions and normals, pulled
+// a little toward their middle), and a quad for every edge that changes
+// sign, joining the four cells round it. Marching cubes bevels every edge
+// across the cell that holds it and can never make a right angle; this
+// makes a box's corner a corner and its wall a plane at any lattice, which
+// is what a building is. A crossing on an edge that touches a structure is
+// found by bisection along the edge, its normal is the field's gradient
+// there, and the cells of the chunk are computed with a shell of their
+// neighbours so the quads on the chunk's border are the same from either
+// side. A neighbour cell outside the fine region gets its vertex three
+// centimetres UNDER the surface, so the fine mesh dives beneath the coarse
+// one at the join and no crack between the two can show. Then every
+// triangle takes its material, its tag and its base from the field at its
+// own middle (a hand inside for the solid, a hand outside for the room),
+// and its last vertex, the one the flat varying hands the fragment, is a
+// vertex that carries them, duplicated where none does: a material
+// boundary runs along triangle edges and a lamp wears no halo.
+const AROUND = [
+  [[0, 0, 0], [0, -1, 0], [0, -1, -1], [0, 0, -1]],
+  [[0, 0, 0], [0, 0, -1], [-1, 0, -1], [-1, 0, 0]],
+  [[0, 0, 0], [-1, 0, 0], [-1, -1, 0], [0, -1, 0]],
+];
 function marchFine(field, cellKeys, seam) {
-  const { corner, cell, n } = field, fine = cell / SUB, L = SUB + 1, FN = n * SUB + 1;
-  const vals = new Float32Array(L * L * L), sids = new Int32Array(L * L * L);
-  const cache = new Map();
-  const pos = [], nrm = [], vsid = [], tris = [];
+  const { corner, cell, n } = field, fine = cell / SUB, F = n * SUB;
   const out = { d: 0, mat: 0, room: -1, sid: -1, curved: false }, g = [0, 0, 0];
-  const onEdge = new Int32Array(12);
   let samples = 0;
-  const at = (a, b, c) => vals[(c * L + b) * L + a];
+  // The chunk's lattice: its box in fine cells with a one cell shell round
+  // it, in typed arrays indexed by local point, because a map a sample is
+  // the difference between six seconds and seventeen.
+  const k0 = cellKeys[0], ci = k0 % n, cj = Math.floor(k0 / n) % n, ck = Math.floor(k0 / (n * n));
+  const bx = (ci >> 2) << 2, by = (cj >> 2) << 2, bz = (ck >> 2) << 2;
+  const ox = bx * SUB - 1, oy = by * SUB - 1, oz = bz * SUB - 1;
+  const E = CH * SUB + 3, E3 = E * E * E;
+  const lidx = (x, y, z) => (z * E + y) * E + x;
+  const maskedAt = (fi, fj, fk) => {
+    const I = Math.floor(fi / SUB), J = Math.floor(fj / SUB), K = Math.floor(fk / SUB);
+    return I >= 0 && J >= 0 && K >= 0 && I < n && J < n && K < n && field.mask[field.key(I, J, K)] === 1;
+  };
+  const sd = new Float32Array(E3), sflag = new Uint8Array(E3), ssid = new Int32Array(E3);
+  const sample = (x, y, z) => {
+    const i = lidx(x, y, z);
+    if (!sflag[i]) {
+      field.at(corner + (ox + x) * fine, corner + (oy + y) * fine, corner + (oz + z) * fine, out); samples++;
+      sd[i] = out.d; ssid[i] = out.sid; sflag[i] = 1;
+    }
+    return i;
+  };
+  // The cells: the chunk's, and a shell of their neighbours.
+  const cact = new Uint8Array(E3), cmask = new Uint8Array(E3), cvi = new Int32Array(E3).fill(-1), csid = new Int32Array(E3).fill(-1);
   for (const key of cellKeys) {
     const i = key % n, j = Math.floor(key / n) % n, k = Math.floor(key / (n * n));
-    const fx0 = i * SUB, fy0 = j * SUB, fz0 = k * SUB;
-    for (let c = 0; c < L; c++) for (let b = 0; b < L; b++) for (let a = 0; a < L; a++) {
-      field.at(corner + (fx0 + a) * fine, corner + (fy0 + b) * fine, corner + (fz0 + c) * fine, out);
-      const q = (c * L + b) * L + a;
-      vals[q] = out.d; sids[q] = out.sid; samples++;
+    for (let c = -1; c <= SUB; c++) for (let b = -1; b <= SUB; b++) for (let a = -1; a <= SUB; a++) {
+      const fi = i * SUB + a, fj = j * SUB + b, fk = k * SUB + c;
+      if (fi < 0 || fj < 0 || fk < 0 || fi >= F || fj >= F || fk >= F) continue;
+      const li = lidx(fi - ox, fj - oy, fk - oz);
+      cact[li] = 1; cmask[li] = maskedAt(fi, fj, fk) ? 1 : 0;
     }
-    for (let c = 0; c < SUB; c++) for (let b = 0; b < SUB; b++) for (let a = 0; a < SUB; a++) {
-      let config = 0;
-      for (let cc = 0; cc < 8; cc++) if (at(a + CORNER[cc][0], b + CORNER[cc][1], c + CORNER[cc][2]) < 0) config |= 1 << cc;
-      const crossed = EDGE_TABLE[config];
-      if (crossed === 0) continue;
-      for (let e = 0; e < 12; e++) {
-        if (!(crossed & (1 << e))) continue;
-        const [d, axis] = EDGE_AT[e];
-        const la = a + d[0], lb = b + d[1], lc = c + d[2];
-        const fi = fx0 + la, fj = fy0 + lb, fk = fz0 + lc;
-        const slot = ((fk * FN + fj) * FN + fi) * 3 + axis;
-        let vi = cache.get(slot);
-        if (vi === undefined) {
-          const step = [0, 0, 0]; step[axis] = 1;
-          const ia = (lc * L + lb) * L + la, ib = ((lc + step[2]) * L + (lb + step[1])) * L + (la + step[0]);
-          const va = vals[ia], vb = vals[ib];
-          let t = Math.abs(vb - va) < 1e-12 ? 0.5 : clamp((0 - va) / (vb - va), 0, 1);
-          const p = [corner + fi * fine, corner + fj * fine, corner + fk * fine];
-          const solid = va > 0 ? ia : ib;
-          if (sids[ia] >= 0 || sids[ib] >= 0) {
-            // Bisect the field along the edge: five halvings is under a centimetre.
-            let lo = 0, hi = 1;
-            for (let it = 0; it < 5; it++) {
-              const tm = (lo + hi) * 0.5; const q = p.slice(); q[axis] += tm * fine;
-              if ((field.at(q[0], q[1], q[2], out).d > 0) === (va > 0)) lo = tm; else hi = tm;
-            }
-            t = (lo + hi) * 0.5; samples += 5;
-          }
-          p[axis] += t * fine;
-          field.gradient(p[0], p[1], p[2], 0.03, g);
-          const len = Math.hypot(g[0], g[1], g[2]) || 1;
-          vi = pos.length / 3; cache.set(slot, vi);
-          pos.push(p[0], p[1], p[2]); nrm.push(-g[0] / len, -g[1] / len, -g[2] / len);
-          vsid.push(sids[solid]);
-          if (seam) measureSeam(field, seam, fi, fj, fk, axis, t);
+  }
+  // A crossing per edge, once: where the field changes sign along it. The
+  // straight line between the samples is exact on a plane, so it is kept
+  // where the field agrees with it and refined by bisection where it does
+  // not, which is round a box's corners. A terrain crossing's normal comes
+  // off the lattice's own differences, a built one off the field at the
+  // point, because a wall thinner than two cells has no lattice gradient.
+  const cst = new Int32Array(E3 * 3).fill(-1);
+  const cxs = [], cys = [], czs = [], cnx = [], cny = [], cnz = [], csd = [];
+  const lgrad = (x, y, z, gg) => {
+    if (x < 1 || y < 1 || z < 1 || x > E - 2 || y > E - 2 || z > E - 2) return false;
+    gg[0] = sd[sample(x + 1, y, z)] - sd[sample(x - 1, y, z)];
+    gg[1] = sd[sample(x, y + 1, z)] - sd[sample(x, y - 1, z)];
+    gg[2] = sd[sample(x, y, z + 1)] - sd[sample(x, y, z - 1)];
+    return true;
+  };
+  const ga = [0, 0, 0], gb = [0, 0, 0];
+  const crossing = (x, y, z, axis) => {
+    const ek = lidx(x, y, z) * 3 + axis;
+    const st = cst[ek];
+    if (st !== -1) return st;
+    const sx = axis === 0 ? 1 : 0, sy = axis === 1 ? 1 : 0, sz = axis === 2 ? 1 : 0;
+    const ia = sample(x, y, z), ib = sample(x + sx, y + sy, z + sz);
+    const va = sd[ia], vb = sd[ib];
+    if ((va > 0) === (vb > 0)) { cst[ek] = -2; return -2; }
+    let t = Math.abs(vb - va) < 1e-12 ? 0.5 : clamp((0 - va) / (vb - va), 0, 1);
+    const p = [corner + (ox + x) * fine, corner + (oy + y) * fine, corner + (oz + z) * fine];
+    const built = ssid[ia] >= 0 || ssid[ib] >= 0;
+    let nx, ny, nz;
+    if (built) {
+      const q = p.slice(); q[axis] += t * fine;
+      const d0 = field.at(q[0], q[1], q[2], out).d; samples++;
+      if (Math.abs(d0) > 0.002) {
+        let lo = 0, hi = 1;
+        if ((d0 > 0) === (va > 0)) lo = t; else hi = t;
+        for (let it = 0; it < 5; it++) {
+          const tm = (lo + hi) * 0.5; q[axis] = p[axis] + tm * fine;
+          if ((field.at(q[0], q[1], q[2], out).d > 0) === (va > 0)) lo = tm; else hi = tm;
         }
-        onEdge[e] = vi;
+        t = (lo + hi) * 0.5; samples += 5;
       }
-      const row = config * 16;
-      for (let t = 0; t < 16 && TRI_TABLE[row + t] >= 0; t += 3) tris.push(onEdge[TRI_TABLE[row + t]], onEdge[TRI_TABLE[row + t + 1]], onEdge[TRI_TABLE[row + t + 2]]);
+      p[axis] += t * fine;
+      field.gradient(p[0], p[1], p[2], 0.03, g); samples += 6;
+      nx = -g[0]; ny = -g[1]; nz = -g[2];
+    } else {
+      p[axis] += t * fine;
+      if (lgrad(x, y, z, ga) && lgrad(x + sx, y + sy, z + sz, gb)) {
+        nx = -(ga[0] + (gb[0] - ga[0]) * t); ny = -(ga[1] + (gb[1] - ga[1]) * t); nz = -(ga[2] + (gb[2] - ga[2]) * t);
+      } else { field.gradient(p[0], p[1], p[2], 0.03, g); samples += 6; nx = -g[0]; ny = -g[1]; nz = -g[2]; }
+    }
+    const len = Math.hypot(nx, ny, nz) || 1;
+    const id = cxs.length;
+    cxs.push(p[0]); cys.push(p[1]); czs.push(p[2]); cnx.push(nx / len); cny.push(ny / len); cnz.push(nz / len); csd.push(Math.max(ssid[ia], ssid[ib]));
+    if (seam) measureSeam(field, seam, ox + x, oy + y, oz + z, axis, t);
+    cst[ek] = id;
+    return id;
+  };
+  // One vertex per cell: the point that best sits on every crossing's
+  // plane, held a little toward their middle, and clamped to the cell.
+  const pos = [], nrm = [], vsid = [];
+  const LAMBDA = 0.05;
+  const list = new Int32Array(12);
+  for (let z = 0; z < E - 1; z++) for (let y = 0; y < E - 1; y++) for (let x = 0; x < E - 1; x++) {
+    const li = lidx(x, y, z);
+    if (!cact[li]) continue;
+    let count = 0;
+    for (let e = 0; e < 12; e++) {
+      const [d, axis] = EDGE_AT[e];
+      const id = crossing(x + d[0], y + d[1], z + d[2], axis);
+      if (id >= 0) list[count++] = id;
+    }
+    if (!count) continue;
+    let mx = 0, my = 0, mz = 0, nx = 0, ny = 0, nz = 0, sid = -1;
+    for (let i = 0; i < count; i++) { const c = list[i]; mx += cxs[c]; my += cys[c]; mz += czs[c]; nx += cnx[c]; ny += cny[c]; nz += cnz[c]; sid = Math.max(sid, csd[c]); }
+    mx /= count; my /= count; mz /= count;
+    let a00 = LAMBDA, a01 = 0, a02 = 0, a11 = LAMBDA, a12 = 0, a22 = LAMBDA;
+    let b0 = LAMBDA * mx, b1 = LAMBDA * my, b2 = LAMBDA * mz;
+    for (let i = 0; i < count; i++) {
+      const c = list[i], qx = cnx[c], qy = cny[c], qz = cnz[c];
+      const dd = qx * cxs[c] + qy * cys[c] + qz * czs[c];
+      a00 += qx * qx; a01 += qx * qy; a02 += qx * qz; a11 += qy * qy; a12 += qy * qz; a22 += qz * qz;
+      b0 += qx * dd; b1 += qy * dd; b2 += qz * dd;
+    }
+    const det = a00 * (a11 * a22 - a12 * a12) - a01 * (a01 * a22 - a12 * a02) + a02 * (a01 * a12 - a11 * a02);
+    let px = mx, py = my, pz = mz;
+    if (Math.abs(det) > 1e-12) {
+      px = (b0 * (a11 * a22 - a12 * a12) - a01 * (b1 * a22 - a12 * b2) + a02 * (b1 * a12 - a11 * b2)) / det;
+      py = (a00 * (b1 * a22 - a12 * b2) - b0 * (a01 * a22 - a12 * a02) + a02 * (a01 * b2 - b1 * a02)) / det;
+      pz = (a00 * (a11 * b2 - b1 * a12) - a01 * (a01 * b2 - b1 * a02) + b0 * (a01 * a12 - a11 * a02)) / det;
+    }
+    const lo0 = corner + (ox + x) * fine - 0.05 * fine, lo1 = corner + (oy + y) * fine - 0.05 * fine, lo2 = corner + (oz + z) * fine - 0.05 * fine;
+    px = clamp(px, lo0, lo0 + 1.1 * fine); py = clamp(py, lo1, lo1 + 1.1 * fine); pz = clamp(pz, lo2, lo2 + 1.1 * fine);
+    const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+    if (!cmask[li]) { px -= nx * 0.03; py -= ny * 0.03; pz -= nz * 0.03; }   // the skirt under the coarse mesh
+    cvi[li] = pos.length / 3; csid[li] = sid;
+    pos.push(px, py, pz); nrm.push(nx, ny, nz); vsid.push(sid);
+  }
+  // A quad per crossing edge the chunk owns, round the four cells that share it.
+  const tris = [];
+  for (let z = 1; z < E - 2; z++) for (let y = 1; y < E - 2; y++) for (let x = 1; x < E - 2; x++) {
+    if (!cact[lidx(x, y, z)]) continue;
+    for (let axis = 0; axis < 3; axis++) {
+      const id = crossing(x, y, z, axis);
+      if (id < 0) continue;
+      const ar = AROUND[axis];
+      let ok = true, anyMasked = false;
+      const v = [0, 0, 0, 0];
+      for (let q = 0; q < 4; q++) {
+        const li = lidx(x + ar[q][0], y + ar[q][1], z + ar[q][2]);
+        if (cvi[li] < 0) { ok = false; break; }
+        v[q] = cvi[li]; if (cmask[li]) anyMasked = true;
+      }
+      if (!ok || !anyMasked) continue;
+      const [v0, v1, v2, v3] = v;
+      // Wound to face the way the field falls, which is out of the rock.
+      const ux = pos[3 * v1] - pos[3 * v0], uy = pos[3 * v1 + 1] - pos[3 * v0 + 1], uz = pos[3 * v1 + 2] - pos[3 * v0 + 2];
+      const wx = pos[3 * v2] - pos[3 * v0], wy = pos[3 * v2 + 1] - pos[3 * v0 + 1], wz = pos[3 * v2 + 2] - pos[3 * v0 + 2];
+      const fnx = uy * wz - uz * wy, fny = uz * wx - ux * wz, fnz = ux * wy - uy * wx;
+      if (fnx * cnx[id] + fny * cny[id] + fnz * cnz[id] >= 0) tris.push(v0, v1, v2, v0, v2, v3); else tris.push(v0, v2, v1, v0, v3, v2);
     }
   }
   // Materials per triangle, then a provoking vertex that carries them.
@@ -256,11 +364,13 @@ function marchFine(field, cellKeys, seam) {
     let m = 0, tag = 0, base = 0;
     if (vsid[a] >= 0 || vsid[b] >= 0 || vsid[c] >= 0) {
       const cx = (pos[3 * a] + pos[3 * b] + pos[3 * c]) / 3, cy = (pos[3 * a + 1] + pos[3 * b + 1] + pos[3 * c + 1]) / 3, cz = (pos[3 * a + 2] + pos[3 * b + 2] + pos[3 * c + 2]) / 3;
-      let nx = nrm[3 * a] + nrm[3 * b] + nrm[3 * c], ny = nrm[3 * a + 1] + nrm[3 * b + 1] + nrm[3 * c + 1], nz = nrm[3 * a + 2] + nrm[3 * b + 2] + nrm[3 * c + 2];
+      const ux = pos[3 * b] - pos[3 * a], uy = pos[3 * b + 1] - pos[3 * a + 1], uz = pos[3 * b + 2] - pos[3 * a + 2];
+      const wx = pos[3 * c] - pos[3 * a], wy = pos[3 * c + 1] - pos[3 * a + 1], wz = pos[3 * c + 2] - pos[3 * a + 2];
+      let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
       const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
-      field.at(cx - nx * 0.04, cy - ny * 0.04, cz - nz * 0.04, out); samples++;
+      field.at(cx - nx * 0.05, cy - ny * 0.05, cz - nz * 0.05, out); samples++;
       m = out.mat + (out.curved ? 8 : 0); base = out.sid >= 0 ? field.structures[out.sid].base : 0;
-      field.at(cx + nx * 0.06, cy + ny * 0.06, cz + nz * 0.06, out); samples++;
+      field.at(cx + nx * 0.08, cy + ny * 0.08, cz + nz * 0.08, out); samples++;
       tag = (m & 7) === MAT.lamp ? 4 : out.room >= 0 ? 3 : (m & 7) === MAT.street ? 2 : (m & 7) > 0 ? 1 : 0;
     }
     let chosen = null;
@@ -467,7 +577,7 @@ const walker = new Walker(camera, canvas, new Planet(PLANET), {
 // back, and the edits are a list a page can export, because a sculpted town
 // is a recipe somebody has not written down yet.
 const SHAPES = [
-  { name: 'block', shape: 'box', size: [1, 1, 1] }, { name: 'slab', shape: 'box', size: [2, 2, 0.5] },
+  { name: 'block', shape: 'box', size: [1, 1, 1] }, { name: 'slab', shape: 'box', size: [2, 2, 0.4] },
   { name: 'pillar', shape: 'box', size: [0.5, 0.5, 3] }, { name: 'ball', shape: 'sphere', size: [1.2, 1.2, 1.2] },
   { name: 'ramp', shape: 'box', size: [1.4, 1.6, 0.4], pitch: 30 },
 ];
