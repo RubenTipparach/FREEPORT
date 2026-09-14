@@ -411,9 +411,14 @@ of a plate puts its one vertex between them: a 0.3 m slab on the 0.22 m
 lattice came out pitted, one pit a coarse cell, and every pit was a
 vertex measured at the slab's mid plane. Walls, slabs, ramps, rails,
 eaves and lamps are 0.4 (the diagonal is 0.39) and the kit warns on
-anything under 0.4; in the game a chunk's lattice is a cube sphere
-patch's, level and plumb where a town stands, so there a plate need only
-beat the cell and only a pitched thing the diagonal. A box
+anything under 0.4; since the mesher holds a vertex a surface the diagonal
+is a margin and the CELL is the limit, and it is the exposed STEP that
+must beat it, not the box: a lamp 0.4 deep sunk 0.25 into its slab hangs
+0.15 and smears, so lamps hang 0.25, parapets and a vault stand 0.25 out
+of their walls, and a street stands 0.25 proud of the ground. In the game
+a chunk's lattice is a cube sphere patch's, level and plumb where a town
+stands, so there a plate need only beat the cell and only a pitched thing
+the diagonal. A box
 face is shaded FLAT on its own normal (`dFdx`, the curved brushes flagged
 to stay smooth), because a normal interpolated across a corner rounds it
 over a cell.
@@ -445,15 +450,46 @@ of its neighbours' cells so the quads on its border are the same from
 either side. The join is on coarse cell faces where the field is the
 terrain alone on both sides, because a structure's box is inside its
 cells, so the two surfaces differ there by the coarse lattice's own
-interpolation error, and the fine mesh dives three centimetres under the
-coarse one there (the cells outside the fine region get their vertex sunk
-along the normal) so no crack between the two can show. The gap is
+interpolation error, and the fine mesh dives under the coarse one there:
+the cells outside the fine region get their vertex sunk along the normal
+by however far it stands above the coarse surface (the coarse field,
+interpolated) and three centimetres more, so the rim is never seen; a
+fixed three centimetres fell short wherever the gap was ten. The gap is
 MEASURED anyway: every crossing on a join face is checked against the
 bilinear coarse field on that face and the page reports the mean and the
-worst. On this seed 9,404 crossings lie on the join, 5 mm apart on average
+worst. On this seed 9,339 crossings lie on the join, 5 mm apart on average
 and 108 mm at worst, the worst where a street runs out of the levelled site
 into the skirt, which is the chord sag this file already knows about; the
 game's streamer keeps the skirt for the same reason.
+
+**A dual contouring mesh is watertight by construction, and the page
+proves that its own is.** Every crossing edge gets one quad and every quad
+shares its vertices with its neighbours, so the only ways to lose that are
+an edge with two owners or none, and a triangle wound to face into the
+rock, which is culled and is a hole with the room's dark through it. Both
+happened, and each is closed by a rule: an edge is owned by the lowest
+chunk among the masked cells round it, which both chunks can tell from
+the mask alone, where before a chunk border went to the low chunk outright
+and where the low chunk had no cells the fine region ended on an open rim;
+a chunk samples two points of margin round itself rather than one, so a
+terrain crossing's lattice gradient is the same from both chunks that hold
+its cell, where before a chunk fell back to the field on its shell and
+placed the shared vertex a hair from its neighbour's, 7,093 edges' worth;
+and each HALF of a quad is wound by the field's own gradient at its middle,
+where one test for both halves let a folded quad's second half face in.
+Two cheaper windings were measured and refused: the crossing's normal left
+259 halves facing in, and one sample a hand off the face flipped 5,713,
+every floor triangle within a hand of a wall, because at a concave corner
+both sides of a face are rock. `checkMesh` on the page is the proof: the
+fine mesh welded by position across the chunks, every edge counted, an
+edge in one triangle a hole unless both its ends are on the skirt's rim,
+and every triangle tested against the gradient at its middle. It reads
+nought holes and one facing triangle in 898,432, before and after a house
+is built with the tools below, and it is what the commit message carries.
+What it does not count is a pinch, a cell whose marching cubes case joins
+two surfaces through an ambiguous face and puts one vertex between them:
+splitting such a component on its normals was tried, and the neighbours,
+which had not split, left 3,316 edges open along the cuts.
 
 **The walker walks the field and nothing else.** The ground is the first
 solid under the feet going down from a step above them, the ceiling the
@@ -479,14 +515,36 @@ shoulder. A steep face is climbed only where it tops out within a step of
 the feet two body widths on: the fillet does, and a rail's end, a cliff
 and a wall do not.
 
-**Sculpting is the same list, longer.** On foot, B: a brush at the point
+**Building is the same list, longer.** On foot, B: a brush at the point
 the crosshair meets the field (a march along the look ray, the field's
-gradient for the face), snapped to half a metre in the town's frame and
-placed plumb on its own patch, added with the left button and cut with the
-right, taken back with Z, exported as JSON with a button. An edit is a
+gradient for the face), snapped to half a metre, added with the left
+button and cut with the right, R and F lifting where it lands by half a
+metre, Z taking it back, and a button exporting what was built. The
+shapes are a block, a slab, a pillar, a ball, a ramp, a WALL laid from one
+click to the next (0.4 thick, 2.6 high, its foot sunk 0.3 so a wall to
+eight metres keeps its foot in the ground where the ground curves away, the
+street pieces' chord lesson again), a PAD, which is flat ground (a fill of
+terrain up to the aimed height and a clearing above it, so a hill is cut
+and a dip is filled and the top is a plane), a ROOM, which is a cut that
+is tagged inside and so is lamp lit like a recipe's, and a door and a
+window, which are the cuts a wall wants; the materials are concrete, plate,
+glass, lamp and terrain. That is constructive solid geometry in the field:
+add and cut in the order made, and a wall with a room cut behind it, a
+door through it and a lamp under a slab is a house the walker walks into.
+Edits are built on SITES: the first edit on a spot fixes a frame, its patch
+of the sphere, and every edit within eight metres is placed in that frame,
+because two edits on their own patches lean against each other by the
+angle between the patches, 1.8 degrees at two metres on this planet, so a
+room cut meant to share a face with a wall leaned 8 cm into it at the top,
+thinned it under a cell, and pinched it; in one frame a shared face is one
+face and a pad is exactly flat. The same reading is the frame's inverse:
+a site is found where the crosshair is by the map a lot frame is built
+with, inverted, where the first cut read it off the tangent plane and a
+brush aimed 27 m from the town's middle landed 2.5 m short. An edit is a
 structure like any other, so it lives in the same buckets, the same fine
-region and the same collision, and a town somebody sculpts is a recipe
-they have not written down yet.
+region and the same collision, and the export is one recipe a site, its
+brushes in the site's frame, which is a recipe somebody has not written
+down yet.
 
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
@@ -642,8 +700,17 @@ Numbers in the commit message. What is measured so far:
   back is 197 ms. The fine mesh with its vertices welded by position: edges
   shared by more than two triangles, which is where a quad is twisted
   through a cell holding two surfaces, were 905 with one vertex a cell and
-  are 10 with one a surface, on the same 885,862 triangles, since a quad
-  is one per crossing edge either way.
+  are 11 with one a surface, on 898,432 triangles, since a quad is one per
+  crossing edge either way; open edges off the skirt's rim, which are
+  holes, 7,093 before the chunks agreed on a shell cell's normal, 655
+  before a border edge had one owner, nought since, and one triangle in
+  898,432 facing into the rock, before and after a house is built. The
+  towns load in 12.7 s now against 9.9, the gradient at the middle of every
+  half quad being most of the difference.
+- The builder, headless: a 6 m pad of flat ground remarches 48 chunks in
+  1.4 s, a wall from two clicks 1.3 s, a room cut, a door and a lamp about
+  0.3 s each, and the walker walks up onto the pad and in through the door
+  the same frame; the export is one recipe of nine brushes at the site.
 - Material Maker under lavapipe: seven graphs, twenty eight maps at 2048,
   exported in about six minutes on four cores, and byte identical on a
   re-export of the same graphs on the same machine (five sets unchanged when

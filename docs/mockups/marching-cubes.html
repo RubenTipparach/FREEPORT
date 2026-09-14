@@ -9,7 +9,7 @@
 <div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>B</b> build <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span><span id="buildstat" hidden></span></div>
 <aside class="panel">
   <h1>Freeport <span>marching cubes</span></h1>
-  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. The towns are in the <b>same field</b>: a building is a list of <b>brushes</b> (boxes, cylinders, spheres and ramps, added or cut, in concrete or plate) composed into it and <b>dual contoured</b> on a lattice six times finer under the town (a vertex a surface in each cell, where its crossings' planes meet, so a corner is a corner, a wall is a plane and a step is a step at any lattice, where marching cubes bevels every edge), so the ground, the walls, the floors and the ramps are one mesh with one collision rule. A material switches <b>hard</b>: a triangle is the deepest solid under it, and a plinth poured into the rock still meets it on a line. Press <b>B</b> on foot to place and cut blocks.</p>
+  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. The towns are in the <b>same field</b>: a building is a list of <b>brushes</b> (boxes, cylinders, spheres and ramps, added or cut, in concrete or plate) composed into it and <b>dual contoured</b> on a lattice six times finer under the town (a vertex a surface in each cell, where its crossings' planes meet, so a corner is a corner, a wall is a plane and a step is a step at any lattice, where marching cubes bevels every edge), so the ground, the walls, the floors and the ramps are one mesh with one collision rule. A material switches <b>hard</b>: a triangle is the deepest solid under it, and a plinth poured into the rock still meets it on a line. Press <b>B</b> on foot to build: pads of flat ground, walls, rooms, doors, blocks and cuts, in the same field.</p>
   <div class="hud" id="hud"></div>
   <div class="controls">
     <button id="walk">Walk the port</button>
@@ -27,13 +27,13 @@
       <li>a slope is a slope: you walk up a hill and down to the beach without a step anywhere, and a cliff stops you</li>
       <li>right angles are right angles and a wall is a plane, at 4x, 6x and 8x alike; the plinth melts into the ground and the concrete still stops on a line; the dome, the vault and the dugout are shapes a block kit cannot make</li>
       <li>walk through a door, up the ramp, floor by floor, under the lamps, and look out of a window, which is an opening onto the room and nothing in it</li>
-      <li>B, then place a slab with the mouse and walk onto it, cut a hole in a wall and walk through: the picture is the collider</li>
+      <li>B, then build: a pad of flat ground where the crosshair is, walls from one click to the next, a room cut behind them, a door through one and a lamp under the slab, and walk in; cut a hole in a house and walk through: the picture is the collider, and nothing built is a special case of anything</li>
     </ul></div>
 </aside>
 <script type="module">
 import { THREE, Planet, PLANET, planTowns, lotFrame, makeScene, makeSea, terrainMaterial, viewOrbit, hash3, Walker, hud, fmt } from './common.js';
 import { EDGE_TABLE, TRI_TABLE } from './mc_tables.js';
-import { MAT, MAT_NAMES, compile, single } from './kit.js';
+import { MAT, MAT_NAMES, compile, single, several } from './kit.js';
 import { evalBrushes } from './kit.js';
 import { BUILDINGS } from './buildings.js';
 
@@ -231,6 +231,50 @@ for (let cs = 0; cs < 256; cs++) {
 }
 const EDGE_OF = AROUND.map((ar, axis) => ar.map(([dx, dy, dz]) => EDGE_AT.findIndex(([d, a]) => a === axis && d[0] === -dx && d[1] === -dy && d[2] === -dz)));
 const townAnchor = (town) => town.dir.clone().multiplyScalar(PLANET.radius + town.h);
+// Edits are built on SITES. A site is one patch of the sphere, the frame
+// of the first edit made on a spot, and every edit within SITE_REACH of it
+// is placed in that same frame, metres east, north and up of the site's
+// origin. Two edits on two patches lean against each other by the angle
+// between the patches, 1.8 degrees at two metres on this planet, so a
+// room cut meant to share a face with a wall leaned 8 cm into the wall at
+// its top and thinned it under a cell, which pinched the wall; in one
+// frame a shared face is one face, and a pad is exactly flat.
+const SITE_REACH = 8;   // metres from a site's origin that build in its frame
+function siteFrame(site) { return lotFrame(planet, towns[site.town], site.e, site.n); }
+// An edit's brushes in its site's frame: the one its shape names, or a
+// PAD's two, a fill of ground up to its height and a clearing above it,
+// which is what flat ground is.
+const PAD_FILL = 4, PAD_CLEAR = 6;   // metres a pad fills below its plane and clears above it
+function editBrushes(ed) {
+  if (ed.shape === 'pad') return [
+    { op: 'add', shape: 'box', mat: 'terrain', at: [ed.e, ed.n, ed.u - PAD_FILL / 2], size: [ed.size[0], ed.size[1], PAD_FILL] },
+    { op: 'cut', shape: 'box', at: [ed.e, ed.n, ed.u + PAD_CLEAR / 2], size: [ed.size[0], ed.size[1], PAD_CLEAR] },
+  ];
+  const b = { op: ed.op, shape: ed.shape, at: [ed.e, ed.n, ed.u], size: ed.size.slice() };
+  if (ed.pitch) b.pitch = ed.pitch;
+  if (ed.rot) b.rot = ed.rot;
+  if (ed.room) b.room = true;
+  return [b];
+}
+// The coarse field at a point: the planet sampled at the coarse lattice's
+// points, as the coarse mesh is, interpolated across the cell, so the fine
+// mesh can tell where the coarse surface it meets actually is.
+function coarseField(field, x, y, z) {
+  const { corner, cell, n } = field;
+  const fx = (x - corner) / cell, fy = (y - corner) / cell, fz = (z - corner) / cell;
+  const i = Math.floor(fx), j = Math.floor(fy), k = Math.floor(fz);
+  if (i < 0 || j < 0 || k < 0 || i >= n || j >= n || k >= n) return field.planet.at(x, y, z);
+  const val = (a, b, c) => {
+    const key = (c * (n + 1) + b) * (n + 1) + a;
+    let d = coarseAt.get(key);
+    if (d === undefined) { d = field.planet.at(corner + a * cell, corner + b * cell, corner + c * cell); coarseAt.set(key, d); }
+    return d;
+  };
+  const tx = fx - i, ty = fy - j, tz = fz - k;
+  const lerp = (a, b, t) => a + (b - a) * t;
+  return lerp(lerp(lerp(val(i, j, k), val(i + 1, j, k), tx), lerp(val(i, j + 1, k), val(i + 1, j + 1, k), tx), ty),
+    lerp(lerp(val(i, j, k + 1), val(i + 1, j, k + 1), tx), lerp(val(i, j + 1, k + 1), val(i + 1, j + 1, k + 1), tx), ty), tz);
+}
 function marchFine(field, cellKeys, seam) {
   const { corner, cell, n } = field, fine = cell / SUB, F = n * SUB;
   const out = { d: 0, mat: 0, room: -1, sid: -1, curved: false }, g = [0, 0, 0];
@@ -240,13 +284,28 @@ function marchFine(field, cellKeys, seam) {
   // the difference between six seconds and seventeen.
   const k0 = cellKeys[0], ci = k0 % n, cj = Math.floor(k0 / n) % n, ck = Math.floor(k0 / (n * n));
   const bx = (ci >> 2) << 2, by = (cj >> 2) << 2, bz = (ck >> 2) << 2;
-  const ox = bx * SUB - 1, oy = by * SUB - 1, oz = bz * SUB - 1;
-  const E = CH * SUB + 3, E3 = E * E * E;
+  // Two points of margin round the chunk, not one: a crossing's normal on
+  // the terrain is the lattice's own difference, which needs a point each
+  // side, and a cell on a chunk border is computed by both chunks, so both
+  // must have those points or the two place its vertex a hair apart.
+  const ox = bx * SUB - 2, oy = by * SUB - 2, oz = bz * SUB - 2;
+  const E = CH * SUB + 5, E3 = E * E * E;
   const lidx = (x, y, z) => (z * E + y) * E + x;
   const maskedAt = (fi, fj, fk) => {
     const I = Math.floor(fi / SUB), J = Math.floor(fj / SUB), K = Math.floor(fk / SUB);
     return I >= 0 && J >= 0 && K >= 0 && I < n && J < n && K < n && field.mask[field.key(I, J, K)] === 1;
   };
+  // Which chunk a fine cell is in, so an edge on a chunk border has ONE
+  // owner: the lowest chunk among the masked cells round it.
+  const cn = Math.ceil(n / CH);
+  const chunkAt = (fi, fj, fk) => ((Math.floor(fk / SUB) >> 2) * cn + (Math.floor(fj / SUB) >> 2)) * cn + (Math.floor(fi / SUB) >> 2);
+  const mine = chunkAt(ci * SUB, cj * SUB, ck * SUB);
+  // Every cell of the lattice: the chunk that owns it if it is masked, else none.
+  const cown = new Int32Array(E3).fill(-1);
+  for (let z = 0; z < E - 1; z++) for (let y = 0; y < E - 1; y++) for (let x = 0; x < E - 1; x++) {
+    const fi = ox + x, fj = oy + y, fk = oz + z;
+    if (maskedAt(fi, fj, fk)) cown[lidx(x, y, z)] = chunkAt(fi, fj, fk);
+  }
   const sd = new Float32Array(E3), sflag = new Uint8Array(E3), ssid = new Int32Array(E3);
   const sample = (x, y, z) => {
     const i = lidx(x, y, z);
@@ -257,7 +316,7 @@ function marchFine(field, cellKeys, seam) {
     return i;
   };
   // The cells: the chunk's, and a shell of their neighbours.
-  const cact = new Uint8Array(E3), cmask = new Uint8Array(E3), ccase = new Uint8Array(E3), cvi = new Int32Array(E3 * 4).fill(-1);
+  const cact = new Uint8Array(E3), cmask = new Uint8Array(E3), cev = new Int32Array(E3 * 12).fill(-1);
   for (const key of cellKeys) {
     const i = key % n, j = Math.floor(key / n) % n, k = Math.floor(key / (n * n));
     for (let c = -1; c <= SUB; c++) for (let b = -1; b <= SUB; b++) for (let a = -1; a <= SUB; a++) {
@@ -271,8 +330,11 @@ function marchFine(field, cellKeys, seam) {
   // straight line between the samples is exact on a plane, so it is kept
   // where the field agrees with it and refined by bisection where it does
   // not, which is round a box's corners. A terrain crossing's normal comes
-  // off the lattice's own differences, a built one off the field at the
-  // point, because a wall thinner than two cells has no lattice gradient.
+  // off the lattice's own differences and a built one off the field at
+  // the point, because a wall thinner than two cells has no lattice
+  // gradient; either way the same way in every chunk that holds the cell,
+  // because a chunk that fell back to the field on its shell placed the
+  // shared vertex a hair from its neighbour's, and 7,093 edges stood open.
   const cst = new Int32Array(E3 * 3).fill(-1);
   const cxs = [], cys = [], czs = [], cnx = [], cny = [], cnz = [], csd = [];
   const lgrad = (x, y, z, gg) => {
@@ -325,26 +387,31 @@ function marchFine(field, cellKeys, seam) {
   };
   // One vertex per SURFACE in a cell: the point that best sits on every
   // one of its crossings' planes, held a little toward their middle, and
-  // clamped to the cell.
-  const pos = [], nrm = [], vsid = [];
+  // clamped to the cell. The surfaces are the marching cubes case's
+  // components and nothing finer: splitting a component further on its
+  // normals was tried, and the cell's neighbours, which had not split,
+  // left 3,316 edges open along the cuts. Every edge of the cell knows
+  // its vertex, which is what the quads read.
+  const pos = [], nrm = [], vsid = [], vskirt = [];
   const LAMBDA = 0.05;
-  const list = new Int32Array(12);
+  const all = new Int32Array(12), alle = new Int32Array(12), list = new Int32Array(12);
   for (let z = 0; z < E - 1; z++) for (let y = 0; y < E - 1; y++) for (let x = 0; x < E - 1; x++) {
     const li = lidx(x, y, z);
     if (!cact[li]) continue;
     let cs = 0;
     for (let c = 0; c < 8; c++) if (sd[sample(x + CORNER[c][0], y + CORNER[c][1], z + CORNER[c][2])] <= 0) cs |= 1 << c;
     if (cs === 0 || cs === 255) continue;
-    ccase[li] = cs;
     for (let k = 0; k < NCOMP[cs]; k++) {
-    let count = 0;
+    let na = 0;
     for (let e = 0; e < 12; e++) {
       if (COMP[cs * 12 + e] !== k) continue;
       const [d, axis] = EDGE_AT[e];
       const id = crossing(x + d[0], y + d[1], z + d[2], axis);
-      if (id >= 0) list[count++] = id;
+      if (id >= 0) { all[na] = id; alle[na] = e; na++; }
     }
-    if (!count) continue;
+    if (!na) continue;
+    const count = na;
+    for (let i = 0; i < na; i++) list[i] = all[i];
     let mx = 0, my = 0, mz = 0, nx = 0, ny = 0, nz = 0, sid = -1;
     for (let i = 0; i < count; i++) { const c = list[i]; mx += cxs[c]; my += cys[c]; mz += czs[c]; nx += cnx[c]; ny += cny[c]; nz += cnz[c]; sid = Math.max(sid, csd[c]); }
     mx /= count; my /= count; mz /= count;
@@ -366,36 +433,75 @@ function marchFine(field, cellKeys, seam) {
     const lo0 = corner + (ox + x) * fine - 0.05 * fine, lo1 = corner + (oy + y) * fine - 0.05 * fine, lo2 = corner + (oz + z) * fine - 0.05 * fine;
     px = clamp(px, lo0, lo0 + 1.1 * fine); py = clamp(py, lo1, lo1 + 1.1 * fine); pz = clamp(pz, lo2, lo2 + 1.1 * fine);
     const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
-    if (!cmask[li]) { px -= nx * 0.03; py -= ny * 0.03; pz -= nz * 0.03; }   // the skirt under the coarse mesh
-    cvi[li * 4 + k] = pos.length / 3;
-    pos.push(px, py, pz); nrm.push(nx, ny, nz); vsid.push(sid);
+    if (!cmask[li]) {
+      // The skirt: a cell outside the fine region has its vertex sunk under
+      // the coarse mesh, by however far it stands above the coarse surface
+      // here and three centimetres more, so the rim is never seen. A fixed
+      // three centimetres fell short wherever the join's gap was ten.
+      const dc = coarseField(field, px, py, pz);
+      const s = Math.min(0.5, Math.max(0.03, 0.03 - dc));
+      px -= nx * s; py -= ny * s; pz -= nz * s;
+    }
+    const vi = pos.length / 3;
+    for (let i = 0; i < na; i++) cev[li * 12 + alle[i]] = vi;
+    pos.push(px, py, pz); nrm.push(nx, ny, nz); vsid.push(sid); vskirt.push(cmask[li] ? 0 : 1);
     }
   }
   // A quad per crossing edge the chunk owns, round the four cells that
-  // share it, each cell's vertex being the one of the surface that edge is on.
+  // share it, each cell's vertex being the one of the surface that edge is
+  // on. An edge on a chunk border is owned by the lowest chunk among the
+  // masked cells round it, which both chunks can tell from the mask alone,
+  // so every edge has one owner and one quad: the first cut gave a border
+  // to the low chunk outright, and where the low chunk had no cells the
+  // fine region ended on an open rim, 655 edges of it. The quad is split
+  // along the diagonal that folds less, and EACH half is wound to face
+  // out of the rock by the field's own gradient at its middle, which is
+  // the test the mesh check applies, so the two cannot disagree. One test
+  // for both halves let a folded quad's second half face in, and a culled
+  // triangle is a hole. Two cheaper tests were tried and measured: the
+  // crossing's normal left 259 halves facing in, and one sample a hand off
+  // the face flipped 5,713, every floor triangle within a hand of a wall,
+  // because at a concave corner both sides of a face are rock.
   const tris = [];
-  for (let z = 1; z < E - 2; z++) for (let y = 1; y < E - 2; y++) for (let x = 1; x < E - 2; x++) {
-    if (!cact[lidx(x, y, z)]) continue;
+  const gn = [0, 0, 0];
+  const geoN = (a, b, c) => {
+    const ux = pos[3 * b] - pos[3 * a], uy = pos[3 * b + 1] - pos[3 * a + 1], uz = pos[3 * b + 2] - pos[3 * a + 2];
+    const wx = pos[3 * c] - pos[3 * a], wy = pos[3 * c + 1] - pos[3 * a + 1], wz = pos[3 * c + 2] - pos[3 * a + 2];
+    gn[0] = uy * wz - uz * wy; gn[1] = uz * wx - ux * wz; gn[2] = ux * wy - uy * wx;
+  };
+  const fold = (a, b, c, d) => {
+    geoN(a, b, c); const x = gn[0], y = gn[1], z = gn[2]; geoN(a, c, d);
+    return (x * gn[0] + y * gn[1] + z * gn[2]) / ((Math.hypot(x, y, z) * Math.hypot(gn[0], gn[1], gn[2])) || 1);
+  };
+  const emit = (a, b, c) => {
+    geoN(a, b, c);
+    if (Math.hypot(gn[0], gn[1], gn[2]) < 1e-12) { tris.push(a, b, c); return; }
+    const mx = (pos[3 * a] + pos[3 * b] + pos[3 * c]) / 3, my = (pos[3 * a + 1] + pos[3 * b + 1] + pos[3 * c + 1]) / 3, mz = (pos[3 * a + 2] + pos[3 * b + 2] + pos[3 * c + 2]) / 3;
+    field.gradient(mx, my, mz, 0.04, g); samples += 6;
+    if (gn[0] * g[0] + gn[1] * g[1] + gn[2] * g[2] <= 0) tris.push(a, b, c); else tris.push(a, c, b);
+  };
+  for (let z = 1; z < E - 1; z++) for (let y = 1; y < E - 1; y++) for (let x = 1; x < E - 1; x++) {
+    if (!cact[lidx(x, y, z)] && !cact[lidx(x - 1, y - 1, z - 1)]) continue;
     for (let axis = 0; axis < 3; axis++) {
+      const ar = AROUND[axis], eo = EDGE_OF[axis];
+      let owner = -1;
+      for (let q = 0; q < 4; q++) {
+        const o = cown[lidx(x + ar[q][0], y + ar[q][1], z + ar[q][2])];
+        if (o >= 0 && (owner < 0 || o < owner)) owner = o;
+      }
+      if (owner !== mine) continue;
       const id = crossing(x, y, z, axis);
       if (id < 0) continue;
-      const ar = AROUND[axis], eo = EDGE_OF[axis];
-      let ok = true, anyMasked = false;
+      let ok = true;
       const v = [0, 0, 0, 0];
       for (let q = 0; q < 4; q++) {
-        const li = lidx(x + ar[q][0], y + ar[q][1], z + ar[q][2]);
-        const k = COMP[ccase[li] * 12 + eo[q]];
-        const vi = k < 0 ? -1 : cvi[li * 4 + k];
+        const vi = cev[lidx(x + ar[q][0], y + ar[q][1], z + ar[q][2]) * 12 + eo[q]];
         if (vi < 0) { ok = false; break; }
-        v[q] = vi; if (cmask[li]) anyMasked = true;
+        v[q] = vi;
       }
-      if (!ok || !anyMasked) continue;
+      if (!ok) continue;
       const [v0, v1, v2, v3] = v;
-      // Wound to face the way the field falls, which is out of the rock.
-      const ux = pos[3 * v1] - pos[3 * v0], uy = pos[3 * v1 + 1] - pos[3 * v0 + 1], uz = pos[3 * v1 + 2] - pos[3 * v0 + 2];
-      const wx = pos[3 * v2] - pos[3 * v0], wy = pos[3 * v2 + 1] - pos[3 * v0 + 1], wz = pos[3 * v2 + 2] - pos[3 * v0 + 2];
-      const fnx = uy * wz - uz * wy, fny = uz * wx - ux * wz, fnz = ux * wy - uy * wx;
-      if (fnx * cnx[id] + fny * cny[id] + fnz * cnz[id] >= 0) tris.push(v0, v1, v2, v0, v2, v3); else tris.push(v0, v2, v1, v0, v3, v2);
+      if (fold(v0, v1, v2, v3) >= fold(v1, v2, v3, v0)) { emit(v0, v1, v2); emit(v0, v2, v3); } else { emit(v1, v2, v3); emit(v1, v3, v0); }
     }
   }
   // Materials per triangle, and then EVERY vertex of a triangle carries
@@ -417,7 +523,7 @@ function marchFine(field, cellKeys, seam) {
       d = dups.get(dk);
       if (d === undefined) {
         d = pos.length / 3;
-        pos.push(pos[3 * v], pos[3 * v + 1], pos[3 * v + 2]); nrm.push(nrm[3 * v], nrm[3 * v + 1], nrm[3 * v + 2]); vsid.push(sid);
+        pos.push(pos[3 * v], pos[3 * v + 1], pos[3 * v + 2]); nrm.push(nrm[3 * v], nrm[3 * v + 1], nrm[3 * v + 2]); vsid.push(sid); vskirt.push(vskirt[v]);
         vkey.push(-1); vmat.push(0); vtag.push(0); vbase.push(0); vanc.push(0, 0, 0); vfe.push(0, 0, 0);
         dups.set(dk, d); split++;
       } else return d;
@@ -455,6 +561,7 @@ function marchFine(field, cellKeys, seam) {
   geo.setAttribute('base', new THREE.Float32BufferAttribute(vbase, 1));
   geo.setAttribute('anchor', new THREE.Float32BufferAttribute(vanc, 3));
   geo.setAttribute('fe', new THREE.Float32BufferAttribute(vfe, 3));
+  geo.setAttribute('skirt', new THREE.Float32BufferAttribute(vskirt, 1));
   geo.setIndex(idx);
   return { geometry: geo, triangles: idx.length / 3, vertices: pos.length / 3, samples, cells: cellKeys.length, split };
 }
@@ -533,14 +640,13 @@ function buildField(planet, towns, corner, cell, n, edits, seed) {
         const x = st.along === 'north' ? st.x : st.x + off, z = st.along === 'north' ? st.z + off : st.z;
         if (Math.hypot(x, z) > town.radius + 3) continue;
         const size = st.along === 'north' ? [st.w, along / count + 0.05, 0.64] : [along / count + 0.05, st.d, 0.64];
-        field.place(single({ op: 'add', shape: 'box', at: [0, 0, -0.2], size }, 'street'), lotFrame(planet, town, x, z), 'street', { town: ti, anchor: townAnchor(town), fe: town.east });
+        field.place(single({ op: 'add', shape: 'box', at: [0, 0, -0.1], size }, 'street'), lotFrame(planet, town, x, z), 'street', { town: ti, anchor: townAnchor(town), fe: town.east });
       }
     }
   });
   for (const ed of edits) {
-    const brush = { op: ed.op, shape: ed.shape, at: [0, 0, ed.u], size: ed.size.slice() };
-    if (ed.pitch) brush.pitch = ed.pitch;
-    const s = field.place(single(brush, ed.mat), lotFrame(planet, towns[ed.town], ed.e, ed.n), 'edit', { town: ed.town, edit: ed, anchor: townAnchor(towns[ed.town]), fe: towns[ed.town].east });
+    const site = sites[ed.site], f = siteFrame(site);
+    const s = field.place(several(editBrushes(ed), ed.mat), f, 'edit', { town: site.town, edit: ed, anchor: f.dir.clone().multiplyScalar(f.base), fe: f.east });
     ed.cells = s.cells;
   }
   for (const w of warnings) console.warn('kit:', w);
@@ -551,7 +657,7 @@ const canvas = document.getElementById('c');
 const { renderer, scene, camera, controls } = makeScene(canvas);
 const material = await terrainMaterial(renderer);
 let seed = PLANET.seed, planet = null, towns = null, field = null;
-let coarse = null, chunks = new Map(), stats = {}, edits = [], lattice = null;
+let coarse = null, chunks = new Map(), stats = {}, edits = [], sites = [], lattice = null;
 const sea = makeSea(new Planet(PLANET)); scene.add(sea);
 
 // ------------------------------------------------------------- on foot --
@@ -654,13 +760,24 @@ const walker = new Walker(camera, canvas, new Planet(PLANET), {
 // sphere. Left button adds it, right button cuts it, Z takes the last one
 // back, and the edits are a list a page can export, because a sculpted town
 // is a recipe somebody has not written down yet.
+// The shapes. A WALL is laid from one click to the next, 0.4 thick, its foot
+// sunk 0.3 in the ground so on this planet a wall to eight metres keeps its
+// foot in the ground where the ground curves away (the street pieces' chord
+// lesson); a PAD is flat ground, a fill of terrain up to the aimed height
+// with everything above it cleared; a ROOM is a cut that is tagged inside,
+// so it is lamp lit like a recipe's; a door and a window are the cuts a
+// wall wants. R and F raise and lower where a brush lands by half a metre.
 const SHAPES = [
   { name: 'block', shape: 'box', size: [1, 1, 1] }, { name: 'slab', shape: 'box', size: [2, 2, 0.4] },
+  { name: 'wall', shape: 'box', size: [0.4, 0, 2.9], line: true, sink: 0.3 },
+  { name: 'pad', shape: 'pad', size: [6, 6, 0.1], pad: true },
   { name: 'pillar', shape: 'box', size: [0.5, 0.5, 3] }, { name: 'ball', shape: 'sphere', size: [1.2, 1.2, 1.2] },
   { name: 'ramp', shape: 'box', size: [1.4, 1.6, 0.4], pitch: 30 },
+  { name: 'door', shape: 'box', size: [1.2, 1.2, 2.2] }, { name: 'window', shape: 'box', size: [1.2, 1.2, 1.2] },
+  { name: 'room', shape: 'box', size: [4, 4, 2.6], room: true },
 ];
-const SCULPT_MATS = ['concrete', 'plate', 'glass', 'lamp'];
-const sculpt = { on: false, shape: 0, mat: 0 };
+const SCULPT_MATS = ['concrete', 'plate', 'glass', 'lamp', 'terrain'];
+const sculpt = { on: false, shape: 0, mat: 0, lift: 0, from: null };
 const ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x7fd7ff, wireframe: true, depthTest: false }));
 ghost.visible = false; ghost.matrixAutoUpdate = false; scene.add(ghost);
 let aimed = null;
@@ -683,28 +800,64 @@ function aim() {
   }
   return null;
 }
-// The brush a click would make: snapped, in the town frame, with its frame.
+// The site a point builds on: the nearest within reach, else a new one at
+// the point, in town coordinates read the way a lot frame is built (the
+// town's up plus east and north over the radius, inverted), or a site
+// aimed 27 m from the town's middle would land 2.5 m short of the
+// crosshair.
+function siteFor(p) {
+  const ti = townOf(p.clone().normalize()), town = towns[ti], R = planet.radius;
+  const dir = p.clone().normalize(), k = R / dir.dot(town.dir);
+  const e = dir.dot(town.east) * k, n = dir.dot(town.north) * k;
+  let best = null, bd = SITE_REACH;
+  sites.forEach((st, i) => { if (st.town !== ti) return; const d = Math.hypot(st.e - e, st.n - n); if (d < bd) { bd = d; best = i; } });
+  return best !== null ? { index: best, site: sites[best] } : { index: -1, site: { town: ti, e: Math.round(e * 2) / 2, n: Math.round(n * 2) / 2 } };
+}
+// The brush a click would make: on its site, snapped to half a metre in
+// the site's frame, lifted by R and F. A wall's first click is a post
+// where it will start, and its second click builds on the first's site.
 function proposal(cut) {
   const hit = aim(); if (!hit) return null;
-  const sh = SHAPES[sculpt.shape], half = [sh.size[0] / 2, sh.size[1] / 2, sh.size[2] / 2];
-  const ti = townOf(hit.p.clone().normalize()), town = towns[ti], R = planet.radius;
-  const reach = Math.abs(hit.normal.dot(town.dir)) > 0.7 ? half[2] : Math.max(half[0], half[1]);
-  const c = hit.p.clone().addScaledVector(hit.normal, cut ? -(reach - 0.05) : reach + 0.02);
-  const dir = c.clone().normalize(), rel = dir.clone().sub(town.dir).multiplyScalar(R);
-  const e = Math.round(rel.dot(town.east) * 2) / 2, n = Math.round(rel.dot(town.north) * 2) / 2;
-  const u = Math.round((c.length() - (R + town.h)) * 2) / 2;
-  return { town: ti, e, n, u, shape: sh.shape, size: sh.size.slice(), pitch: sh.pitch || 0, mat: SCULPT_MATS[sculpt.mat], op: cut ? 'cut' : 'add' };
+  const sh = SHAPES[sculpt.shape];
+  const at = sculpt.from ? { index: sculpt.from.site, site: sites[sculpt.from.site] } : siteFor(hit.p);
+  const f = siteFrame(at.site), origin = f.dir.clone().multiplyScalar(f.base);
+  const snap = (p) => {
+    const d = p.clone().sub(origin);
+    return { e: Math.round(d.dot(f.east) * 2) / 2, n: Math.round(d.dot(f.north) * 2) / 2, u: Math.round(d.dot(f.dir) * 2) / 2 + sculpt.lift };
+  };
+  const base = { site: at.index, newSite: at.index < 0 ? at.site : undefined, mat: SCULPT_MATS[sculpt.mat], op: sh.room ? 'cut' : cut ? 'cut' : 'add', pitch: sh.pitch || 0 };
+  if (sh.pad) return { ...base, ...snap(hit.p), shape: 'pad', size: sh.size.slice(), op: 'add' };
+  if (sh.line) {
+    const p = snap(hit.p), h = sh.size[2], w = sh.size[0];
+    if (!sculpt.from) return { ...base, ...p, u: p.u + h / 2 - sh.sink, shape: 'box', size: [w, w, h], post: true };
+    const fr = sculpt.from, de = p.e - fr.e, dn = p.n - fr.n, len = Math.max(0.5, Math.hypot(de, dn));
+    return { ...base, e: (fr.e + p.e) / 2, n: (fr.n + p.n) / 2, u: fr.u + h / 2 - sh.sink, shape: 'box', size: [w, len, h], rot: Math.atan2(-de, dn) * 180 / Math.PI };
+  }
+  const half = [sh.size[0] / 2, sh.size[1] / 2, sh.size[2] / 2];
+  const reach = Math.abs(hit.normal.dot(f.dir)) > 0.7 ? half[2] : Math.max(half[0], half[1]);
+  const c = hit.p.clone().addScaledVector(hit.normal, base.op === 'cut' ? -(reach - 0.05) : reach + 0.02);
+  return { ...base, ...snap(c), shape: sh.shape, size: sh.size.slice(), room: sh.room || undefined };
 }
 function showGhost() {
   aimed = sculpt.on && walker.active ? proposal(false) : null;
   ghost.visible = !!aimed;
   if (!aimed) return;
-  const f = lotFrame(planet, towns[aimed.town], aimed.e, aimed.n);
-  const m = new THREE.Matrix4().makeBasis(f.east, f.north, f.dir).setPosition(f.dir.clone().multiplyScalar(f.base + aimed.u));
+  const f = siteFrame(aimed.site >= 0 ? sites[aimed.site] : aimed.newSite);
+  const at = f.dir.clone().multiplyScalar(f.base).addScaledVector(f.east, aimed.e).addScaledVector(f.north, aimed.n).addScaledVector(f.dir, aimed.u);
+  const m = new THREE.Matrix4().makeBasis(f.east, f.north, f.dir).setPosition(at);
+  if (aimed.rot) m.multiply(new THREE.Matrix4().makeRotationZ(aimed.rot * Math.PI / 180));
   if (aimed.pitch) m.multiply(new THREE.Matrix4().makeRotationX(aimed.pitch * Math.PI / 180));
   ghost.matrix.copy(m).scale(new THREE.Vector3(aimed.size[0], aimed.size[1], aimed.size[2]));
 }
 function applyEdit(ed) {
+  // An edit handed in with a town point and no site (the harness's, or an
+  // old export's) is a site of its own at that point.
+  if (ed.site === undefined || ed.site < 0) {
+    sites.push(ed.newSite || { town: ed.town || 0, e: ed.e, n: ed.n });
+    ed.site = sites.length - 1;
+    if (!ed.newSite) { ed.e = 0; ed.n = 0; }
+  }
+  delete ed.newSite; delete ed.post;
   edits.push(ed);
   remarch(() => ed.cells);
   sayBuild();
@@ -712,27 +865,49 @@ function applyEdit(ed) {
 function sayBuild() {
   const el = document.getElementById('buildstat');
   el.hidden = !sculpt.on;
-  el.textContent = sculpt.on ? ` | BUILD ${SHAPES[sculpt.shape].name} of ${SCULPT_MATS[sculpt.mat]}: LMB add, RMB cut, [ ] shape, , . material, Z undo (${edits.length} edits)` : '';
+  const sh = SHAPES[sculpt.shape];
+  const how = sh.line ? (sculpt.from ? 'LMB the far end' : 'LMB the near end') : sh.pad ? 'LMB flattens the ground here' : sh.room ? 'LMB cuts a room' : 'LMB add, RMB cut';
+  el.textContent = sculpt.on ? ` | BUILD ${sh.name} of ${SCULPT_MATS[sculpt.mat]}: ${how}, [ ] shape, , . material, R F height${sculpt.lift ? ` (${sculpt.lift > 0 ? '+' : ''}${sculpt.lift} m)` : ''}, Z undo (${edits.length} edits)` : '';
 }
 document.addEventListener('keydown', (ev) => {
   if (!walker.active) return;
-  if (ev.code === 'KeyB') { sculpt.on = !sculpt.on; sayBuild(); }
+  if (ev.code === 'KeyB') { sculpt.on = !sculpt.on; sculpt.from = null; sayBuild(); }
   if (!sculpt.on) return;
-  if (ev.code === 'BracketRight') sculpt.shape = (sculpt.shape + 1) % SHAPES.length;
-  if (ev.code === 'BracketLeft') sculpt.shape = (sculpt.shape + SHAPES.length - 1) % SHAPES.length;
+  if (ev.code === 'BracketRight') { sculpt.shape = (sculpt.shape + 1) % SHAPES.length; sculpt.from = null; }
+  if (ev.code === 'BracketLeft') { sculpt.shape = (sculpt.shape + SHAPES.length - 1) % SHAPES.length; sculpt.from = null; }
   if (ev.code === 'Period') sculpt.mat = (sculpt.mat + 1) % SCULPT_MATS.length;
   if (ev.code === 'Comma') sculpt.mat = (sculpt.mat + SCULPT_MATS.length - 1) % SCULPT_MATS.length;
+  if (ev.code === 'KeyR') sculpt.lift = Math.round((sculpt.lift + 0.5) * 2) / 2;
+  if (ev.code === 'KeyF') sculpt.lift = Math.round((sculpt.lift - 0.5) * 2) / 2;
   if (ev.code === 'KeyZ' && edits.length) { const last = edits.pop(); remarch(() => last.cells); }
   sayBuild();
 });
 canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
 canvas.addEventListener('mousedown', (ev) => {
   if (!walker.active || !sculpt.on || document.pointerLockElement !== canvas) return;
-  const ed = proposal(ev.button === 2);
-  if (ed) applyEdit(ed);
+  place(proposal(ev.button === 2));
 });
+// A click: a wall's first click only remembers where it starts.
+function place(ed) {
+  if (!ed) return;
+  const sh = SHAPES[sculpt.shape];
+  if (ed.post) {
+    // A wall's first click: the post's site becomes the wall's, made now if new.
+    if (ed.site < 0) { sites.push(ed.newSite); ed.site = sites.length - 1; }
+    sculpt.from = { site: ed.site, e: ed.e, n: ed.n, u: ed.u - sh.size[2] / 2 + sh.sink }; sayBuild(); return;
+  }
+  sculpt.from = null;
+  applyEdit(ed);
+}
+// What was built, as recipes: one a site, its brushes in the site's frame,
+// metres east and north of the site's origin and up from the town's level,
+// and where the site is on the town.
+function recipeOfEdits() {
+  return sites.map((site, i) => ({ name: `sculpted ${i + 1}`, town: site.town, at: [site.e, site.n], frame: 'site',
+    brushes: edits.filter((ed) => ed.site === i).flatMap((ed) => editBrushes(ed).map((b) => ({ ...b, mat: b.mat || ed.mat }))) })).filter((r) => r.brushes.length);
+}
 document.getElementById('export').addEventListener('click', () => {
-  const ta = document.getElementById('edits'); ta.hidden = false; ta.value = JSON.stringify(edits); ta.select();
+  const ta = document.getElementById('edits'); ta.hidden = false; ta.value = JSON.stringify(recipeOfEdits()); ta.select();
 });
 
 // ---------------------------------------------------------------- build --
@@ -769,6 +944,47 @@ function buildCoarse() {
   coarse.userData = { built };
   scene.add(coarse);
 }
+// The fine mesh, checked: welded by position across the chunks, every edge
+// should be in two triangles except on the skirt's rim, where the coarse
+// mesh takes over, and every triangle should face out of the rock by the
+// field's own gradient at its middle. What it counts are holes and culled
+// faces, which are the two ways a dual contouring mesh stops being water
+// tight, and the numbers are what the commit message carries.
+function checkMesh() {
+  const t0 = performance.now();
+  const verts = [], skirt = [], keyOf = new Map(), edges = new Map(), g = [0, 0, 0];
+  let tris = 0, facingIn = 0;
+  for (const m of chunks.values()) {
+    const pa = m.geometry.attributes.position, sk = m.geometry.attributes.skirt, ix = m.geometry.index.array;
+    const ids = new Int32Array(pa.count);
+    for (let i = 0; i < pa.count; i++) {
+      const x = pa.getX(i), y = pa.getY(i), z = pa.getZ(i);
+      const k = `${Math.round(x * 2000)},${Math.round(y * 2000)},${Math.round(z * 2000)}`;
+      let id = keyOf.get(k);
+      if (id === undefined) { id = verts.length / 3; keyOf.set(k, id); verts.push(x, y, z); skirt.push(sk.getX(i)); }
+      ids[i] = id;
+    }
+    for (let t = 0; t < ix.length; t += 3) {
+      const a = ids[ix[t]], b = ids[ix[t + 1]], c = ids[ix[t + 2]];
+      if (a === b || b === c || a === c) continue;
+      tris++;
+      const ux = verts[3 * b] - verts[3 * a], uy = verts[3 * b + 1] - verts[3 * a + 1], uz = verts[3 * b + 2] - verts[3 * a + 2];
+      const wx = verts[3 * c] - verts[3 * a], wy = verts[3 * c + 1] - verts[3 * a + 1], wz = verts[3 * c + 2] - verts[3 * a + 2];
+      const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, nl = Math.hypot(nx, ny, nz) || 1;
+      const cx = (verts[3 * a] + verts[3 * b] + verts[3 * c]) / 3, cy = (verts[3 * a + 1] + verts[3 * b + 1] + verts[3 * c + 1]) / 3, cz = (verts[3 * a + 2] + verts[3 * b + 2] + verts[3 * c + 2]) / 3;
+      field.gradient(cx, cy, cz, 0.04, g);
+      const gl = Math.hypot(g[0], g[1], g[2]) || 1;
+      if ((nx * g[0] + ny * g[1] + nz * g[2]) / (nl * gl) > 0.2) facingIn++;   // the gradient points into the rock
+      for (const [p, r] of [[a, b], [b, c], [c, a]]) { const k = p < r ? p * 4294967296 + r : r * 4294967296 + p; edges.set(k, (edges.get(k) || 0) + 1); }
+    }
+  }
+  let open = 0, holes = 0, many = 0;
+  for (const [k, cnt] of edges) {
+    if (cnt === 1) { open++; const p = Math.floor(k / 4294967296), r = k % 4294967296; if (!skirt[p] || !skirt[r]) holes++; }
+    else if (cnt > 2) many++;
+  }
+  return { triangles: tris, edges: edges.size, open, holes, many, facingIn, ms: performance.now() - t0 };
+}
 function setLamps() {
   const lamps = [];
   for (const s of field.structures) lamps.push(...s.lamps);
@@ -791,9 +1007,21 @@ function remarch(cellsOf) {
   const before = field.mask;
   const t0 = performance.now();
   field = buildField(planet, towns, -lattice.half, lattice.cell, lattice.n, edits, seed);
-  const dirty = new Set((cellsOf() || []).map(chunkOf));
+  // A chunk is remeshed when a cell in it or NEXT to it changed, because
+  // an edge on a chunk border is owned by the lowest chunk with a masked
+  // cell round it, and a cell gaining a structure can take an edge off its
+  // neighbour: without the neighbours, an edit left three edges open.
+  const dirty = new Set();
+  const around = (key) => {
+    const n = lattice.n, i = key % n, j = Math.floor(key / n) % n, k = Math.floor(key / (n * n));
+    for (let dk = -1; dk <= 1; dk++) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const a = i + di, b = j + dj, c = k + dk;
+      if (a >= 0 && b >= 0 && c >= 0 && a < n && b < n && c < n) dirty.add(chunkOf((c * n + b) * n + a));
+    }
+  };
+  for (const key of cellsOf() || []) around(key);
   let moved = false;
-  for (let i = 0; i < before.length; i++) if (field.mask[i] !== before[i]) { moved = true; dirty.add(chunkOf(i)); }
+  for (let i = 0; i < before.length; i++) if (field.mask[i] !== before[i]) { moved = true; around(i); }
   if (moved) buildCoarse();
   const cc = chunkCells();
   for (const ck of dirty) { dropChunk(ck); const cells = cc.get(ck); if (cells) { const m = buildChunk(ck, cells); chunks.set(ck, m); scene.add(m); } }
@@ -875,5 +1103,5 @@ renderer.setAnimationLoop((now) => {
 // For a harness that wants one frame rather than a loop (the screenshots in
 // docs/img), and to sculpt without a mouse.
 window.__mock = { renderer, scene, camera, controls, walker, get towns() { return towns; }, get planet() { return planet; }, get field() { return field; },
-  get edits() { return edits; }, get stats() { return stats; }, lotFrame, walkMode, aim, proposal, sculpt: (ed) => applyEdit(ed), undo: () => { const last = edits.pop(); if (last) remarch(() => last.cells); }, sculptState: sculpt, SHAPES, MAT };
+  get edits() { return edits; }, get sites() { return sites; }, get stats() { return stats; }, lotFrame, walkMode, aim, proposal, place, sculpt: (ed) => applyEdit(ed), undo: () => { const last = edits.pop(); if (last) remarch(() => last.cells); }, sculptState: sculpt, SHAPES, MAT, checkMesh, recipeOfEdits };
 </script>

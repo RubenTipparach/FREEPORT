@@ -212,7 +212,7 @@ export const BUILDINGS = {
     "at": [
      0,
      0,
-     3.0
+     2.9
     ],
     "size": [
      0.7,
@@ -231,7 +231,7 @@ export const BUILDINGS = {
      1.45
     ],
     "size": [
-     6.6,
+     7.0,
      6.0,
      2.2
     ]
@@ -422,7 +422,7 @@ export const BUILDINGS = {
     "at": [
      1.8,
      0,
-     2.85
+     2.8
     ],
     "size": [
      0.6,
@@ -437,7 +437,7 @@ export const BUILDINGS = {
     "at": [
      -0.9,
      1.56,
-     2.85
+     2.8
     ],
     "size": [
      0.6,
@@ -452,7 +452,7 @@ export const BUILDINGS = {
     "at": [
      -0.9,
      -1.56,
-     2.85
+     2.8
     ],
     "size": [
      0.6,
@@ -558,7 +558,7 @@ export const BUILDINGS = {
     "at": [
      0,
      0,
-     -0.02
+     -0.15
     ],
     "size": [
      0.7,
@@ -639,9 +639,9 @@ export const BUILDINGS = {
      2.35
     ],
     "size": [
-     8.3,
-     7.2,
-     8.3
+     8.5,
+     7.0,
+     8.5
     ],
     "clip": [
      0.3,
@@ -747,7 +747,7 @@ export const BUILDINGS = {
     "at": [
      0,
      -1.8,
-     6.1
+     6.0
     ],
     "size": [
      0.8,
@@ -762,7 +762,7 @@ export const BUILDINGS = {
     "at": [
      0,
      1.8,
-     6.1
+     6.0
     ],
     "size": [
      0.8,
@@ -1013,7 +1013,7 @@ export const BUILDINGS = {
     "at": [
      0,
      0,
-     3.0
+     2.9
     ],
     "size": [
      0.7,
@@ -1096,8 +1096,8 @@ export const BUILDINGS = {
      0.7
     ],
     "size": [
-     7.3,
-     6.3,
+     7.5,
+     6.5,
      0.9
     ]
    },
@@ -1111,8 +1111,8 @@ export const BUILDINGS = {
      0.95
     ],
     "size": [
-     6.5,
-     5.5,
+     6.7,
+     5.7,
      1.2
     ]
    }
@@ -1299,7 +1299,7 @@ export const BUILDINGS = {
     "at": [
      0.4,
      0,
-     3.0
+     2.9
     ],
     "size": [
      0.7,

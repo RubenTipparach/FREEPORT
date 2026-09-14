@@ -53,7 +53,10 @@ ground (`u = 0` is the town's level). `footprint` is what the lot becomes,
   has held a vertex a SURFACE in each cell since (a plate's two faces in
   one cell are two vertices), so the diagonal is a margin now rather than
   the limit; the cell is: a plate thinner than 0.22 m can fall between
-  the corner samples and vanish. The game's near lattice is a cube sphere
+  the corner samples and vanish, and so can an exposed STEP, which is the
+  measure that matters: a 0.4 m lamp sunk 0.25 into its slab hangs 0.15
+  and smears, so a lamp hangs 0.25, a parapet stands 0.25 out of its wall,
+  a vault 0.25 out of its box. The game's near lattice is a cube sphere
   patch's, level and plumb where a town stands, so there a plate need only
   beat the cell and only a pitched thing the diagonal.
 - **A cut leaves the material it cut through**, so a doorway's reveal is

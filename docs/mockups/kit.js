@@ -197,11 +197,17 @@ export function compile(recipe, storeys, seed, hash) {
   return { brushes, rooms, lamps, bbox, warnings, storeys: S, storey: T, door: recipe.door || 0, footprint: recipe.footprint };
 }
 
-// A single brush as a structure of its own, which is what a sculpt edit
-// and a piece of street are.
-export function single(src, matName) {
-  const rooms = [];
-  const b = compileOne(Object.assign({ mat: matName }, src), 0, 0, (n) => MAT[n] === undefined ? MAT.concrete : MAT[n], rooms, () => {});
-  const bb = b.bb.slice();
-  return { brushes: [b], rooms, lamps: b.op === 'add' && b.mat === MAT.lamp ? [[b.c[0], b.c[1], b.c[2], 4.5]] : [], bbox: bb, warnings: [], storeys: 0, storey: 3, door: 0, footprint: [0, 0] };
+// One brush or a few with no storeys, as an edit or a street is: compiled
+// in the frame they are given, with their box and any lamp among them.
+export function several(srcs, matName) {
+  const rooms = [], brushes = [], lamps = [];
+  const bb = [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity];
+  for (const src of srcs) {
+    const b = compileOne(Object.assign({ mat: matName }, src), 0, 0, (n) => MAT[n] === undefined ? MAT.concrete : MAT[n], rooms, () => {});
+    brushes.push(b);
+    for (let i = 0; i < 3; i++) { bb[2 * i] = Math.min(bb[2 * i], b.bb[2 * i]); bb[2 * i + 1] = Math.max(bb[2 * i + 1], b.bb[2 * i + 1]); }
+    if (b.op === 'add' && b.mat === MAT.lamp) lamps.push([b.c[0], b.c[1], b.c[2], 4.5]);
+  }
+  return { brushes, rooms, lamps, bbox: bb, warnings: [], storeys: 0, storey: 3, door: 0, footprint: [0, 0] };
 }
+export function single(src, matName) { return several([src], matName); }
