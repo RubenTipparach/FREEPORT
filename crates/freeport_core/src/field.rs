@@ -82,6 +82,67 @@ impl Density for Planet {
     }
 }
 
+/// A box in a frame of its own: a floor slab, a wall, a step. Positive
+/// inside, and a signed distance outside its faces, so a crossing bisected
+/// on it lands on the face and a vertex solved from its crossings' planes
+/// lands on the corner.
+#[derive(Clone, Debug)]
+pub struct Block {
+    /// The box's middle.
+    pub centre: DVec3,
+    /// Half its extent along each of its own axes, metres.
+    pub half: DVec3,
+    /// Its axes, unit and orthogonal: east, north, up.
+    pub axes: [DVec3; 3],
+}
+
+impl Density for Block {
+    fn at(&self, p: DVec3) -> f64 {
+        let d = p - self.centre;
+        let q = DVec3::new(
+            d.dot(self.axes[0]).abs() - self.half.x,
+            d.dot(self.axes[1]).abs() - self.half.y,
+            d.dot(self.axes[2]).abs() - self.half.z,
+        );
+        let outside = q.max(DVec3::ZERO).length();
+        let inside = q.x.max(q.y).max(q.z).min(0.0);
+        -(outside + inside)
+    }
+}
+
+/// A field with things built on it: the ground, and blocks ADDED to it in
+/// order, each a union. What is built is what the fine lattice is for, and
+/// the coarse one never sees it: the mask covers every cell a block touches.
+pub struct Built<'a> {
+    pub ground: &'a dyn Density,
+    pub blocks: Vec<Block>,
+}
+
+impl Density for Built<'_> {
+    fn at(&self, p: DVec3) -> f64 {
+        let mut d = self.ground.at(p);
+        for b in &self.blocks {
+            d = d.max(b.at(p));
+        }
+        d
+    }
+}
+
+impl Block {
+    /// The corners of the box, in the field's frame.
+    pub fn corners(&self) -> [DVec3; 8] {
+        std::array::from_fn(|c| {
+            let sx = if c & 1 != 0 { 1.0 } else { -1.0 };
+            let sy = if c & 2 != 0 { 1.0 } else { -1.0 };
+            let sz = if c & 4 != 0 { 1.0 } else { -1.0 };
+            self.centre
+                + self.axes[0] * (self.half.x * sx)
+                + self.axes[1] * (self.half.y * sy)
+                + self.axes[2] * (self.half.z * sz)
+        })
+    }
+}
+
 /// A lattice hash in 0..1, bit exact on every machine.
 fn hash3(x: i64, y: i64, z: i64, seed: u32) -> f64 {
     let mut h = (x as u32).wrapping_mul(0x8DA6_B343)
@@ -229,6 +290,30 @@ mod tests {
         assert!(planet.at(DVec3::ZERO) > 0.0);
         let surface = planet.at(DVec3::new(0.0, 0.0, planet.radius));
         assert!(surface.abs() <= planet.relief * 0.5 + planet.overhang);
+    }
+
+    #[test]
+    fn a_block_is_a_signed_distance_in_its_own_frame() {
+        let b = Block {
+            centre: DVec3::new(1.0, 2.0, 3.0),
+            half: DVec3::new(2.0, 1.0, 0.5),
+            axes: [DVec3::Z, DVec3::X, DVec3::Y],
+        };
+        assert_eq!(b.at(b.centre), 0.5);
+        // A metre past the up face (world y) is minus one.
+        assert!((b.at(b.centre + DVec3::Y * 1.5) + 1.0).abs() < 1e-12);
+        // Along the box's east (world z) the half extent is two.
+        assert!((b.at(b.centre + DVec3::Z * 2.0)).abs() < 1e-12);
+        assert!((b.at(b.centre + DVec3::new(0.0, 1.5, 3.0)) + 2.0f64.sqrt()).abs() < 1e-12);
+        let corners = b.corners();
+        assert!(corners.iter().all(|c| b.at(*c).abs() < 1e-12));
+        let ground = Sphere { radius: 1.0 };
+        let built = Built {
+            ground: &ground,
+            blocks: vec![b.clone()],
+        };
+        assert_eq!(built.at(b.centre), 0.5);
+        assert_eq!(built.at(DVec3::ZERO), 1.0);
     }
 
     #[test]

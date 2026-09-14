@@ -42,7 +42,8 @@ impl ChunkMesh {
     }
 }
 
-const CORNER: [[i32; 3]; 8] = [
+/// The eight corners of a cell, in Bourke's order.
+pub const CORNER: [[i32; 3]; 8] = [
     [0, 0, 0],
     [1, 0, 0],
     [1, 1, 0],
@@ -56,7 +57,7 @@ const CORNER: [[i32; 3]; 8] = [
 /// Each edge as the lattice point it starts from (within the cell) and the
 /// axis it runs along, which is the one way of naming an edge that two
 /// cells sharing it agree on.
-const EDGE_AT: [([i32; 3], usize); 12] = [
+pub const EDGE_AT: [([i32; 3], usize); 12] = [
     ([0, 0, 0], 0),
     ([1, 0, 0], 1),
     ([0, 1, 0], 0),

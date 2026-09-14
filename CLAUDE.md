@@ -35,8 +35,9 @@ planet's radius steps in tens of centimetres (`pos::f32_step` is the
 function, and the test that pins it), so the world frame is `f64` and the
 renderer draws in an `f32` frame measured from a floating origin that follows
 the eye. And a planet's surface is a density field sampled at whatever detail
-the eye is near enough to see, meshed by marching cubes, because a height map
-cannot overhang and a column of hex prisms can only fake it.
+the eye is near enough to see, dual contoured on one lattice at two levels,
+because a height map cannot overhang, a column of hex prisms can only fake
+it, and marching cubes cannot make a corner.
 
 ## The two crates and the line between them
 
@@ -65,7 +66,7 @@ GPU, how the camera eases, what a button looks like: app.
 | engine | Bevy 0.18.1 | ECS that proves systems disjoint from their filters; wgpu, so one shader language on every platform; what swarm-demo already runs and what this toolchain (Rust 1.94) builds. Bevy 0.19 needs Rust 1.95 and neither physics nor floating origin has followed it yet; the engine moves when all three do, in one commit that carries nothing else |
 | physics | avian3d 0.6 | ECS native, `f64` build available, deterministic enough for a client authoritative game; Rapier through a plugin is the alternative and the extra layer is the reason not |
 | floating origin | our own `pos::Origin` in the core, `big_space` 0.12 evaluated for the app side | the RULE (f64 world, f32 render frame, rebase past a radius, snap to a grid) lives in the core where a test holds it; whether the app's transforms are rebased by hand or by big_space's grid cells is an app decision, and big_space is the one to beat because it has already met the traps |
-| terrain | density field plus marching cubes in the core, chunked on a cube sphere quadtree | overhangs, caves, arches and craters with lips; the alternative is tenebris's Goldberg hex prisms, and `docs/mockups` is where the two are compared on the same seed before the call is final |
+| terrain | a density field dual contoured in the core (`dc.rs`) on one lattice at two levels, chunked on a cube sphere quadtree | overhangs, caves, arches and craters with lips, and a corner that is a corner wherever something is built; marching cubes (`march.rs`) is the reference the surface table is derived from, tenebris's Goldberg hex prisms the alternative, and `docs/mockups` is where the two were compared on the same seed |
 | planets from far off | a baked equirect impostor per body, tenebris's `distant.fs` ported to WGSL | the whole disk from a texture and an icosphere, with the rim fresnel and the terminator faded normal detail that made tenebris's planets read |
 | atmosphere | single scatter ray march, tenebris's `atmosphere.fs` ported, with the CPU mirror | sky and distance fog agree by construction when the same march runs on both sides |
 | orbits | closed form on rails (`orbit.rs` ported) | a solar system that cannot drift, blow up or need integrating; a player's ship is the one body that integrates, in a patched conic frame |
@@ -214,25 +215,29 @@ edge that two cells agree on), and normals off the field's gradient pointed
 out of the rock. A sphere marches to a closed shell whose area is the
 sphere's within three percent, and `normals_point_out_of_the_rock_and_the_winding_agrees`
 holds the winding to the normals by area, because a sliver can point
-anywhere and nothing of any size may point in.
+anywhere and nothing of any size may point in. It is the reference now
+rather than the mesher: `dc.rs` is what the game draws with, and it derives
+which crossings are one surface from `march.rs`'s tables. The section on
+the two levels below is the whole of it.
 
 **Still to build, and the order it comes in:**
 
 1. **The chunk streamer.** `select` gives a leaf set; the app diffs it against
-   last frame's, samples and marches new leaves on a worker, and despawns the
-   rest with hysteresis (tenebris held a chunk to one and a half times its
-   load distance for three seconds, because a full reload was a two second
-   stall and the boundary flaps). One cached verdict per body per frame that
-   every pass reads, so terrain, water and the impostor cannot disagree mid
-   flap. LOD is anchored to the PLAYER, not the camera: a map view that pulls
-   the eye to twenty kilometres must not unload the ground under the ship.
-2. **Seams between levels.** A finer leaf beside a coarser one leaves a crack
-   along the shared edge. The answer is the mesher's, not the streamer's:
-   a skirt per chunk first (cheap, invisible from above, the thing every
-   shipped voxel planet does), transvoxel if the skirts ever show.
-3. **The impostor tier.** Past the streaming radius a body is tenebris's
+   last frame's, samples and contours new leaves on a worker, and despawns
+   the rest with hysteresis (tenebris held a chunk to one and a half times
+   its load distance for three seconds, because a full reload was a two
+   second stall and the boundary flaps). One cached verdict per body per
+   frame that every pass reads, so terrain, water and the impostor cannot
+   disagree mid flap. LOD is anchored to the PLAYER, not the camera: a map
+   view that pulls the eye to twenty kilometres must not unload the ground
+   under the ship. A leaf beside a leaf one level up joins it by the rule
+   `dc.rs` already applies between the two levels of one lattice: the seam
+   is polygons whose corners are cells of both sizes, and nothing is
+   skirted. The skirt was the first answer here and the mockup's picture
+   retired it before the streamer existed.
+2. **The impostor tier.** Past the streaming radius a body is tenebris's
    baked equirect on an icosphere, lit per body from its own star.
-4. **Materials on the field.** Triplanar, blended by slope and height off the
+3. **Materials on the field.** Triplanar, blended by slope and height off the
    Material Maker sets, which `docs/mockups/common.js` already does in GLSL
    and the WGSL transcribes.
 
@@ -459,8 +464,9 @@ MEASURED anyway: every crossing on a join face is checked against the
 bilinear coarse field on that face and the page reports the mean and the
 worst. On this seed 9,339 crossings lie on the join, 5 mm apart on average
 and 108 mm at worst, the worst where a street runs out of the levelled site
-into the skirt, which is the chord sag this file already knows about; the
-game's streamer keeps the skirt for the same reason.
+into the skirt, which is the chord sag this file already knows about. The
+mockup keeps that skirt. The game does not, and the section on the two
+levels below is why.
 
 **A dual contouring mesh is watertight by construction, and the page
 proves that its own is.** Every crossing edge gets one quad and every quad
@@ -546,6 +552,95 @@ region and the same collision, and the export is one recipe a site, its
 brushes in the site's frame, which is a recipe somebody has not written
 down yet.
 
+## The two levels are one dual contour, and the core proves it closed
+
+The mockup's join was a skirt: the fine mesh's rim sunk three centimetres
+under the coarse surface so the crack between the two could not show. The
+owner's picture said it did: a line of dark slits along the join, seen from
+a pad at a grazing angle. Rendered each mesh alone, the coarse mesh's edge
+is a chord of a 1.33 m cell and the fine mesh follows the true surface, and
+wherever the chord stands ABOVE the fine surface a line of sight passes
+under it into the interior of the planet, which nothing meshes, and out the
+far side to the sea. A skirt hides the case where the fine stands above the
+coarse and cannot close a lip from below: under a lip, sinking the rim only
+opens the slit. Measured on every fine crossing along the mockup's join: 622
+of 6,542 have the fine above the coarse by over a centimetre and 139 the
+coarse above the fine, by up to 7.5 cm; with a pad built on a slope, 850,
+236 and 16 cm. Every lip is a slit at some angle, and the page's hole count
+exempted the rim, which is exactly why it read nought while the join leaked.
+
+**The answer is the octree one, and it is in the core.** `lattice.rs` is one
+lattice at two levels: a coarse grid of cells, a mask of the cells that are
+subdivided `sub` ways, and every position computed from a FINE index through
+one function, so a coarse corner and the fine point under it are the same
+bits and two chunks agree on every sample. `dc.rs` contours it a chunk at a
+time: a MINIMAL edge is a fine edge wherever a subdivided cell is round it
+and a coarse edge everywhere else, and the polygon on a crossing minimal
+edge joins the vertices of the LEAVES round it, which are fine cells on one
+side of a join and the coarse cell on the other. Nothing dives under
+anything and nothing is sunk: the seam is polygons whose corners are cells
+of two sizes, every mesh edge is shared by exactly two polygons, and the
+mesh is closed by construction. The rules that make that hold:
+
+- **A leaf's vertex is a function of the field and the leaf alone**, one per
+  surface (the marching cubes case's triangles joined where they share an
+  edge, `components`), at the least squares point of that surface's
+  crossings, each crossing bisected on the field and given the field's
+  gradient there. Every chunk that needs a leaf's vertex computes it the
+  same way from the same samples, so a shared vertex lands on the same bits
+  from either side and the audit's weld finds it once.
+- **An edge has one owner.** The lowest chunk among the subdivided cells
+  round a fine edge, among the cells round a coarse edge, which every chunk
+  can tell from the mask alone.
+- **The coarse corner of a seam polygon** is the coarse cell's vertex for the
+  surface of the coarse edge the fine edge lies on, else for the one surface
+  crossing the face it lies in, else the nearest of the cell's. And the mask
+  is GROWN first (`Lattice::grow`): an unsubdivided cell whose face toward a
+  subdivided one has four coarse corners of one sign while a fine point on
+  it has the other is subdivided too, and again until nothing changes, so a
+  coarse cell the fine surface crosses always has a vertex to end on. The
+  count of corners that had none is reported and is nought.
+- **The least squares point is the pseudo inverse from the crossings'
+  middle** (`qef.rs`), constraining only the directions the planes
+  constrain: onto a face, onto an edge, into a corner, and never off the
+  crease. The mockup's solve pulled every vertex a little toward the middle
+  of its cell, and on the pad's rim that put a zigzag strip of slivers along
+  every box edge.
+- **Nought is rock, and a build is half a fine cell off the lattice.** A
+  box face laid exactly on a lattice plane samples nought all over it.
+  Called air, the crease where the ground met the pad fell on a lattice
+  edge with a crossing on the crease itself and no normal to give it, and
+  the foot of the pad grew a shelf. Called rock, the two cells either side
+  of that edge both solve to the same point on the crease: two vertices in
+  one place, which the audit counts as a pinch, 97 of them round the pad.
+  The rule is that what is built snaps to half a metre and the lattice's
+  corner sits half a fine cell off that grid, so no face ever lies on a
+  lattice plane, and `a_face_on_a_lattice_plane_pinches_and_half_a_cell_of_offset_does_not`
+  holds it: the same pad pinches on a lattice it coincides with and is
+  clean on one offset by half a cell.
+- **`audit.rs` measures what the construction claims.** The chunks welded by
+  position (half a millimetre, searching the neighbouring bins too, because
+  two chunks place a shared vertex a float's rounding apart and a rounding
+  that straddles a bin edge read as four holes), every edge counted, every
+  triangle tested against the field's gradient at its middle. A sphere at
+  one level, a sphere with a blob of fine cells over its top, and a planet
+  with a slab and a wall built on it all come out with nought open edges,
+  nought pinches and nought triangles facing in, and the slab's top is a
+  plane to two millimetres, which is what dual contouring is for.
+
+`freeport_app` draws it: a 40 m planetoid on 96 cells of a metre, a site of
+fine cells at a quarter under a pad, a wall and a step, coarse vertices in
+sand and fine in blue so a seam polygon blends the two, a fly camera (click
+takes the mouse, Escape gives it back, WASD and Q E, Shift, Tab for the
+wireframe) and `--shot out.png` for a picture taken headless under Xvfb and
+lavapipe, which is how the join was looked at here from the owner's angle
+before anybody flew round it. Vertices are split per triangle for Bevy, and
+a corner whose smooth normal disagrees with its triangle's face by more than
+a crease takes the face's, so a box is shaded flat on each face, the ground
+stays round, and where the ground meets a wall only the corner on the crease
+changes. A first cut flattened the whole triangle and the shading jumped
+along every crease.
+
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
 Every planet, moon and station's position is a closed form function of the
@@ -629,7 +724,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 22, the core
+cargo test -p freeport_core                       # 35, the core
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -637,7 +732,8 @@ tools/bake_materials.sh --check                   # the maps match their graphs
 python3 tools/bundle_buildings.py --check         # the mockup's recipes match assets/buildings
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
-./target/release/freeport_app                     # a window: one marched planetoid, a light, a camera
+./target/release/freeport_app                     # a window: the planetoid, a pad, a wall and a step on the fine level, a fly camera, Tab for wire
+./target/release/freeport_app --sub 6 --wire --eye 9.5,41.6,0.5 --look 0,40.6,0 --shot join.png   # a picture, headless under xvfb-run with VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
 ```
 
 The mockups are `docs/mockups/marching-cubes.html` and
@@ -662,9 +758,19 @@ correctness and A/B only.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 22 tests in 80 ms. A 6 m sphere on a 32^3 lattice at half
+- `freeport_core`: 35 tests in 0.27 s. A 6 m sphere on a 32^3 lattice at half
   a metre marches to 5,288 triangles, a closed shell within 3% of the
-  sphere's area.
+  sphere's area, and dual contours to one at both one level and two.
+- The harness's planetoid, in release: 96^3 cells of a metre, 1,272 of them
+  subdivided four ways under the site and none grown, 1,838 chunks with
+  triangles in them, 69,300 triangles of which 226 polygons are seams,
+  contoured in 780 ms of which 208 is the coarse samples, audited in 135 ms:
+  nought open edges, nought pinches, nought facing in, nought missing
+  corners, 21,154 m^2 of surface.
+- The mockup's join, measured at every fine crossing on it: 622 of 6,542
+  with the fine surface over a centimetre above the coarse, 139 with the
+  coarse above the fine, by up to 7.5 cm; a pad on a slope makes those 850,
+  236 and 16 cm. A skirt hides the first and cannot close the second.
 - The cube sphere's corner to centre cell area ratio: 1.42 warped, 5.2
   plain, on a 16 by 16 grid.
 - The marching cubes mockup: a 64 m planet with a sea and three towns on a
