@@ -272,14 +272,25 @@ to the first face, nineteen along it, a jump of 1.4 m. Driven headless,
 with the numbers printed, because a walker that feels right is a walker
 whose numbers a second person can check.
 
-**Two pictures found what no number did.** The block kit drew black but
+**Three pictures found what no number did.** The block kit drew black but
 for its windows: the lot frame was built as east, up, north, which is left
 handed, so every box wound inside out and only the emissive panes survived
-the cull. And a hex walker could stand in a column's corner and see the
-inside of the world, because the body was held off the hexagon's flats and
-not its corners; the reach is the circumradius now. Both are the kind of
-defect a headless screenshot catches and a test suite does not, which is
-the reason the mockups have a screenshot harness at all.
+the cull. A hex walker could stand in a column's corner and see the inside
+of the world, because the body was held off the hexagon's flats and not its
+corners; the reach is the circumradius now. And the owner caught the third
+off the published page: the streets hung out past the horizon. A street was
+one straight bar the length of the town placed at its own middle, which is a
+CHORD, and on a sixty four metre planet a fifty six metre chord sags six
+metres at its ends, while every building, placed on its own patch, sat
+down. A street is laid in three and a half metre pieces now, each on its
+own patch. On a thousand kilometre world the same chord sags under a
+millimetre, which is why this is a rule about the MOCKUP's planet and not
+about the game's: anything long enough that the ground curves under it is
+placed in pieces, and how long that is depends on the radius. All three are
+the kind of defect a screenshot catches and a test suite does not, which is
+the reason the mockups have a screenshot harness at all, and the third is
+the kind only a second pair of eyes catches, which is the reason they are
+published.
 
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 

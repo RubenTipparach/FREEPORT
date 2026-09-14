@@ -188,10 +188,25 @@ function buildTowns(planet, towns, seed) {
       colliders.push({ dir: f.dir, east: f.east, north: f.north, hw: lot.w / 2 + 0.3, hd: lot.d / 2 + 0.3, top: f.base + lot.storeys * STOREY + 0.4 });
       count++;
     }
+    // A street is laid in short pieces, each on its own patch of the sphere:
+    // one straight bar the length of the town is a CHORD, and on a planet
+    // this small a 56 m chord sags six metres at its ends, so the first cut's
+    // streets hung out past the horizon while every building, placed on its
+    // own patch, sat down. On a thousand kilometre world the same chord sags
+    // under a millimetre; the mockup's planet is what makes the rule visible.
+    const PIECE = 3.5;
     for (const st of town.streets) {
-      const f = lotFrame(planet, town, st.x, st.z);
-      const m = new THREE.Matrix4().makeBasis(f.east, f.up, f.north.clone().negate()).setPosition(f.dir.clone().multiplyScalar(f.base));
-      list.push({ mat: 'street', size: [st.w, 0.12, st.d], matrix: m.clone().multiply(new THREE.Matrix4().setPosition(0, 0.06, 0)) });
+      const along = st.along === 'north' ? st.d : st.w;
+      const n = Math.ceil(along / PIECE);
+      for (let i = 0; i < n; i++) {
+        const off = (i + 0.5) * along / n - along / 2;
+        const x = st.along === 'north' ? st.x : st.x + off, z = st.along === 'north' ? st.z + off : st.z;
+        if (Math.hypot(x, z) > town.radius + 3) continue;
+        const f = lotFrame(planet, town, x, z);
+        const m = new THREE.Matrix4().makeBasis(f.east, f.up, f.north.clone().negate()).setPosition(f.dir.clone().multiplyScalar(f.base));
+        const size = st.along === 'north' ? [st.w, 0.12, along / n + 0.05] : [along / n + 0.05, 0.12, st.d];
+        list.push({ mat: 'street', size, matrix: m.clone().multiply(new THREE.Matrix4().setPosition(0, 0.06, 0)) });
+      }
     }
   }
   return { geometries: mergeBoxes(list), colliders, buildings: count };
