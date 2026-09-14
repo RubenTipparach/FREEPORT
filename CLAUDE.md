@@ -636,10 +636,14 @@ Numbers in the commit message. What is measured so far:
   about as many triangles as marching cubes' one to five per cell), against
   84,174 triangles and 0.9 s for the rest of the planet. The join between
   the lattices: 9,404 vertices on it, 5 mm apart on average, 108 mm at the
-  worst. A sculpted slab remarches its one chunk in 67 ms and a cut doorway
-  its four in 215 ms, and the walker steps up onto the slab (58 cm) or
+  worst. A sculpted slab remarches its one chunk in 105 ms and a cut doorway
+  its four in 166 ms, and the walker steps up onto the slab (58 cm) or
   walks through the doorway into the house, the same frame; taking both
-  back is 210 ms.
+  back is 197 ms. The fine mesh with its vertices welded by position: edges
+  shared by more than two triangles, which is where a quad is twisted
+  through a cell holding two surfaces, were 905 with one vertex a cell and
+  are 10 with one a surface, on the same 885,862 triangles, since a quad
+  is one per crossing edge either way.
 - Material Maker under lavapipe: seven graphs, twenty eight maps at 2048,
   exported in about six minutes on four cores, and byte identical on a
   re-export of the same graphs on the same machine (five sets unchanged when
