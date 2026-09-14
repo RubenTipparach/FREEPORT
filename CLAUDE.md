@@ -390,8 +390,16 @@ geometry blends. The rule has a price the recipes pay: a hand inside can be
 most of a cell inside the surface, so a thin thing on a thick one (a street
 on the ground, a lamp under a slab) is SUNK into its host by at least a
 cell or it draws as its host, and a skin is thicker than a cell or is the
-whole of the solid. Nothing thinner than the lattice exists: at 0.22 m a
-wall is 0.35, a lamp 0.3, and the kit warns on anything under 0.3. A box
+whole of the solid. And nothing thinner than a cell's DIAGONAL exists,
+because the lattice is the planet's and not the building's, so every
+plate lies oblique to it, and a dual contoured cell that holds both faces
+of a plate puts its one vertex between them: a 0.3 m slab on the 0.22 m
+lattice came out pitted, one pit a coarse cell, and every pit was a
+vertex measured at the slab's mid plane. Walls, slabs, ramps, rails,
+eaves and lamps are 0.4 (the diagonal is 0.39) and the kit warns on
+anything under 0.4; in the game a chunk's lattice is a cube sphere
+patch's, level and plumb where a town stands, so there a plate need only
+beat the cell and only a pitched thing the diagonal. A box
 face is shaded FLAT on its own normal (`dFdx`, the curved brushes flagged
 to stay smooth), because a normal interpolated across a corner rounds it
 over a cell.

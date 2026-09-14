@@ -43,11 +43,16 @@ ground (`u = 0` is the town's level). `footprint` is what the lot becomes,
   thin thing on a thick one (a street on the ground, a lamp under a slab)
   is SUNK into its host by at least a cell or it draws as its host. A skin
   (a plate roof) is thicker than a cell or is the whole of the solid.
-- **Nothing thinner than the lattice exists.** The mockup marches towns at
-  0.22 m, so walls are 0.35, a balustrade 0.3, a lamp 0.3, and the kit
-  warns on anything under 0.3. Windows are openings, so there is no pane to
-  be thin. The game's near lattice will be finer and these
-  numbers come down with it.
+- **Nothing thinner than a cell's DIAGONAL exists.** The mockup dual
+  contours towns at 0.22 m on a lattice that is the planet's and not the
+  building's, so every plate lies oblique to it, and a cell that holds both
+  faces of a plate puts its one vertex between them: a 0.3 m slab came out
+  pitted, one pit a coarse cell. Walls, slabs, ramps, rails, eaves and
+  lamps are 0.4 (the diagonal is 0.39) and the kit warns on anything under
+  0.4. Windows are openings, so there is no pane to be thin. The game's
+  near lattice is a cube sphere patch's, level and plumb where a town
+  stands, so there a plate need only beat the cell and only a pitched
+  thing the diagonal.
 - **A cut leaves the material it cut through**, so a doorway's reveal is
   the wall's concrete.
 - **Order is meaning.** Add the shell, cut the room, cut the door, add the

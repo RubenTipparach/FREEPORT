@@ -137,7 +137,7 @@ function compileOne(src, dz, parity, matOf, rooms, warn) {
   if (turned) { const r = Math.hypot(b.h[0], b.h[1], b.h[2]); ext = [r, r, r]; } else ext = b.h;
   b.bb = [at[0] - ext[0] - m, at[0] + ext[0] + m, at[1] - ext[1] - m, at[1] + ext[1] + m, at[2] - ext[2] - m, at[2] + ext[2] + m];
   if (src.room && b.op === 'cut') { b.room = rooms.length; rooms.push({ bb: b.bb.slice() }); }
-  if (b.op === 'add' && b.shape !== 'stairs' && (size[0] < 0.3 || size[1] < 0.3 || size[2] < 0.3)) warn(`${src.shape} thinner than 0.3 m will alias on a 0.22 m lattice`);
+  if (b.op === 'add' && b.shape !== 'stairs' && (size[0] < 0.4 || size[1] < 0.4 || size[2] < 0.4)) warn(`${src.shape} thinner than 0.4 m can hold both its faces in one 0.22 m cell`);
   return b;
 }
 
@@ -151,7 +151,7 @@ function expandWindow(src, index, seed, hash) {
   const size = side ? [src.size[1], src.size[0], src.size[2]] : src.size.slice();
   const hole = { op: 'cut', shape: 'box', at: src.at, size, each: src.each, alternate: src.alternate };
   if (src.pane === undefined) return [hole];
-  const pane = side ? [0.3, src.size[0], src.size[2]] : [src.size[0], 0.3, src.size[2]];
+  const pane = side ? [0.4, src.size[0], src.size[2]] : [src.size[0], 0.4, src.size[2]];
   const lit = src.lit === undefined ? hash(index, seed) > 0.45 : !!src.lit;
   return [hole, { op: 'add', shape: 'box', mat: lit ? 'lit' : 'glass', at: src.at, size: pane, each: src.each, alternate: src.alternate }];
 }
