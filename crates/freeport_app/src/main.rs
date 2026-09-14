@@ -1,104 +1,128 @@
 //! freeport_app: the Bevy harness. It draws what `freeport_core` says.
 //!
-//! A planetoid dual contoured on the two level lattice, with a pad, a wall
-//! and a step built on its top on the fine level, wearing the baked sets
-//! (`terrain.rs`), with the core's walker on it (`walk.rs`) and a fly
-//! camera for looking at the join, a wireframe toggle, and a screenshot
-//! flag so a picture can be taken headless under Xvfb and lavapipe. The
-//! floating origin, the streamer and the ship arrive in the stages
-//! `CLAUDE.md` lays out, each behind its own mockup.
+//! A planet ten kilometres across, dual contoured at eleven levels round
+//! the eye by the streamer (`stream.rs`) on worker threads, a pad, a wall
+//! and a step built at the site the walker starts on, wearing the baked
+//! sets (`terrain.rs`), with the core's walker on it (`walk.rs`), a fly
+//! camera, a wireframe toggle, and a screenshot flag so a picture can be
+//! taken headless under Xvfb and lavapipe. The eye is a world position in
+//! `f64` and the camera is placed from it through the floating origin.
 //!
 //! ```text
-//! freeport_app [--sub N] [--wire] [--fly] [--eye x,y,z] [--look x,y,z]
-//!              [--shot out.png] [--frames N]
+//! freeport_app [--wire] [--fly] [--eye x,y,z] [--look x,y,z] [--levels N]
+//!              [--shot out.png] [--frames N] [--sculpt block|slab|pillar|ball|ramp|pad|room|door|window]
 //! ```
 //!
 //! Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
 //! runs, Space jumps. Flying: WASD and Q E, Shift is faster. F swaps the
-//! two, Tab toggles the wireframe. `--eye` is where to start (on foot, the
-//! spot under it) and `--look` what to face.
+//! two, Tab toggles the wireframe. `--eye` is where to start, metres from
+//! the planet's centre (on foot, the spot under it) and `--look` what to
+//! face; both default to the site.
 
+mod edit;
+mod lamps;
+mod stream;
 mod terrain;
 mod walk;
+mod water;
 
 use bevy::camera::Exposure;
+use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::MouseMotion;
+use bevy::light::CascadeShadowConfigBuilder;
 use bevy::math::DVec3;
 use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use freeport_core::audit::{audit, Audit};
-use freeport_core::dc::{contour, Coarse, DcMesh};
-use freeport_core::field::{Block, Built, Density, Planet};
-use freeport_core::lattice::{Lattice, CH};
+use edit::{build, Builder};
+use freeport_core::field::{Block, Built, Density, Planet, Structure, STREET};
+use freeport_core::lattice::Lattice;
+use freeport_core::pos::WorldPos;
+use freeport_core::recipe::{Building, Recipe};
+use freeport_core::town::{self, lot_frame, Town};
 use freeport_core::walker::{Bounds, Walker};
+use freeport_core::water::{Sea, Water};
+use lamps::light_lamps;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
-use terrain::{terrain_material, to_mesh, TerrainMaterial, TerrainPlugin};
-use walk::{place_camera, toggle_walk, walk, OnFoot, Stat};
+use stream::{rebase_origin, stream, Frame, Streamer};
+use terrain::{terrain_material, TerrainMaterial, TerrainPlugin};
+use walk::{toggle_walk, walk, OnFoot};
+use water::{water_material, WaterMaterial, WaterPlugin};
 
-/// The planetoid the harness shows: its radius and the lattice it is
-/// contoured on. A metre a cell over 96 cells holds a 40 m ball with room
-/// for its relief.
-const RADIUS: f64 = 40.0;
-const CELLS: usize = 96;
-const CELL: f64 = 1.0;
-/// How far round the site the ground is on the fine level, metres.
-const SITE_REACH: f64 = 6.0;
-/// What is built snaps to this, metres, and the lattice's corner sits half
-/// a fine cell off it, so no face of a block ever lies on a lattice plane:
-/// a face that does puts its crease on a lattice edge and the cells either
-/// side of it solve to one point, which the core's audit counts as a pinch.
-const SNAP: f64 = 0.5;
+/// The planet: five kilometres of radius, so ten across.
+const RADIUS: f64 = 5_000.0;
+/// The sea's level, metres under the mean radius: with a hundred and sixty
+/// of relief, a little under half the surface is under it.
+const SEA: f64 = RADIUS - 12.0;
+/// Towns: how many, and how far across each.
+const TOWNS: usize = 8;
+const TOWN_RADIUS: f64 = 80.0;
+/// The world's seed.
+const SEED: u32 = 7;
+/// The finest cell, metres, under the feet.
+const FINE: f64 = 0.25;
+/// Levels of rings: the coarsest box is `16 * 8 * FINE * 2^(LEVELS-1)`
+/// across, 32 km at eleven, which holds the whole planet from any eye on
+/// it.
+const LEVELS: u8 = 11;
 /// Radians of look per pixel of mouse.
 pub(crate) const LOOK: f32 = 0.0022;
 /// Flying: metres a second, and the factor Shift puts on it.
-const SPEED: f32 = 4.0;
-const SPRINT: f32 = 4.0;
+const SPEED: f64 = 6.0;
+const SPRINT: f64 = 8.0;
 
 /// What the command line asked for.
 #[derive(Resource, Clone, Debug)]
-struct Args {
-    sub: usize,
+pub(crate) struct Args {
     wire: bool,
     fly: bool,
-    eye: Option<Vec3>,
-    look: Option<Vec3>,
+    eye: Option<DVec3>,
+    look: Option<DVec3>,
+    levels: u8,
     shot: Option<String>,
     frames: u32,
+    /// A shape the builder places at the crosshair once the first load has
+    /// settled, so a headless run can photograph an edit and the chunks it
+    /// remade.
+    sculpt: Option<String>,
 }
 
 fn parse_args() -> Args {
     let mut args = Args {
-        sub: 4,
         wire: false,
         fly: false,
         eye: None,
         look: None,
+        levels: LEVELS,
         shot: None,
         frames: 30,
+        sculpt: None,
     };
     let mut it = std::env::args().skip(1);
-    let vec3 = |s: &str| -> Option<Vec3> {
-        let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-        (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
+    let vec3 = |s: &str| -> Option<DVec3> {
+        let v: Vec<f64> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        (v.len() == 3).then(|| DVec3::new(v[0], v[1], v[2]))
     };
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--sub" => {
-                args.sub = it
-                    .next()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(4)
-                    .clamp(1, 8)
-            }
             "--wire" => args.wire = true,
             "--fly" => args.fly = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),
+            "--levels" => {
+                args.levels = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(LEVELS)
+                    .clamp(1, 16)
+            }
             "--shot" => args.shot = it.next(),
             "--frames" => args.frames = it.next().and_then(|v| v.parse().ok()).unwrap_or(30),
+            "--sculpt" => args.sculpt = it.next(),
             other => warn!("unknown argument {other}"),
         }
     }
@@ -109,12 +133,17 @@ fn main() {
     let args = parse_args();
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins((WireframePlugin::default(), TerrainPlugin))
+        .add_plugins((WireframePlugin::default(), TerrainPlugin, WaterPlugin))
         .insert_resource(WireframeConfig {
             global: args.wire,
             default_color: Color::srgb(0.1, 0.1, 0.12),
         })
+        .insert_resource(ClearColor(Color::srgb(0.55, 0.72, 0.92)))
         .insert_resource(args)
+        .init_resource::<Eye>()
+        .init_resource::<Frame>()
+        .init_resource::<Status>()
+        .init_resource::<Builder>()
         .add_systems(Startup, spawn_world)
         .add_systems(
             Update,
@@ -123,6 +152,12 @@ fn main() {
                 toggle_walk,
                 walk,
                 fly,
+                build,
+                rebase_origin,
+                stream,
+                light_lamps,
+                place_eye,
+                show_status,
                 toggle_wireframe,
                 take_shot,
             )
@@ -163,167 +198,321 @@ impl Controls<'_, '_> {
     }
 }
 
-/// The fly camera's heading, kept as angles so a look cannot roll.
+/// The fly camera: where it is in the world frame and its heading, kept as
+/// angles so a look cannot roll.
 #[derive(Component)]
 pub(crate) struct Fly {
     pub yaw: f32,
     pub pitch: f32,
+    pub at: DVec3,
 }
+
+impl Fly {
+    /// The way it faces.
+    pub fn forward(&self) -> Vec3 {
+        Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0) * Vec3::NEG_Z
+    }
+}
+
+/// Where the eye is, in the world frame: the walker's or the fly camera's.
+#[derive(Resource, Default)]
+pub(crate) struct Eye(pub WorldPos);
+
+/// A town's structures, contiguous in `World::structures`, and the box
+/// round all of them, so a chunk far from every town tests one box a town
+/// and never a structure. Edits are pushed after the last group and are
+/// tested one by one.
+#[derive(Clone, Debug)]
+pub(crate) struct Group {
+    pub lo: DVec3,
+    pub hi: DVec3,
+    pub range: std::ops::Range<usize>,
+}
+
+/// The status line's parts.
+#[derive(Resource, Default)]
+pub(crate) struct Status {
+    pub walker: String,
+    pub build: String,
+}
+
+/// The line of text that says where the walker stands.
+#[derive(Component)]
+struct Stat;
 
 /// The field the harness stands on: the planet, what is built on it, and
-/// where the walker may look for the ground.
-#[derive(Resource)]
-pub(crate) struct Ground {
+/// where the walker may look for the ground. Shared with the workers, and
+/// cloned whole for an edit, so a worker mid job keeps the world it had.
+#[derive(Clone)]
+pub(crate) struct World {
     pub planet: Planet,
     pub blocks: Vec<Block>,
+    /// Every building and every piece of street on the planet.
+    pub structures: Vec<Structure>,
+    /// The structures a town at a time, with a box round each town's.
+    pub groups: Vec<Group>,
+    /// Every lamp in them, in the world frame, with its reach.
+    pub lamps: Vec<(DVec3, f64)>,
+    pub towns: Vec<Town>,
     pub bounds: Bounds,
+    pub sea: Sea,
+    /// Cuts made in the dry, which the sea never enters.
+    pub dry: Vec<Block>,
 }
 
-impl Ground {
-    /// The same field the mesher contoured.
-    pub fn field(&self) -> Built<'_> {
+impl World {
+    /// The field inside a box, contoured on `cell`: the ground and every
+    /// structure reaching into the box.
+    pub fn field_in(&self, lo: DVec3, hi: DVec3, cell: f64) -> Built<'_> {
+        let mut structures = Vec::new();
+        let mut grouped = 0;
+        for g in &self.groups {
+            grouped = grouped.max(g.range.end);
+            if g.lo.cmple(hi).all() && g.hi.cmpge(lo).all() {
+                let town = &self.structures[g.range.clone()];
+                structures.extend(town.iter().filter(|st| st.meets(lo, hi)));
+            }
+        }
+        let loose = &self.structures[grouped.min(self.structures.len())..];
+        structures.extend(loose.iter().filter(|st| st.meets(lo, hi)));
         Built {
             ground: &self.planet,
             blocks: self.blocks.clone(),
+            structures,
+            cell,
+        }
+    }
+
+    /// The field within `reach` of a point, at full detail: what a walker
+    /// stands on.
+    pub fn field_near(&self, p: DVec3, reach: f64) -> Built<'_> {
+        self.field_in(p - DVec3::splat(reach), p + DVec3::splat(reach), FINE)
+    }
+
+    /// The sea on that ground.
+    pub fn water<'a>(&'a self, ground: &'a dyn Density) -> Water<'a> {
+        Water {
+            sea: self.sea,
+            ground,
+            dry: self.dry.clone(),
         }
     }
 }
 
-/// The planet, and the pad, the wall and the step on its top.
-fn world() -> Ground {
-    let planet = Planet {
-        radius: RADIUS,
-        relief: 6.0,
-        lumps: 3.0,
-        octaves: 5,
-        overhang: 1.5,
-        ledge: 4.0,
-        seed: 7,
-    };
-    let top = (top_of(&planet) / SNAP).round() * SNAP;
-    let frame = [DVec3::X, DVec3::Z, DVec3::Y];
-    let blocks = vec![
-        // A pad half a metre over the ground at the site's middle and dug
-        // into the rise beside it, a wall on it, and a step.
-        Block {
-            centre: DVec3::new(0.0, top - 0.5, 0.0),
-            half: DVec3::new(3.0, 3.0, 1.0),
-            axes: frame,
-        },
-        Block {
-            centre: DVec3::new(2.0, top + 1.6, 0.0),
-            half: DVec3::new(0.2, 2.5, 1.1),
-            axes: frame,
-        },
-        Block {
-            centre: DVec3::new(-1.5, top + 0.7, -2.0),
-            half: DVec3::new(0.6, 0.6, 0.2),
-            axes: frame,
-        },
-    ];
-    let bounds = Bounds {
-        radius: RADIUS,
-        floor: RADIUS - planet.relief * 0.6 - planet.overhang - 2.0,
-        top: RADIUS + planet.relief * 0.6 + planet.overhang + 6.0,
-    };
-    Ground {
-        planet,
-        blocks,
-        bounds,
-    }
-}
+#[derive(Resource)]
+pub(crate) struct Ground(pub Arc<World>);
 
-/// The height of the ground along +y, by bisection on the field.
-fn top_of(planet: &Planet) -> f64 {
-    let (mut lo, mut hi) = (RADIUS - 6.0, RADIUS + 6.0);
-    for _ in 0..40 {
-        let mid = 0.5 * (lo + hi);
-        if planet.at(DVec3::new(0.0, mid, 0.0)) > 0.0 {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    0.5 * (lo + hi)
-}
-
-/// Contour every chunk of the lattice, with the field's audit.
-fn build(field: &dyn Density, lat: &Lattice) -> (Vec<(DVec3, DcMesh)>, Audit) {
-    let t0 = Instant::now();
-    let coarse = Coarse::sample(field, lat);
-    let sampled = t0.elapsed();
-    let cn = lat.chunks();
-    let mut chunks = Vec::new();
-    for bz in 0..cn {
-        for by in 0..cn {
-            for bx in 0..cn {
-                let m = contour(field, lat, &coarse, [bx, by, bz]);
-                if m.triangles() > 0 {
-                    let span = (CH * lat.sub) as i64;
-                    let corner = lat.point([bx as i64 * span, by as i64 * span, bz as i64 * span]);
-                    chunks.push((corner, m));
+/// The recipes in `assets/buildings`, by name.
+fn recipes() -> HashMap<String, Recipe> {
+    let mut out = HashMap::new();
+    let Some(dir) = terrain::assets_dir().map(|d| d.join("buildings")) else {
+        warn!("no assets folder: no recipes, so no buildings");
+        return out;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        warn!("no recipes in {}", dir.display());
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "json") {
+            match std::fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|t| Recipe::parse(&t))
+            {
+                Ok(r) => {
+                    out.insert(r.name.clone(), r);
                 }
+                Err(e) => warn!("{}: {e}", path.display()),
             }
         }
     }
-    let contoured = t0.elapsed();
-    let a = audit(field, &chunks);
+    out
+}
+
+/// The planet, its towns and everything built in them.
+fn world() -> World {
+    let t0 = Instant::now();
+    let mut planet = Planet {
+        radius: RADIUS,
+        relief: 160.0,
+        lumps: 10.0,
+        octaves: 10,
+        overhang: 3.0,
+        ledge: 12.0,
+        seed: SEED,
+        sites: vec![],
+    };
+    let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
+    planet.sites = towns.iter().map(town::site_of).collect();
+    let planned = t0.elapsed();
+    let recipes = recipes();
+    let mut structures: Vec<Structure> = Vec::new();
+    let mut groups = Vec::new();
+    let mut buildings = 0;
+    for t in &towns {
+        let start = structures.len();
+        for lot in &t.lots {
+            let Some(recipe) = recipes.get(lot.recipe).or_else(|| recipes.get("house")) else {
+                continue;
+            };
+            let storeys = lot.storeys.clamp(recipe.storeys[0], recipe.storeys[1]);
+            let building = recipe.compile(storeys, SEED ^ lot.id);
+            structures.push(Structure::new(lot_frame(RADIUS, t, lot.x, lot.z), building));
+            buildings += 1;
+        }
+        for piece in &t.pieces {
+            let slab = Building::slab(
+                DVec3::new(0.0, 0.0, -0.05),
+                DVec3::new(piece.w, piece.d, 0.6),
+                STREET,
+                0.0,
+            );
+            structures.push(Structure::new(lot_frame(RADIUS, t, piece.x, piece.z), slab));
+        }
+        let town = &structures[start..];
+        groups.push(Group {
+            lo: town.iter().fold(DVec3::INFINITY, |lo, st| lo.min(st.lo)),
+            hi: town
+                .iter()
+                .fold(DVec3::NEG_INFINITY, |hi, st| hi.max(st.hi)),
+            range: start..structures.len(),
+        });
+    }
+    let lamps: Vec<(DVec3, f64)> = structures.iter().flat_map(Structure::lamps).collect();
+    if let (Some(port), Some(lot)) = (towns.first(), towns.first().and_then(|t| t.lots.first())) {
+        if let Some(recipe) = recipes.get(lot.recipe) {
+            let f = lot_frame(RADIUS, port, lot.x, lot.z);
+            let outside = f.world(DVec3::new(
+                recipe.door,
+                -recipe.footprint[1] / 2.0 - 2.5,
+                1.7,
+            ));
+            let inside = f.world(DVec3::new(recipe.door, 0.0, 1.7));
+            info!(
+                "the port's first lot is a {} of {} storeys; its door from {:.2} looking at {:.2}",
+                lot.recipe, lot.storeys, outside, inside
+            );
+        }
+    }
     info!(
-        "contoured {} chunks, {} triangles ({} seam polygons) in {:.0} ms ({:.0} ms of coarse samples), audited in {:.0} ms: {} open edges, {} pinches, {} facing in, {} missing corners, area {:.0} m2",
-        chunks.len(),
-        a.triangles,
-        a.seams,
-        contoured.as_secs_f64() * 1000.0,
-        sampled.as_secs_f64() * 1000.0,
-        (t0.elapsed() - contoured).as_secs_f64() * 1000.0,
-        a.open,
-        a.non_manifold,
-        a.facing_in,
-        a.missing,
-        a.area
+        "{} towns planned in {:.0} ms, {} buildings from {} recipes and {} pieces of street built in {:.0} ms, {} lamps",
+        towns.len(),
+        planned.as_secs_f64() * 1000.0,
+        buildings,
+        recipes.len(),
+        structures.len() - buildings,
+        (t0.elapsed() - planned).as_secs_f64() * 1000.0,
+        lamps.len()
     );
-    (chunks, a)
+    let (floor, roof) = planet.band();
+    let bounds = Bounds {
+        radius: RADIUS,
+        floor: floor - 2.0,
+        top: roof + 40.0,
+        sea: 0.0,
+    };
+    World {
+        planet,
+        blocks: Vec::new(),
+        structures,
+        groups,
+        lamps,
+        towns,
+        bounds,
+        sea: Sea { radius: SEA },
+        dry: Vec::new(),
+    }
+}
+
+/// Where a walker starts: on a street of the port, facing the middle of
+/// town, or on the pole if there is no town.
+fn start(world: &World) -> (DVec3, DVec3) {
+    let Some(port) = world.towns.first() else {
+        let top = town::surface_radius(&world.planet, DVec3::Y);
+        return (DVec3::new(0.5, top, -6.5), DVec3::new(0.0, top + 0.8, 0.0));
+    };
+    let x = -town::BLOCK / 2.0 - town::STREET / 2.0;
+    let f = lot_frame(RADIUS, port, x, -port.radius * 0.6);
+    (
+        f.world(DVec3::new(0.0, 0.0, 1.7)),
+        f.world(DVec3::new(0.0, 10.0, 1.7)),
+    )
+}
+
+/// The nearest point of the shore to the eye, on rings of directions out
+/// from it, so a picture can be aimed at the sea.
+fn shore(world: &World, eye: DVec3) -> Option<DVec3> {
+    let up = eye.normalize_or(DVec3::Y);
+    let (east, north) = town::frame_at(up);
+    for ring in 1..400 {
+        let a = ring as f64 * 25.0 / RADIUS;
+        for k in 0..(ring * 6) {
+            let b = k as f64 / (ring * 6) as f64 * std::f64::consts::TAU;
+            let dir = (up * a.cos() + (east * b.cos() + north * b.sin()) * a.sin()).normalize();
+            if town::surface_radius(&world.planet, dir) < world.sea.radius {
+                return Some(dir * world.sea.radius);
+            }
+        }
+    }
+    None
 }
 
 fn spawn_world(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
+    mut waters: ResMut<Assets<WaterMaterial>>,
     args: Res<Args>,
 ) {
-    let ground = world();
-    let top = ground.blocks[0].centre.y + 0.5;
-    let built = ground.field();
-    let half = CELLS as f64 * CELL * 0.5;
-    let offset = 0.5 * CELL / args.sub as f64;
-    let mut lat = Lattice::new(DVec3::splat(-half + offset), CELL, args.sub, CELLS);
-    let site = DVec3::new(0.0, top, 0.0);
-    let masked = lat.subdivide_near(site, SITE_REACH);
-    let grown = lat.grow(&built);
+    let world = world();
+    let (start_eye, start_look) = start(&world);
+    let eye = args.eye.unwrap_or(start_eye);
+    let look = args.look.unwrap_or(start_look);
+    // The lattice's origin sits half a fine cell off the half metre grid
+    // that everything built snaps to, so no face of a block ever lies on
+    // a lattice plane (a face that does puts its crease on a lattice edge
+    // and the cells either side of it solve to one point, which the core's
+    // audit counts as a pinch), and far enough out that every index over
+    // the planet is positive.
+    let corner = DVec3::splat(-2.0 * RADIUS - 100.0 + 0.5 * FINE);
+    let lat = Lattice::new(corner, FINE);
+    let frames: Vec<_> = world
+        .towns
+        .iter()
+        .map(|t| town::lot_frame(RADIUS, t, 0.0, 0.0))
+        .collect();
+    let material = terrain_material(&mut images, &mut materials, &frames);
+    let sheet = water_material(&mut waters, SEA);
     info!(
-        "lattice: {}^3 cells of {} m, {} fine under the site at y = {:.2} and {} grown, {} m fine cells",
-        CELLS, CELL, masked, top, grown, lat.fine
+        "planet of {} m, the sea at {} m, {} levels of {} m to {} m cells, the eye at {:.0}, the shore {:.0} m off at {:.0}",
+        RADIUS,
+        SEA,
+        args.levels,
+        lat.cell(0),
+        lat.cell(args.levels - 1),
+        eye,
+        shore(&world, eye).map_or(f64::NAN, |s| (s - eye).length()),
+        shore(&world, eye).unwrap_or(DVec3::NAN)
     );
-    let (chunks, _) = build(&built, &lat);
-    let material = terrain_material(&mut images, &mut materials);
-    for (corner, m) in &chunks {
-        commands.spawn((
-            Mesh3d(meshes.add(to_mesh(m))),
-            MeshMaterial3d(material.clone()),
-            Transform::from_translation(corner.as_vec3()),
-        ));
-    }
+    commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));
     commands.spawn((
         DirectionalLight {
-            illuminance: 6_000.0,
+            illuminance: 8_000.0,
             shadows_enabled: true,
             ..default()
         },
+        CascadeShadowConfigBuilder {
+            num_cascades: 4,
+            first_cascade_far_bound: 12.0,
+            maximum_distance: 500.0,
+            ..default()
+        }
+        .build(),
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, 0.5, 0.0)),
     ));
     commands.insert_resource(GlobalAmbientLight {
-        brightness: 60.0,
+        brightness: 90.0,
         ..default()
     });
     commands.spawn((
@@ -341,38 +530,33 @@ fn spawn_world(
         },
         Stat,
     ));
-    spawn_camera(&mut commands, &ground, &args, top);
-    commands.insert_resource(ground);
+    spawn_camera(&mut commands, &world, &args, eye, look);
+    commands.insert_resource(Eye(WorldPos(eye)));
+    commands.insert_resource(Ground(Arc::new(world)));
 }
 
-/// The camera, flying from `--eye` toward `--look`, or on foot at the spot
-/// under `--eye` facing `--look`, by default at the site's south edge
-/// looking north at the pad.
-fn spawn_camera(commands: &mut Commands, ground: &Ground, args: &Args, top: f64) {
-    let eye = args.eye.unwrap_or(Vec3::new(0.5, top as f32, -6.5));
-    let look = args.look.unwrap_or(Vec3::new(0.0, top as f32 + 0.8, 0.0));
-    let d = (look - eye).normalize_or(Vec3::NEG_Z);
+/// The camera, flying from `eye` toward `look`, or on foot at the spot
+/// under `eye` facing `look`.
+fn spawn_camera(commands: &mut Commands, world: &World, args: &Args, eye: DVec3, look: DVec3) {
+    let d = (look - eye).normalize_or(DVec3::NEG_Z);
     let fly = Fly {
-        yaw: (-d.x).atan2(-d.z),
-        pitch: d.y.clamp(-1.0, 1.0).asin(),
+        yaw: (-d.x as f32).atan2(-d.z as f32),
+        pitch: (d.y as f32).clamp(-1.0, 1.0).asin(),
+        at: eye,
     };
-    let mut tf = Transform::from_translation(eye).with_rotation(Quat::from_euler(
-        EulerRot::YXZ,
-        fly.yaw,
-        fly.pitch,
-        0.0,
-    ));
     if !args.fly {
-        let w = Walker::enter(
-            &ground.field(),
-            &ground.bounds,
-            eye.as_dvec3(),
-            d.as_dvec3(),
-        );
-        place_camera(&w, &mut tf);
+        let w = Walker::enter(&world.field_near(eye, 8.0), &world.bounds, eye, d);
         commands.insert_resource(OnFoot(w));
     }
-    commands.spawn((Camera3d::default(), Exposure { ev100: 10.5 }, tf, fly));
+    commands.spawn((
+        Camera3d {
+            screen_space_specular_transmission_steps: 1,
+            ..default()
+        },
+        DepthPrepass,
+        Exposure { ev100: 10.5 },
+        fly,
+    ));
 }
 
 /// Left click takes the mouse, Escape gives it back.
@@ -395,37 +579,89 @@ fn grab_mouse(
 }
 
 /// Fly the camera while nobody is on foot: the mouse turns it while it is
-/// taken, and the keys move it in its own frame.
+/// taken, and the keys move it in its own frame, in the world frame's
+/// `f64`.
 fn fly(
     mut controls: Controls,
     on_foot: Option<Res<OnFoot>>,
-    mut cam: Query<(&mut Transform, &mut Fly)>,
+    mut cam: Query<&mut Fly>,
+    mut eye: ResMut<Eye>,
+    mut status: ResMut<Status>,
 ) {
     let look = controls.look();
     if on_foot.is_some() {
         return;
     }
-    let Ok((mut tf, mut fly)) = cam.single_mut() else {
+    let Ok(mut fly) = cam.single_mut() else {
         return;
     };
     fly.yaw -= look.x;
     fly.pitch = (fly.pitch - look.y).clamp(-1.5, 1.5);
-    tf.rotation = Quat::from_euler(EulerRot::YXZ, fly.yaw, fly.pitch, 0.0);
+    let rot = Quat::from_euler(EulerRot::YXZ, fly.yaw, fly.pitch, 0.0);
     let keys = &controls.keys;
     let mut v = Vec3::ZERO;
     let axis =
         |neg: KeyCode, pos: KeyCode| (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f32;
-    v += tf.forward().as_vec3() * axis(KeyCode::KeyS, KeyCode::KeyW);
-    v += tf.right().as_vec3() * axis(KeyCode::KeyA, KeyCode::KeyD);
+    v += (rot * Vec3::NEG_Z) * axis(KeyCode::KeyS, KeyCode::KeyW);
+    v += (rot * Vec3::X) * axis(KeyCode::KeyA, KeyCode::KeyD);
     v += Vec3::Y * axis(KeyCode::KeyQ, KeyCode::KeyE);
     let speed = if keys.pressed(KeyCode::ShiftLeft) {
         SPEED * SPRINT
     } else {
         SPEED
     };
-    let step = v.normalize_or_zero() * speed * controls.time.delta_secs().min(0.1);
+    let step = v.normalize_or_zero().as_dvec3() * speed * controls.time.delta_secs_f64().min(0.1);
     if step.is_finite() {
-        tf.translation += step;
+        fly.at += step;
+    }
+    eye.0 = WorldPos(fly.at);
+    status.walker = format!(
+        "flying at {:.1} m over the mean radius",
+        fly.at.length() - RADIUS
+    );
+}
+
+/// The camera at the eye through the origin: looking where the walker
+/// looks with the local up as up, or along the fly camera's heading.
+fn place_eye(
+    frame: Res<Frame>,
+    eye: Res<Eye>,
+    walker: Option<Res<OnFoot>>,
+    mut cam: Query<(&mut Transform, &Fly), With<Camera3d>>,
+) {
+    let Ok((mut tf, fly)) = cam.single_mut() else {
+        return;
+    };
+    let at = frame.0.local(eye.0);
+    *tf = match walker {
+        Some(w) => {
+            Transform::from_translation(at).looking_to(w.0.look().as_vec3(), w.0.dir.as_vec3())
+        }
+        None => Transform::from_translation(at).with_rotation(Quat::from_euler(
+            EulerRot::YXZ,
+            fly.yaw,
+            fly.pitch,
+            0.0,
+        )),
+    };
+}
+
+fn show_status(
+    status: Res<Status>,
+    streamer: Res<Streamer>,
+    mut text: Query<&mut Text, With<Stat>>,
+) {
+    if let Ok(mut text) = text.single_mut() {
+        text.0 = format!(
+            "{}   |   {}{}   |   F fly, B build, Tab wire, Esc mouse",
+            status.walker,
+            if status.build.is_empty() {
+                String::new()
+            } else {
+                format!("{}   |   ", status.build)
+            },
+            streamer.status()
+        );
     }
 }
 
@@ -435,24 +671,32 @@ fn toggle_wireframe(keys: Res<ButtonInput<KeyCode>>, mut config: ResMut<Wirefram
     }
 }
 
-/// With `--shot`, save the frame the arguments asked for and leave a few
-/// frames later, once the write has had its chance.
+/// With `--shot`, save the frame the arguments asked for once the streamer
+/// has settled (or ten times as many frames on), and leave a few frames
+/// later, once the write has had its chance.
 fn take_shot(
     mut commands: Commands,
     args: Res<Args>,
+    streamer: Res<Streamer>,
     mut frame: Local<u32>,
+    mut taken: Local<Option<u32>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Some(path) = &args.shot else {
         return;
     };
     *frame += 1;
-    if *frame == args.frames {
+    // A scripted edit is placed the frame after the first load settles, so
+    // the picture waits for it and for the chunks it remade.
+    let edited = args.sculpt.is_none() || streamer.edits() > 0;
+    let ready = (streamer.idle() && edited) || *frame >= args.frames * 10;
+    if taken.is_none() && *frame >= args.frames && ready {
         commands
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(path.clone()));
+        *taken = Some(*frame);
     }
-    if *frame == args.frames + 12 {
+    if taken.is_some_and(|t| *frame >= t + 12) {
         exit.write(AppExit::Success);
     }
 }

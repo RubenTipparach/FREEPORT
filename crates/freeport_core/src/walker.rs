@@ -41,6 +41,9 @@ const STAND: f64 = 0.64;
 /// The gradient's step and the clearance a push leaves, metres.
 const EPS: f64 = 0.04;
 const CLEAR: f64 = 0.02;
+/// How deep the feet go under the sea's level before the body floats,
+/// metres: the sea holds a walker at wading depth.
+pub const WADE: f64 = 1.2;
 
 /// Where the ground can be: the mean radius, which turns metres into angle,
 /// and the radii between which the ground is looked for.
@@ -49,6 +52,9 @@ pub struct Bounds {
     pub radius: f64,
     pub floor: f64,
     pub top: f64,
+    /// The sea's level as a radius, or nought where there is no water to
+    /// float in.
+    pub sea: f64,
 }
 
 /// What the player asked for this frame.
@@ -262,6 +268,22 @@ impl Walker {
         self.accelerate(input, dt);
         self.step(field, bounds, input, dt);
         self.rise_and_fall(field, input, dt);
+        self.float(bounds);
+    }
+
+    /// The sea holds the feet no deeper than `WADE` under its level: past
+    /// that the body floats, standing on nothing, and walks.
+    fn float(&mut self, bounds: &Bounds) {
+        if bounds.sea <= 0.0 {
+            return;
+        }
+        let line = bounds.sea - WADE;
+        if self.foot < line {
+            self.h += line - self.foot;
+            self.foot = line;
+            self.vy = 0.0;
+            self.on_ground = true;
+        }
     }
 
     /// Accelerate toward the wanted velocity in the tangent plane, and
@@ -348,6 +370,7 @@ impl Walker {
                 radius: 1.0,
                 floor: 0.0,
                 top: 0.0,
+                sea: 0.0,
             },
             self.dir,
             Some(self.foot),
@@ -379,7 +402,32 @@ mod tests {
             radius: R,
             floor: R - 4.0,
             top: R + 8.0,
+            sea: 0.0,
         }
+    }
+
+    #[test]
+    fn the_sea_holds_a_walker_at_wading_depth_and_it_walks_on() {
+        let ball = Sphere { radius: R };
+        let b = Bounds {
+            sea: R + 2.0,
+            ..bounds()
+        };
+        let mut w = Walker::enter(&ball, &b, DVec3::Y, DVec3::X);
+        let input = Input {
+            forward: 1.0,
+            ..Default::default()
+        };
+        for _ in 0..120 {
+            w.update(&ball, &b, &input, 1.0 / 60.0);
+        }
+        assert!(
+            (w.foot - (R + 2.0 - WADE)).abs() < 1e-6,
+            "feet at {}",
+            w.foot - R
+        );
+        assert!(w.on_ground);
+        assert!(walked(&w) > 6.0, "walked {}", walked(&w));
     }
 
     /// A block standing on the top of the ball from `ahead` metres along +x
@@ -467,6 +515,8 @@ mod tests {
         let kerb = Built {
             ground: &ball,
             blocks: vec![block(3.0, 10.0, 0.4, 6.0)],
+            structures: vec![],
+            cell: 0.25,
         };
         let (w, _) = walk(
             &kerb,
@@ -485,6 +535,8 @@ mod tests {
         let wall = Built {
             ground: &ball,
             blocks: vec![block(3.0, 0.8, 1.2, 6.0)],
+            structures: vec![],
+            cell: 0.25,
         };
         let (w, _) = walk(
             &wall,
@@ -508,6 +560,8 @@ mod tests {
         let wall = Built {
             ground: &ball,
             blocks: vec![block(3.0, 0.8, 1.2, 30.0)],
+            structures: vec![],
+            cell: 0.25,
         };
         let (w, _) = walk(
             &wall,
@@ -537,6 +591,8 @@ mod tests {
         let roofed = Built {
             ground: &ball,
             blocks: vec![lintel],
+            structures: vec![],
+            cell: 0.25,
         };
         let b = bounds();
         let mut w = Walker::enter(&roofed, &b, DVec3::Y, DVec3::X);

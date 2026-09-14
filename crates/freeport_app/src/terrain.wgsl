@@ -12,13 +12,20 @@
     forward_io::{VertexOutput, FragmentOutput},
 }
 
+// How many town frames the array can hold, `terrain::FRAMES`.
+const FRAMES: i32 = 16;
+
 struct Terrain {
-    // x: metres a tile on the ground, y: metres a tile on concrete.
+    // x: metres a tile on the ground, y: metres a tile on concrete, z: how
+    // many town frames are set.
     params: vec4<f32>,
     // The planet's centre in the render frame: every coordinate here is
     // planet local, which is the rule for any shader that reasons about a
     // body.
     centre: vec4<f32>,
+    // Three lanes a town: its direction with the radius its ground is at
+    // in w, its east, its north.
+    frames: array<vec4<f32>, 48>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> terrain: Terrain;
@@ -33,6 +40,22 @@ struct Terrain {
 const L_ROCK: i32 = 0;
 const L_GRASS: i32 = 1;
 const L_CONCRETE: i32 = 2;
+const L_PLATE: i32 = 3;
+
+// The materials, as `freeport_core::field` numbers them.
+const M_TERRAIN: f32 = 0.0;
+const M_CONCRETE: f32 = 1.0;
+const M_PLATE: f32 = 2.0;
+const M_GLASS: f32 = 3.0;
+const M_LAMP: f32 = 4.0;
+const M_LIT: f32 = 5.0;
+const M_STREET: f32 = 6.0;
+
+// One where the material is `m`, else nought: the vertex colour carries
+// the material as a whole number, flat over the triangle.
+fn is(material: f32, m: f32) -> f32 {
+    return select(0.0, 1.0, abs(material - m) < 0.5);
+}
 
 fn tri_weights(n: vec3<f32>) -> vec3<f32> {
     let w = pow(abs(n), vec3<f32>(4.0));
@@ -57,6 +80,55 @@ fn tri_normal(layer: i32, p: vec3<f32>, w: vec3<f32>, n: vec3<f32>) -> vec3<f32>
     return normalize(tx.zyx * w.x + ty.xzy * w.y + tz.xyz * w.z);
 }
 
+// The town whose centre is nearest a direction, or minus one with no town
+// set. The count is uniform, so the loop is too.
+fn nearest_frame(up: vec3<f32>) -> i32 {
+    let count = min(i32(terrain.params.z), FRAMES);
+    var best = -1;
+    var best_dot = -2.0;
+    for (var i = 0; i < count; i++) {
+        let d = dot(up, terrain.frames[i * 3].xyz);
+        if (d > best_dot) {
+            best_dot = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+// Where a point is in a town's frame, and the frame's axes at the point:
+// east and north are measured on the sphere the town's ground is at, from
+// the town's centre (a point projected on its own tangent plane is nought
+// everywhere, the mockup's float noise), and the height is off that
+// sphere, so a building plumb on its own lot has its walls on constant
+// east or north and its floors on constant height, and a panel is level
+// and plumb whatever the planet's axes do. The core's `Frame::local` is
+// the same map from the lot's own anchor.
+struct Local {
+    p: vec3<f32>,
+    n: vec3<f32>,
+    to_world: mat3x3<f32>,
+}
+
+fn in_frame(f: i32, rel: vec3<f32>, up: vec3<f32>, n: vec3<f32>) -> Local {
+    var l: Local;
+    l.p = rel;
+    l.n = n;
+    l.to_world = mat3x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
+    if (f < 0) {
+        return l;
+    }
+    let base = terrain.frames[f * 3].w;
+    let east_t = terrain.frames[f * 3 + 1].xyz;
+    let north_t = terrain.frames[f * 3 + 2].xyz;
+    let east = normalize(east_t - up * dot(east_t, up));
+    let north = cross(up, east);
+    l.p = vec3<f32>(dot(up, east_t) * base, dot(up, north_t) * base, length(rel) - base);
+    l.n = vec3<f32>(dot(n, east), dot(n, north), dot(n, up));
+    l.to_world = mat3x3<f32>(east, north, up);
+    return l;
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
@@ -67,27 +139,54 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifdef VERTEX_COLORS
     material = in.color.r;
 #endif
-    let built = select(0.0, 1.0, material > 0.5);
+    let ground = is(material, M_TERRAIN);
     let slope = 1.0 - clamp(dot(n, up), 0.0, 1.0);
     let steep = smoothstep(0.34, 0.6, slope);
-    let w_rock = steep * (1.0 - built);
-    let w_grass = (1.0 - steep) * (1.0 - built);
-    let w_conc = built;
+    let w_rock = steep * ground;
+    let w_grass = (1.0 - steep) * ground;
+    let street = is(material, M_STREET);
+    let w_conc = is(material, M_CONCRETE) + street;
+    let w_plate = is(material, M_PLATE);
+    // The panes and the lamps are flat colours with no map: what they
+    // are is a colour and a glow, not a surface.
+    let glass = is(material, M_GLASS);
+    let lamp = is(material, M_LAMP);
+    let lit = is(material, M_LIT);
+    let flat = glass + lamp + lit;
+    // The ground is mapped in the planet's frame, and concrete, plate and
+    // a street in the nearest town's, where they are level and plumb.
     let pg = rel / terrain.params.x;
-    let pc = rel / terrain.params.y;
     let w = tri_weights(n);
-    let albedo = tri(albedo_maps, albedo_sampler, L_ROCK, pg, w).rgb * w_rock
+    let local = in_frame(nearest_frame(up), rel, up, n);
+    let pc = local.p / terrain.params.y;
+    let wc = tri_weights(local.n);
+    let mapped = w_rock + w_grass + w_conc + w_plate;
+    var albedo = tri(albedo_maps, albedo_sampler, L_ROCK, pg, w).rgb * w_rock
         + tri(albedo_maps, albedo_sampler, L_GRASS, pg, w).rgb * w_grass
-        + tri(albedo_maps, albedo_sampler, L_CONCRETE, pc, w).rgb * w_conc;
-    let orm = tri(orm_maps, orm_sampler, L_ROCK, pg, w).rgb * w_rock
+        + tri(albedo_maps, albedo_sampler, L_CONCRETE, pc, wc).rgb * w_conc
+        + tri(albedo_maps, albedo_sampler, L_PLATE, pc, wc).rgb * w_plate;
+    // A street is the concrete set, darker, as paving is.
+    albedo = albedo * (1.0 - street * 0.45);
+    var orm = tri(orm_maps, orm_sampler, L_ROCK, pg, w).rgb * w_rock
         + tri(orm_maps, orm_sampler, L_GRASS, pg, w).rgb * w_grass
-        + tri(orm_maps, orm_sampler, L_CONCRETE, pc, w).rgb * w_conc;
-    let nm = normalize(tri_normal(L_ROCK, pg, w, n) * w_rock
+        + tri(orm_maps, orm_sampler, L_CONCRETE, pc, wc).rgb * w_conc
+        + tri(orm_maps, orm_sampler, L_PLATE, pc, wc).rgb * w_plate;
+    let built_n = local.to_world
+        * (tri_normal(L_CONCRETE, pc, wc, local.n) * w_conc
+            + tri_normal(L_PLATE, pc, wc, local.n) * w_plate);
+    var nm = tri_normal(L_ROCK, pg, w, n) * w_rock
         + tri_normal(L_GRASS, pg, w, n) * w_grass
-        + tri_normal(L_CONCRETE, pc, w, n) * w_conc);
+        + built_n;
+    albedo = albedo * mapped
+        + vec3<f32>(0.05, 0.08, 0.1) * glass
+        + vec3<f32>(0.95, 0.92, 0.85) * lamp
+        + vec3<f32>(0.9, 0.8, 0.6) * lit;
+    orm = orm * mapped + vec3<f32>(1.0, 0.08, 0.0) * glass + vec3<f32>(1.0, 0.6, 0.0) * (lamp + lit);
+    nm = normalize(nm * mapped + n * flat);
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     pbr_input.material.perceptual_roughness = orm.g;
     pbr_input.material.metallic = orm.b;
+    pbr_input.material.emissive = vec4<f32>(vec3<f32>(8.0, 7.4, 6.0) * lamp + vec3<f32>(3.0, 2.4, 1.5) * lit, 1.0);
     pbr_input.diffuse_occlusion = vec3<f32>(orm.r);
     pbr_input.N = nm;
     var out: FragmentOutput;

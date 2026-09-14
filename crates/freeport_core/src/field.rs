@@ -23,6 +23,31 @@ pub trait Density {
     fn material(&self, _p: DVec3) -> u8 {
         TERRAIN
     }
+
+    /// Whether the box from `lo` to `hi` is wholly rock (`Some(true)`),
+    /// wholly air (`Some(false)`) or something the field cannot rule on
+    /// (`None`), which is what lets a chunk with no surface in it be skipped
+    /// without a sample. An answer must hold on the box's closed boundary,
+    /// because a chunk beside a skipped one relies on the shared face having
+    /// no crossing.
+    fn solid(&self, _lo: DVec3, _hi: DVec3) -> Option<bool> {
+        None
+    }
+
+    /// A bound on how fast the density can change, density per metre, or
+    /// infinity where there is none. A sample of `v` a distance `d` from a
+    /// point says the field there is within `slope * d` of `v`, which is
+    /// what lets a chunk be ruled empty from a few samples.
+    fn slope(&self) -> f64 {
+        f64::INFINITY
+    }
+}
+
+/// The nearest and farthest a box's points are from the origin.
+pub fn box_radii(lo: DVec3, hi: DVec3) -> (f64, f64) {
+    let near = DVec3::ZERO.clamp(lo, hi).length();
+    let far = lo.abs().max(hi.abs()).length();
+    (near, far)
 }
 
 /// The ground, whatever the planet is made of; the shader picks rock,
@@ -30,6 +55,16 @@ pub trait Density {
 pub const TERRAIN: u8 = 0;
 /// Poured concrete: what a block is made of.
 pub const CONCRETE: u8 = 1;
+/// Hull plate: rails, pillars, a cap.
+pub const PLATE: u8 = 2;
+/// A pane, dark.
+pub const GLASS: u8 = 3;
+/// A lamp: glows, and is a light.
+pub const LAMP: u8 = 4;
+/// A pane, lit from within.
+pub const LIT: u8 = 5;
+/// A street's paving.
+pub const STREET: u8 = 6;
 
 /// A ball of rock and nothing else.
 pub struct Sphere {
@@ -40,10 +75,28 @@ impl Density for Sphere {
     fn at(&self, p: DVec3) -> f64 {
         self.radius - p.length()
     }
+
+    fn solid(&self, lo: DVec3, hi: DVec3) -> Option<bool> {
+        let (near, far) = box_radii(lo, hi);
+        if far < self.radius {
+            Some(true)
+        } else if near > self.radius {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn slope(&self) -> f64 {
+        1.0
+    }
 }
 
 /// A planet: a sphere with fractal relief on its surface and a little
-/// three dimensional noise so a slope can overhang.
+/// three dimensional noise so a slope can overhang, and sites where the
+/// relief is levelled for a town and the overhang faded out, or a plateau
+/// would still undercut.
+#[derive(Clone, Debug)]
 pub struct Planet {
     /// Mean radius, metres.
     pub radius: f64,
@@ -60,6 +113,8 @@ pub struct Planet {
     /// Feature size of the volumetric term, metres.
     pub ledge: f64,
     pub seed: u32,
+    /// Where the ground is levelled for a town.
+    pub sites: Vec<crate::town::Site>,
 }
 
 impl Default for Planet {
@@ -72,7 +127,50 @@ impl Default for Planet {
             overhang: 20.0,
             ledge: 60.0,
             seed: 7,
+            sites: Vec::new(),
         }
+    }
+}
+
+fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
+    let k = ((t - a) / (b - a)).clamp(0.0, 1.0);
+    k * k * (3.0 - 2.0 * k)
+}
+
+/// A site's levelling blends out to the relief over a skirt this far
+/// inside and outside half its reach, metres.
+const SKIRT_IN: f64 = 5.0;
+const SKIRT_OUT: f64 = 6.0;
+
+impl Planet {
+    /// How much a site levels a direction: one right across it, nought
+    /// past its apron.
+    fn site_weight(&self, site: &crate::town::Site, dir: DVec3) -> f64 {
+        let c = dir.dot(site.dir).clamp(-1.0, 1.0);
+        let dist = c.acos() * self.radius;
+        1.0 - smoothstep(site.r * 0.5 - SKIRT_IN, site.r * 0.5 + SKIRT_OUT, dist)
+    }
+
+    /// The relief at a direction, metres over the mean radius, sites
+    /// applied, and how much of the overhang is kept there. On a levelled
+    /// site the relief is the site's height and the noise is not asked.
+    pub fn surface(&self, dir: DVec3) -> (f64, f64) {
+        for site in &self.sites {
+            if self.site_weight(site, dir) >= 1.0 {
+                return (site.h, 0.0);
+            }
+        }
+        let mut s =
+            (fbm3(dir * self.lumps, self.seed, self.octaves) * 2.0 - 1.0) * self.relief * 0.5;
+        let mut keep = 1.0;
+        for site in &self.sites {
+            let w = self.site_weight(site, dir);
+            if w > 0.0 {
+                s += (site.h - s) * w;
+                keep *= 1.0 - w;
+            }
+        }
+        (s, keep)
     }
 }
 
@@ -82,15 +180,72 @@ impl Density for Planet {
         if r == 0.0 {
             return self.radius;
         }
-        let dir = p / r;
-        let surface =
-            (fbm3(dir * self.lumps, self.seed, self.octaves) * 2.0 - 1.0) * self.relief * 0.5;
-        let carve = if self.overhang > 0.0 && self.ledge > 0.0 {
-            (noise3(p / self.ledge, self.seed.wrapping_add(0x9E37)) - 0.5) * self.overhang
+        let (surface, keep) = self.surface(p / r);
+        let carve = if self.overhang > 0.0 && self.ledge > 0.0 && keep > 0.0 {
+            (noise3(p / self.ledge, self.seed.wrapping_add(0x9E37)) - 0.5) * self.overhang * keep
         } else {
             0.0
         };
         self.radius + surface - r + carve
+    }
+
+    /// Outside the band the relief and the overhang can reach, the sign is
+    /// the sphere's.
+    fn solid(&self, lo: DVec3, hi: DVec3) -> Option<bool> {
+        let (near, far) = box_radii(lo, hi);
+        let (floor, top) = self.band();
+        if far < floor {
+            Some(true)
+        } else if near > top {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn slope(&self) -> f64 {
+        self.steepest()
+    }
+}
+
+impl Planet {
+    /// The radii the surface stays between: the mean less and plus half the
+    /// relief and half the overhang.
+    pub fn band(&self) -> (f64, f64) {
+        let reach = self.relief * 0.5 + self.overhang * 0.5;
+        (self.radius - reach, self.radius + reach)
+    }
+}
+
+/// The steepest `noise3` gets, per unit of its argument: a smoothstep
+/// climbs at one and a half at most, across a unit cell, along each of
+/// three axes.
+const NOISE_SLOPE: f64 = 1.5 * 1.7320508;
+
+impl Planet {
+    /// One from the radius, the relief's fractal (each octave doubles the
+    /// frequency and halves the weight, so every octave contributes the
+    /// same slope) over the radius, the carve over its ledge, and across a
+    /// site's skirt the blend from the relief to the site's level and of
+    /// the carve to nought, which climbs at a smoothstep's one and a half
+    /// over the skirt's width. The sites' skirts never overlap (`town::plan`
+    /// keeps towns further apart than a site reaches), so the worst site
+    /// bounds them all.
+    fn steepest(&self) -> f64 {
+        let octaves = self.octaves.max(1) as f64;
+        let relief = self.relief * NOISE_SLOPE * self.lumps * octaves / self.radius;
+        let carve = if self.ledge > 0.0 {
+            self.overhang * NOISE_SLOPE / self.ledge
+        } else {
+            0.0
+        };
+        let level = self.sites.iter().map(|s| s.h.abs()).fold(0.0, f64::max);
+        let skirt = if self.sites.is_empty() {
+            0.0
+        } else {
+            (level + self.relief * 0.5 + self.overhang * 0.5) * 1.5 / (SKIRT_IN + SKIRT_OUT)
+        };
+        1.0 + relief + carve + skirt
     }
 }
 
@@ -122,37 +277,150 @@ impl Density for Block {
     }
 }
 
-/// A field with things built on it: the ground, and blocks ADDED to it in
-/// order, each a union. What is built is what the fine lattice is for, and
-/// the coarse one never sees it: the mask covers every cell a block touches.
+/// A building standing on the planet: its recipe compiled, the frame it
+/// stands in, and the box round it in the field's frame.
+#[derive(Clone, Debug)]
+pub struct Structure {
+    pub frame: crate::town::Frame,
+    pub building: crate::recipe::Building,
+    pub lo: DVec3,
+    pub hi: DVec3,
+}
+
+impl Structure {
+    /// A building in a frame, its box the frame's image of the building's.
+    pub fn new(frame: crate::town::Frame, building: crate::recipe::Building) -> Structure {
+        let (mut lo, mut hi) = (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY));
+        for c in 0..8 {
+            let l = DVec3::new(
+                if c & 1 != 0 {
+                    building.hi.x
+                } else {
+                    building.lo.x
+                },
+                if c & 2 != 0 {
+                    building.hi.y
+                } else {
+                    building.lo.y
+                },
+                if c & 4 != 0 {
+                    building.hi.z
+                } else {
+                    building.lo.z
+                },
+            );
+            let w = frame.world(l);
+            lo = lo.min(w);
+            hi = hi.max(w);
+        }
+        Structure {
+            frame,
+            building,
+            lo,
+            hi,
+        }
+    }
+
+    /// Whether the box round the structure meets another box.
+    pub fn meets(&self, lo: DVec3, hi: DVec3) -> bool {
+        self.lo.cmple(hi).all() && self.hi.cmpge(lo).all()
+    }
+
+    /// Every lamp in the building, in the field's frame, with its reach.
+    pub fn lamps(&self) -> Vec<(DVec3, f64)> {
+        self.building
+            .lamps
+            .iter()
+            .map(|(at, reach)| (self.frame.world(*at), *reach))
+            .collect()
+    }
+}
+
+/// Past this cell, metres, a building is its massing: on a lattice that
+/// cannot hold a wall, a house is a block and a tower a drum.
+pub const DETAIL: f64 = 0.5;
+
+/// A field with things built on it: the ground, blocks ADDED to it in
+/// order, each a union, and structures evaluated in their own frames, each
+/// brush in list order. `cell` is what the field is being contoured on:
+/// past `DETAIL` a structure is its massing.
 pub struct Built<'a> {
     pub ground: &'a dyn Density,
     pub blocks: Vec<Block>,
+    pub structures: Vec<&'a Structure>,
+    pub cell: f64,
+}
+
+impl Built<'_> {
+    /// What is at a point and what it is made of.
+    pub fn sample(&self, p: DVec3) -> crate::recipe::Sample {
+        let mut s = crate::recipe::Sample {
+            d: self.ground.at(p),
+            mat: TERRAIN,
+            room: -1,
+            curved: true,
+        };
+        for b in &self.blocks {
+            let v = b.at(p);
+            if v > s.d {
+                s.d = v;
+                s.mat = CONCRETE;
+                s.curved = false;
+            }
+        }
+        for st in &self.structures {
+            if !(p.cmpge(st.lo).all() && p.cmple(st.hi).all()) {
+                continue;
+            }
+            let local = st.frame.local(p);
+            s = if self.cell > DETAIL {
+                st.building.massing(local, s, self.cell)
+            } else {
+                st.building.sample(local, s)
+            };
+        }
+        s
+    }
 }
 
 impl Density for Built<'_> {
     fn at(&self, p: DVec3) -> f64 {
-        let mut d = self.ground.at(p);
-        for b in &self.blocks {
-            d = d.max(b.at(p));
-        }
-        d
+        self.sample(p).d
     }
 
     /// The deepest solid at `p`: a block whose density beats the ground's
     /// is what the rock there is made of, so a slab poured into a hillside
     /// meets the rock on a line and never as a blend.
     fn material(&self, p: DVec3) -> u8 {
-        let ground = self.ground.at(p);
-        if self.blocks.iter().any(|b| b.at(p) > ground) {
-            CONCRETE
-        } else {
-            TERRAIN
-        }
+        self.sample(p).mat
+    }
+
+    /// The ground's answer, unless a block or a structure reaches into the
+    /// box.
+    fn solid(&self, lo: DVec3, hi: DVec3) -> Option<bool> {
+        let ground = self.ground.solid(lo, hi)?;
+        let touched = self.blocks.iter().any(|b| {
+            let (blo, bhi) = b.bounds();
+            blo.cmple(hi).all() && bhi.cmpge(lo).all()
+        }) || self.structures.iter().any(|st| st.meets(lo, hi));
+        (!touched).then_some(ground)
+    }
+
+    /// A block is a distance, which climbs at one; the union climbs no
+    /// faster than its steepest part.
+    fn slope(&self) -> f64 {
+        self.ground.slope().max(1.0)
     }
 }
 
 impl Block {
+    /// The box round the block, in the field's frame.
+    pub fn bounds(&self) -> (DVec3, DVec3) {
+        let c = self.corners();
+        c.iter()
+            .fold((c[0], c[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)))
+    }
+
     /// The corners of the box, in the field's frame.
     pub fn corners(&self) -> [DVec3; 8] {
         std::array::from_fn(|c| {
@@ -167,8 +435,9 @@ impl Block {
     }
 }
 
-/// A lattice hash in 0..1, bit exact on every machine.
-fn hash3(x: i64, y: i64, z: i64, seed: u32) -> f64 {
+/// A lattice hash in 0..1, bit exact on every machine: what the noise is
+/// built on, and what a plan draws its dice from.
+pub fn hash3(x: i64, y: i64, z: i64, seed: u32) -> f64 {
     let mut h = (x as u32).wrapping_mul(0x8DA6_B343)
         ^ (y as u32).wrapping_mul(0xD816_3841)
         ^ (z as u32).wrapping_mul(0xCB1A_B31F)
@@ -335,12 +604,77 @@ mod tests {
         let built = Built {
             ground: &ground,
             blocks: vec![b.clone()],
+            structures: vec![],
+            cell: 0.25,
         };
         assert_eq!(built.at(b.centre), 0.5);
         assert_eq!(built.at(DVec3::ZERO), 1.0);
         assert_eq!(built.material(b.centre), CONCRETE);
         assert_eq!(built.material(DVec3::ZERO), TERRAIN);
         assert_eq!(ground.material(DVec3::ZERO), TERRAIN);
+    }
+
+    #[test]
+    fn a_box_is_ruled_rock_or_air_only_where_the_band_allows() {
+        let planet = Planet {
+            radius: 100.0,
+            relief: 4.0,
+            lumps: 3.0,
+            octaves: 3,
+            overhang: 1.0,
+            ledge: 5.0,
+            seed: 1,
+            sites: vec![],
+        };
+        assert_eq!(planet.band(), (97.5, 102.5));
+        let deep = (
+            DVec3::new(-10.0, -10.0, -10.0),
+            DVec3::new(10.0, 10.0, 10.0),
+        );
+        assert_eq!(planet.solid(deep.0, deep.1), Some(true));
+        let high = (DVec3::new(0.0, 103.0, 0.0), DVec3::new(5.0, 110.0, 5.0));
+        assert_eq!(planet.solid(high.0, high.1), Some(false));
+        let crust = (DVec3::new(0.0, 95.0, 0.0), DVec3::new(5.0, 105.0, 5.0));
+        assert_eq!(planet.solid(crust.0, crust.1), None);
+        assert_eq!(box_radii(deep.0, deep.1), (0.0, (300.0f64).sqrt()));
+        let ball = Sphere { radius: 5.0 };
+        assert_eq!(
+            ball.solid(DVec3::splat(6.0), DVec3::splat(7.0)),
+            Some(false)
+        );
+        let slab = Block {
+            centre: DVec3::new(0.0, 104.0, 0.0),
+            half: DVec3::new(1.0, 1.0, 0.2),
+            axes: [DVec3::X, DVec3::Z, DVec3::Y],
+        };
+        let built = Built {
+            ground: &planet,
+            blocks: vec![slab.clone()],
+            structures: vec![],
+            cell: 0.25,
+        };
+        assert_eq!(built.solid(high.0, high.1), None, "a slab in the box");
+        // The slope bound holds: the field between two points a step apart
+        // never changes faster than it says.
+        let slope = planet.slope();
+        assert!(slope > 1.0 && slope < 20.0, "slope {slope}");
+        assert_eq!(built.slope(), slope);
+        assert_eq!(ball.slope(), 1.0);
+        let mut steepest: f64 = 0.0;
+        for i in 0..2000 {
+            let t = i as f64 * 0.37;
+            let p = DVec3::new(t.sin() * 100.0, t.cos() * 100.0, (t * 0.3).sin() * 30.0);
+            let step = DVec3::new(0.011, -0.007, 0.013);
+            steepest = steepest.max((planet.at(p + step) - planet.at(p)).abs() / step.length());
+        }
+        assert!(
+            steepest < slope,
+            "measured {steepest} against the bound {slope}"
+        );
+        assert_eq!(built.solid(deep.0, deep.1), Some(true));
+        let (lo, hi) = slab.bounds();
+        assert!((lo - DVec3::new(-1.0, 103.8, -1.0)).length() < 1e-12);
+        assert!((hi - DVec3::new(1.0, 104.2, 1.0)).length() < 1e-12);
     }
 
     #[test]
@@ -359,5 +693,42 @@ mod tests {
             "{g:?}"
         );
         assert_eq!(grid.point(0, 0, 0), grid.corner);
+    }
+
+    #[test]
+    fn the_slope_bound_holds_across_a_sites_skirt() {
+        let mut planet = Planet {
+            radius: 2000.0,
+            relief: 40.0,
+            ..Default::default()
+        };
+        planet.sites = vec![crate::town::Site {
+            dir: DVec3::Z,
+            h: 30.0,
+            r: 100.0,
+        }];
+        let bound = planet.slope();
+        let mut worst = 0.0f64;
+        for i in 0..400 {
+            let dist = 35.0 + 35.0 * i as f64 / 400.0;
+            let a = dist / planet.radius;
+            let dir = DVec3::new(a.sin(), 0.0, a.cos());
+            for k in 0..5 {
+                let p = dir * (planet.radius - 20.0 + 15.0 * k as f64);
+                for d in [DVec3::X, DVec3::Y, DVec3::Z] {
+                    let h = 0.05;
+                    let g = (planet.at(p + d * h) - planet.at(p - d * h)).abs() / (2.0 * h);
+                    worst = worst.max(g);
+                }
+            }
+        }
+        assert!(
+            worst <= bound,
+            "the field climbs at {worst} against a bound of {bound}"
+        );
+        assert!(
+            bound < worst * 8.0 + 2.0,
+            "a bound of {bound} is slack against {worst}"
+        );
     }
 }

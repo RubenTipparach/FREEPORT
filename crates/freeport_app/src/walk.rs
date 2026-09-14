@@ -1,39 +1,28 @@
-//! On foot: the keys and the mouse into the core's walker, the camera out.
+//! On foot: the keys and the mouse into the core's walker, the eye out.
 //!
 //! The walker itself is `freeport_core::walker`, the rules and the numbers
-//! both, and this is only what a harness adds: which key is which, a
-//! camera at the eye looking where the walker looks, a line of text saying
-//! where it stands, and a key that swaps between walking and flying. The
-//! field the walker walks is the same `Built` the mesher contoured, so the
-//! picture is the collider.
+//! both, and this is only what a harness adds: which key is which, where
+//! the eye is for the camera, a line of text saying where it stands, and a
+//! key that swaps between walking and flying. The field the walker walks
+//! is the same one the mesher contoured, so the picture is the collider.
 
-use crate::{Controls, Fly, Ground};
+use crate::{Controls, Eye, Fly, Ground, Status};
 use bevy::prelude::*;
 use freeport_core::field::{Density, CONCRETE};
-use freeport_core::walker::{Input, Walker};
+use freeport_core::pos::WorldPos;
+use freeport_core::walker::{Bounds, Input, Walker};
 
 /// The walker, present while on foot.
 #[derive(Resource)]
 pub struct OnFoot(pub Walker);
-
-/// The line of text that says where the walker stands.
-#[derive(Component)]
-pub struct Stat;
-
-/// The camera set from the walker: at the eye, looking along the look,
-/// with the local up as up.
-pub fn place_camera(w: &Walker, tf: &mut Transform) {
-    *tf = Transform::from_translation(w.eye().as_vec3())
-        .looking_to(w.look().as_vec3(), w.dir.as_vec3());
-}
 
 /// One frame on foot.
 pub fn walk(
     mut controls: Controls,
     ground: Res<Ground>,
     walker: Option<ResMut<OnFoot>>,
-    mut cam: Query<&mut Transform, With<Camera3d>>,
-    mut stat: Query<&mut Text, With<Stat>>,
+    mut eye: ResMut<Eye>,
+    mut status: ResMut<Status>,
 ) {
     let Some(mut walker) = walker else {
         return;
@@ -50,31 +39,34 @@ pub fn walk(
         turn: -look.x as f64,
         tilt: -look.y as f64,
     };
-    let field = ground.field();
-    walker.0.update(
-        &field,
-        &ground.bounds,
-        &input,
-        controls.time.delta_secs_f64(),
+    let field = ground.0.field_near(walker.0.eye(), 8.0);
+    // The sea holds the feet only where there is water: a dry pit under
+    // the level is walked into.
+    let water = ground.0.water(&field);
+    let wet = water.has_water(walker.0.dir * (walker.0.foot + 0.3));
+    let bounds = Bounds {
+        sea: if wet { water.sea.radius } else { 0.0 },
+        ..ground.0.bounds
+    };
+    walker
+        .0
+        .update(&field, &bounds, &input, controls.time.delta_secs_f64());
+    eye.0 = WorldPos(walker.0.eye());
+    let w = &walker.0;
+    let under = field.material(w.dir * (w.foot - 0.05));
+    status.walker = format!(
+        "{:.1} m over the mean radius, {:.1} m/s{}, {}",
+        w.foot - ground.0.planet.radius,
+        w.vel[0].hypot(w.vel[1]),
+        if w.on_ground { "" } else { ", airborne" },
+        if wet && w.foot < water.sea.radius - 0.3 {
+            "in the sea"
+        } else if under == CONCRETE {
+            "on concrete"
+        } else {
+            "on the ground"
+        }
     );
-    if let Ok(mut tf) = cam.single_mut() {
-        place_camera(&walker.0, &mut tf);
-    }
-    if let Ok(mut text) = stat.single_mut() {
-        let w = &walker.0;
-        let under = field.material(w.dir * (w.foot - 0.05));
-        text.0 = format!(
-            "{:.1} m over the mean radius, {:.1} m/s{}, on {}   |   F fly, Tab wire, Esc mouse",
-            w.foot - ground.planet.radius,
-            w.vel[0].hypot(w.vel[1]),
-            if w.on_ground { "" } else { ", airborne" },
-            if under == CONCRETE {
-                "concrete"
-            } else {
-                "the ground"
-            }
-        );
-    }
 }
 
 /// F swaps between walking and flying: on foot from wherever the camera
@@ -85,13 +77,13 @@ pub fn toggle_walk(
     keys: Res<ButtonInput<KeyCode>>,
     ground: Res<Ground>,
     walker: Option<Res<OnFoot>>,
-    mut cam: Query<(&Transform, &mut Fly), With<Camera3d>>,
-    mut stat: Query<&mut Text, With<Stat>>,
+    mut cam: Query<&mut Fly, With<Camera3d>>,
+    mut status: ResMut<Status>,
 ) {
     if !keys.just_pressed(KeyCode::KeyF) {
         return;
     }
-    let Ok((tf, mut fly)) = cam.single_mut() else {
+    let Ok(mut fly) = cam.single_mut() else {
         return;
     };
     match walker {
@@ -99,16 +91,19 @@ pub fn toggle_walk(
             let look = w.0.look().as_vec3();
             fly.yaw = (-look.x).atan2(-look.z);
             fly.pitch = look.y.clamp(-1.0, 1.0).asin();
+            fly.at = w.0.eye();
             commands.remove_resource::<OnFoot>();
-            if let Ok(mut text) = stat.single_mut() {
-                text.0 = "flying   |   F walk, Tab wire, Esc mouse".to_string();
-            }
+            status.walker = "flying".to_string();
         }
         None => {
-            let field = ground.field();
-            let dir = tf.translation.as_dvec3();
-            let heading = tf.forward().as_vec3().as_dvec3();
-            commands.insert_resource(OnFoot(Walker::enter(&field, &ground.bounds, dir, heading)));
+            let field = ground.0.field_near(fly.at, 8.0);
+            let heading = fly.forward().as_dvec3();
+            commands.insert_resource(OnFoot(Walker::enter(
+                &field,
+                &ground.0.bounds,
+                fly.at,
+                heading,
+            )));
         }
     }
 }

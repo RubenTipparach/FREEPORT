@@ -4,16 +4,18 @@ An open world space game about working in a space economy: thousands of
 stars, tens of thousands of planets hundreds to thousands of kilometres
 across, drawn from orbit to the ground with no seam, and a ship you climb out
 of. Bevy 0.18, Rust, `f64` world frame with a floating origin, planets as
-density fields marched into triangles.
+density fields dual contoured into triangles a chunk at a time in rings of
+detail round the eye, a finite sea, cities built from recipes of brushes in
+the same field, and a builder on foot.
 
 `CLAUDE.md` is the rules and the reasons. `docs/freeport.html` is the design
 page ([published](https://claude.ai/code/artifact/7822c376-33d9-4391-9907-a958426efc29)): what is being built, the stack, the tooling and the
 two terrain mockups.
 
 ```sh
-cargo test -p freeport_core                 # the engine free core: positions, the cube sphere, the field, the mesher
+cargo test -p freeport_core                 # the engine free core: positions, the lattice and its rings, the field, the mesher, the sea, the towns and their recipes, the walker
 ./run.sh                                    # build the Bevy harness and open a window (run.bat on Windows); --test runs the suites first, --shot out.png takes a picture with no display, -- hands the rest to the app
-./target/release/freeport_app               # the window by hand: on foot at the site, the pad, the wall and the step; F flies, Tab wires, Esc frees the mouse
+./target/release/freeport_app               # the window by hand: a 10 km planet, on foot on a street of the port; F flies, B builds, Tab wires, Esc frees the mouse
 python3 tools/shape.py --check              # no file over 900 lines, no function over 100
 tools/get_material_maker.sh                 # fetch Material Maker into tools/ (gitignored)
 tools/bake_materials.sh                     # bake materials/*.ptex to assets/textures/terrain
