@@ -218,24 +218,32 @@ export function lotFrame(planet, town, x, z) {
 
 // ------------------------------------------------------------ the shader --
 
-// The tag and the material are FLAT: a triangle takes its last vertex's,
-// unblended, so concrete meets rock on a line and never as a gradient. The
-// mesher orders every triangle so its last vertex is the one whose material
-// should win.
+// The tag and the material are FLAT, unblended, so concrete meets rock on
+// a line and never as a gradient. Every vertex of a triangle carries the
+// triangle's own values (the mesher splits a vertex its triangles disagree
+// on), so which vertex a driver reads a flat value from cannot matter. The
+// anchor and east are the panel frame's, one per structure, so a wall's
+// panels are level and plumb in the building's own frame with no trig at
+// the fragment.
 const VERT = /* glsl */`
   attribute float tag;
   attribute float base;
   attribute float mat;
+  attribute vec3 anchor;
+  attribute vec3 fe;
   varying vec3 vPos;
   varying vec3 vNrm;
   varying vec2 vUv;
   flat varying float vTag;
   flat varying float vMat;
+  flat varying vec3 vAnchor;
+  flat varying vec3 vFe;
   varying float vBase;
   void main() {
     vPos = (modelMatrix * vec4(position, 1.0)).xyz;
     vNrm = normalize(mat3(modelMatrix) * normal);
     vUv = uv; vTag = tag; vBase = base; vMat = mat;
+    vAnchor = (modelMatrix * vec4(anchor, 1.0)).xyz; vFe = mat3(modelMatrix) * fe;
     gl_Position = projectionMatrix * viewMatrix * vec4(vPos, 1.0);
   }
 `;
@@ -266,6 +274,8 @@ const FRAG = /* glsl */`
   varying vec2 vUv;
   flat varying float vTag;
   flat varying float vMat;
+  flat varying vec3 vAnchor;
+  flat varying vec3 vFe;
   varying float vBase;
   uniform float uBuiltUv;
   uniform float uShaderWindows;
@@ -335,18 +345,21 @@ const FRAG = /* glsl */`
       if (dot(fn, fn) > 0.0) { fn = normalize(fn); n = dot(fn, n) < 0.0 ? -fn : fn; }
     }
     if (built) {
-      // The local frame: east, north and up at the fragment for the normal,
-      // and for the POSITION the arc east and north of a fixed pole, in
-      // metres, with up measured from the tag's base, in panels of 3 m.
-      // Not the position projected on the frame at the fragment: a point on
-      // a sphere projected on its own tangent plane is nought everywhere,
-      // and the first cut's panels were float noise.
-      vec3 pole = abs(up.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-      vec3 e = normalize(cross(pole, up));
-      vec3 nn = cross(up, e);
-      vec3 ln = vec3(dot(n, e), dot(n, nn), dot(n, up));
-      float lat = asin(clamp(up.y, -1.0, 1.0));
-      vec3 lp = vec3(atan(up.z, up.x) * r * cos(lat), lat * r, r - vBase) / 3.0;
+      // The local frame is the STRUCTURE's: its anchor (the floor over its
+      // origin) and its east ride the vertex, up is the anchor's, so the
+      // position measured from the anchor along those is the recipe's own
+      // e, n, u, in panels of 3 m, level and plumb on the building and
+      // exact, with no trig at the fragment. A mesh with no anchor (the hex
+      // page, which wears its maps on its UVs) gets the frame at the
+      // fragment and up from the tag's base.
+      bool anchored = dot(vFe, vFe) > 0.5;
+      vec3 upA = anchored ? normalize(vAnchor - uCentre) : up;
+      vec3 pole = abs(upA.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+      vec3 e = anchored ? normalize(vFe - upA * dot(vFe, upA)) : normalize(cross(pole, upA));
+      vec3 nn = cross(upA, e);
+      vec3 ln = vec3(dot(n, e), dot(n, nn), dot(n, upA));
+      vec3 d = vPos - vAnchor;
+      vec3 lp = (anchored ? vec3(dot(d, e), dot(d, nn), dot(d, upA)) : vec3(0.0, 0.0, r - vBase)) / 3.0;
       vec3 lw = triW(ln);
       dbg = uDebug > 2.5 ? fract(lp) : lw;
       if (uTextured > 0.5 && m != 3 && m != 5) {
@@ -360,7 +373,7 @@ const FRAG = /* glsl */`
           vec3 t2 = cross(t1, n);
           bumped = normalize(t1 * nml.x + t2 * nml.y + n * nml.z);
         } else {
-          bumped = normalize(e * nml.x + nn * nml.y + up * nml.z);
+          bumped = normalize(e * nml.x + nn * nml.y + upA * nml.z);
         }
         // At half strength: a lamp a metre off a wall lights every grain of
         // a full strength map from the side, and the panel reads as stipple.

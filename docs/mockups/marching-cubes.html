@@ -9,7 +9,7 @@
 <div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>B</b> build <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span><span id="buildstat" hidden></span></div>
 <aside class="panel">
   <h1>Freeport <span>marching cubes</span></h1>
-  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. The towns are in the <b>same field</b>: a building is a list of <b>brushes</b> (boxes, cylinders, spheres and ramps, added or cut, in concrete or plate) composed into it and <b>dual contoured</b> on a lattice six times finer under the town (one vertex a cell, where the crossings' planes meet, so a corner is a corner and a wall is a plane at any lattice, where marching cubes bevels every edge), so the ground, the walls, the floors and the ramps are one mesh with one collision rule. A material switches <b>hard</b>: a triangle is the deepest solid under it, and a plinth poured into the rock still meets it on a line. Press <b>B</b> on foot to place and cut blocks.</p>
+  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. The towns are in the <b>same field</b>: a building is a list of <b>brushes</b> (boxes, cylinders, spheres and ramps, added or cut, in concrete or plate) composed into it and <b>dual contoured</b> on a lattice six times finer under the town (a vertex a surface in each cell, where its crossings' planes meet, so a corner is a corner, a wall is a plane and a step is a step at any lattice, where marching cubes bevels every edge), so the ground, the walls, the floors and the ramps are one mesh with one collision rule. A material switches <b>hard</b>: a triangle is the deepest solid under it, and a plinth poured into the rock still meets it on a line. Press <b>B</b> on foot to place and cut blocks.</p>
   <div class="hud" id="hud"></div>
   <div class="controls">
     <button id="walk">Walk the port</button>
@@ -122,7 +122,11 @@ class Field {
   key(i, j, k) { return (k * this.n + j) * this.n + i; }
   place(compiled, frame, kind, extra) {
     const origin = frame.dir.clone().multiplyScalar(frame.base);
-    const s = Object.assign({ origin, east: frame.east, north: frame.north, up: frame.dir, base: frame.base + (kind === 'building' ? 0.35 : 0), kind,
+    const lift = kind === 'building' ? 0.35 : 0;
+    // The panels' frame: anchored at the floor over the origin, with the
+    // frame's own east, unless the caller hands one (a street's is its town's).
+    const s = Object.assign({ origin, east: frame.east, north: frame.north, up: frame.dir, base: frame.base + lift, kind,
+      anchor: origin.clone().addScaledVector(frame.dir, lift), fe: frame.east,
       brushes: compiled.brushes, rooms: compiled.rooms, bbox: compiled.bbox, compiled }, extra || {});
     s.lamps = compiled.lamps.map(([e, n, u, reach]) => {
       const p = origin.clone().addScaledVector(s.east, e).addScaledVector(s.north, n).addScaledVector(s.up, u);
@@ -190,14 +194,43 @@ Field.prototype.tmp = { d: 0, mat: 0, room: -1, sid: -1 };
 // one at the join and no crack between the two can show. Then every
 // triangle takes its material, its tag and its base from the field at its
 // own middle (a hand inside for the solid, a hand outside for the room),
-// and its last vertex, the one the flat varying hands the fragment, is a
-// vertex that carries them, duplicated where none does: a material
-// boundary runs along triangle edges and a lamp wears no halo.
+// and every one of its vertices carries them, split where its neighbours
+// disagree: a material boundary runs along triangle edges, a lamp wears no
+// halo, and no driver's choice of provoking vertex can change either.
 const AROUND = [
   [[0, 0, 0], [0, -1, 0], [0, -1, -1], [0, 0, -1]],
   [[0, 0, 0], [0, 0, -1], [-1, 0, -1], [-1, 0, 0]],
   [[0, 0, 0], [-1, 0, 0], [-1, -1, 0], [0, -1, 0]],
 ];
+// A cell can hold more than one surface: both faces of a plate, or a step
+// and the wall it stands out from. One vertex for two surfaces is a
+// vertex between them, a pit in a ceiling, a twisted quad with sky through
+// it. So a cell gets a vertex per SURFACE, and which crossings belong
+// together is what the marching cubes case already says: its triangles for
+// the cell's corner signs, joined where they share an edge, are the cell's
+// surface components. COMP names the component of every crossing edge of
+// every case, and EDGE_OF names an edge by the cell it is seen from.
+const COMP = new Int8Array(256 * 12).fill(-1), NCOMP = new Uint8Array(256);
+for (let cs = 0; cs < 256; cs++) {
+  const parent = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+  const find = (e) => { while (parent[e] !== e) e = parent[e]; return e; };
+  const seen = new Uint8Array(12);
+  for (let t = cs * 16; TRI_TABLE[t] >= 0; t += 3) {
+    const a = TRI_TABLE[t], b = TRI_TABLE[t + 1], c = TRI_TABLE[t + 2];
+    seen[a] = seen[b] = seen[c] = 1;
+    parent[find(b)] = find(a); parent[find(c)] = find(a);
+  }
+  const names = new Map();
+  for (let e = 0; e < 12; e++) {
+    if (!seen[e]) continue;
+    const root = find(e);
+    if (!names.has(root)) names.set(root, names.size);
+    COMP[cs * 12 + e] = names.get(root);
+  }
+  NCOMP[cs] = names.size;
+}
+const EDGE_OF = AROUND.map((ar, axis) => ar.map(([dx, dy, dz]) => EDGE_AT.findIndex(([d, a]) => a === axis && d[0] === -dx && d[1] === -dy && d[2] === -dz)));
+const townAnchor = (town) => town.dir.clone().multiplyScalar(PLANET.radius + town.h);
 function marchFine(field, cellKeys, seam) {
   const { corner, cell, n } = field, fine = cell / SUB, F = n * SUB;
   const out = { d: 0, mat: 0, room: -1, sid: -1, curved: false }, g = [0, 0, 0];
@@ -224,7 +257,7 @@ function marchFine(field, cellKeys, seam) {
     return i;
   };
   // The cells: the chunk's, and a shell of their neighbours.
-  const cact = new Uint8Array(E3), cmask = new Uint8Array(E3), cvi = new Int32Array(E3).fill(-1), csid = new Int32Array(E3).fill(-1);
+  const cact = new Uint8Array(E3), cmask = new Uint8Array(E3), ccase = new Uint8Array(E3), cvi = new Int32Array(E3 * 4).fill(-1);
   for (const key of cellKeys) {
     const i = key % n, j = Math.floor(key / n) % n, k = Math.floor(key / (n * n));
     for (let c = -1; c <= SUB; c++) for (let b = -1; b <= SUB; b++) for (let a = -1; a <= SUB; a++) {
@@ -290,16 +323,23 @@ function marchFine(field, cellKeys, seam) {
     cst[ek] = id;
     return id;
   };
-  // One vertex per cell: the point that best sits on every crossing's
-  // plane, held a little toward their middle, and clamped to the cell.
+  // One vertex per SURFACE in a cell: the point that best sits on every
+  // one of its crossings' planes, held a little toward their middle, and
+  // clamped to the cell.
   const pos = [], nrm = [], vsid = [];
   const LAMBDA = 0.05;
   const list = new Int32Array(12);
   for (let z = 0; z < E - 1; z++) for (let y = 0; y < E - 1; y++) for (let x = 0; x < E - 1; x++) {
     const li = lidx(x, y, z);
     if (!cact[li]) continue;
+    let cs = 0;
+    for (let c = 0; c < 8; c++) if (sd[sample(x + CORNER[c][0], y + CORNER[c][1], z + CORNER[c][2])] <= 0) cs |= 1 << c;
+    if (cs === 0 || cs === 255) continue;
+    ccase[li] = cs;
+    for (let k = 0; k < NCOMP[cs]; k++) {
     let count = 0;
     for (let e = 0; e < 12; e++) {
+      if (COMP[cs * 12 + e] !== k) continue;
       const [d, axis] = EDGE_AT[e];
       const id = crossing(x + d[0], y + d[1], z + d[2], axis);
       if (id >= 0) list[count++] = id;
@@ -327,23 +367,27 @@ function marchFine(field, cellKeys, seam) {
     px = clamp(px, lo0, lo0 + 1.1 * fine); py = clamp(py, lo1, lo1 + 1.1 * fine); pz = clamp(pz, lo2, lo2 + 1.1 * fine);
     const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
     if (!cmask[li]) { px -= nx * 0.03; py -= ny * 0.03; pz -= nz * 0.03; }   // the skirt under the coarse mesh
-    cvi[li] = pos.length / 3; csid[li] = sid;
+    cvi[li * 4 + k] = pos.length / 3;
     pos.push(px, py, pz); nrm.push(nx, ny, nz); vsid.push(sid);
+    }
   }
-  // A quad per crossing edge the chunk owns, round the four cells that share it.
+  // A quad per crossing edge the chunk owns, round the four cells that
+  // share it, each cell's vertex being the one of the surface that edge is on.
   const tris = [];
   for (let z = 1; z < E - 2; z++) for (let y = 1; y < E - 2; y++) for (let x = 1; x < E - 2; x++) {
     if (!cact[lidx(x, y, z)]) continue;
     for (let axis = 0; axis < 3; axis++) {
       const id = crossing(x, y, z, axis);
       if (id < 0) continue;
-      const ar = AROUND[axis];
+      const ar = AROUND[axis], eo = EDGE_OF[axis];
       let ok = true, anyMasked = false;
       const v = [0, 0, 0, 0];
       for (let q = 0; q < 4; q++) {
         const li = lidx(x + ar[q][0], y + ar[q][1], z + ar[q][2]);
-        if (cvi[li] < 0) { ok = false; break; }
-        v[q] = cvi[li]; if (cmask[li]) anyMasked = true;
+        const k = COMP[ccase[li] * 12 + eo[q]];
+        const vi = k < 0 ? -1 : cvi[li * 4 + k];
+        if (vi < 0) { ok = false; break; }
+        v[q] = vi; if (cmask[li]) anyMasked = true;
       }
       if (!ok || !anyMasked) continue;
       const [v0, v1, v2, v3] = v;
@@ -354,14 +398,41 @@ function marchFine(field, cellKeys, seam) {
       if (fnx * cnx[id] + fny * cny[id] + fnz * cnz[id] >= 0) tris.push(v0, v1, v2, v0, v2, v3); else tris.push(v0, v2, v1, v0, v3, v2);
     }
   }
-  // Materials per triangle, then a provoking vertex that carries them.
+  // Materials per triangle, and then EVERY vertex of a triangle carries
+  // them, a vertex shared by triangles that disagree being split, so that
+  // which vertex a driver reads a flat value from cannot matter: the
+  // first cut handed them to the last vertex, which is what WebGL promises
+  // and not what every driver delivers, and a wall hatched along the quads.
   const nv0 = pos.length / 3;
-  const vmat = new Array(nv0).fill(-1), vtag = new Array(nv0).fill(0), vbase = new Array(nv0).fill(0);
+  const vkey = new Array(nv0).fill(-1), vmat = new Array(nv0).fill(0), vtag = new Array(nv0).fill(0), vbase = new Array(nv0).fill(0);
+  const vanc = new Array(nv0 * 3).fill(0), vfe = new Array(nv0 * 3).fill(0);
+  const dups = new Map();
   const idx = [];
   let split = 0;
+  const carry = (v, key, m, tag, sid) => {
+    if (vkey[v] === key) return v;
+    let d = v;
+    if (vkey[v] !== -1) {
+      const dk = v + ':' + key;
+      d = dups.get(dk);
+      if (d === undefined) {
+        d = pos.length / 3;
+        pos.push(pos[3 * v], pos[3 * v + 1], pos[3 * v + 2]); nrm.push(nrm[3 * v], nrm[3 * v + 1], nrm[3 * v + 2]); vsid.push(sid);
+        vkey.push(-1); vmat.push(0); vtag.push(0); vbase.push(0); vanc.push(0, 0, 0); vfe.push(0, 0, 0);
+        dups.set(dk, d); split++;
+      } else return d;
+    }
+    vkey[d] = key; vmat[d] = m; vtag[d] = tag;
+    if (sid >= 0) {
+      const st = field.structures[sid];
+      vbase[d] = st.base; vanc[3 * d] = st.anchor.x; vanc[3 * d + 1] = st.anchor.y; vanc[3 * d + 2] = st.anchor.z;
+      vfe[3 * d] = st.fe.x; vfe[3 * d + 1] = st.fe.y; vfe[3 * d + 2] = st.fe.z;
+    }
+    return d;
+  };
   for (let t = 0; t < tris.length; t += 3) {
     const a = tris[t], b = tris[t + 1], c = tris[t + 2];
-    let m = 0, tag = 0, base = 0;
+    let m = 0, tag = 0, sid = -1;
     if (vsid[a] >= 0 || vsid[b] >= 0 || vsid[c] >= 0) {
       const cx = (pos[3 * a] + pos[3 * b] + pos[3 * c]) / 3, cy = (pos[3 * a + 1] + pos[3 * b + 1] + pos[3 * c + 1]) / 3, cz = (pos[3 * a + 2] + pos[3 * b + 2] + pos[3 * c + 2]) / 3;
       const ux = pos[3 * b] - pos[3 * a], uy = pos[3 * b + 1] - pos[3 * a + 1], uz = pos[3 * b + 2] - pos[3 * a + 2];
@@ -369,28 +440,21 @@ function marchFine(field, cellKeys, seam) {
       let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
       const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
       field.at(cx - nx * 0.05, cy - ny * 0.05, cz - nz * 0.05, out); samples++;
-      m = out.mat + (out.curved ? 8 : 0); base = out.sid >= 0 ? field.structures[out.sid].base : 0;
+      m = out.mat + (out.curved ? 8 : 0); sid = out.mat > 0 ? out.sid : -1;
       field.at(cx + nx * 0.08, cy + ny * 0.08, cz + nz * 0.08, out); samples++;
       tag = (m & 7) === MAT.lamp ? 4 : out.room >= 0 ? 3 : (m & 7) === MAT.street ? 2 : (m & 7) > 0 ? 1 : 0;
     }
-    let chosen = null;
-    for (const [p, q, r] of [[a, b, c], [b, c, a], [c, a, b]]) if (vmat[r] === m && vtag[r] === tag && vbase[r] === base) { chosen = [p, q, r]; break; }
-    if (!chosen) for (const [p, q, r] of [[a, b, c], [b, c, a], [c, a, b]]) if (vmat[r] === -1) { vmat[r] = m; vtag[r] = tag; vbase[r] = base; chosen = [p, q, r]; break; }
-    if (!chosen) {
-      const r = pos.length / 3;
-      pos.push(pos[3 * c], pos[3 * c + 1], pos[3 * c + 2]); nrm.push(nrm[3 * c], nrm[3 * c + 1], nrm[3 * c + 2]);
-      vmat.push(m); vtag.push(tag); vbase.push(base); split++;
-      chosen = [a, b, r];
-    }
-    idx.push(chosen[0], chosen[1], chosen[2]);
+    const key = m + tag * 16 + (sid + 1) * 128;
+    idx.push(carry(a, key, m, tag, sid), carry(b, key, m, tag, sid), carry(c, key, m, tag, sid));
   }
-  for (let i = 0; i < vmat.length; i++) if (vmat[i] < 0) vmat[i] = 0;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   geo.setAttribute('tag', new THREE.Float32BufferAttribute(vtag, 1));
   geo.setAttribute('mat', new THREE.Float32BufferAttribute(vmat, 1));
   geo.setAttribute('base', new THREE.Float32BufferAttribute(vbase, 1));
+  geo.setAttribute('anchor', new THREE.Float32BufferAttribute(vanc, 3));
+  geo.setAttribute('fe', new THREE.Float32BufferAttribute(vfe, 3));
   geo.setIndex(idx);
   return { geometry: geo, triangles: idx.length / 3, vertices: pos.length / 3, samples, cells: cellKeys.length, split };
 }
@@ -469,14 +533,14 @@ function buildField(planet, towns, corner, cell, n, edits, seed) {
         const x = st.along === 'north' ? st.x : st.x + off, z = st.along === 'north' ? st.z + off : st.z;
         if (Math.hypot(x, z) > town.radius + 3) continue;
         const size = st.along === 'north' ? [st.w, along / count + 0.05, 0.64] : [along / count + 0.05, st.d, 0.64];
-        field.place(single({ op: 'add', shape: 'box', at: [0, 0, -0.2], size }, 'street'), lotFrame(planet, town, x, z), 'street', { town: ti });
+        field.place(single({ op: 'add', shape: 'box', at: [0, 0, -0.2], size }, 'street'), lotFrame(planet, town, x, z), 'street', { town: ti, anchor: townAnchor(town), fe: town.east });
       }
     }
   });
   for (const ed of edits) {
     const brush = { op: ed.op, shape: ed.shape, at: [0, 0, ed.u], size: ed.size.slice() };
     if (ed.pitch) brush.pitch = ed.pitch;
-    const s = field.place(single(brush, ed.mat), lotFrame(planet, towns[ed.town], ed.e, ed.n), 'edit', { town: ed.town, edit: ed });
+    const s = field.place(single(brush, ed.mat), lotFrame(planet, towns[ed.town], ed.e, ed.n), 'edit', { town: ed.town, edit: ed, anchor: townAnchor(towns[ed.town]), fe: towns[ed.town].east });
     ed.cells = s.cells;
   }
   for (const w of warnings) console.warn('kit:', w);

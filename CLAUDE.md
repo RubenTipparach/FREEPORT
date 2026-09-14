@@ -254,7 +254,7 @@ is what a building is and what the ground does under it:
 | a building | a list of BRUSHES in the same field (`assets/buildings/*.json`, the kit in `docs/mockups/kit.js`): boxes, cylinders, spheres and flights of steps added or cut in list order, in concrete, plate, glass or lamp, marched on a lattice six times finer under the town, each building plumb on its own patch of the sphere | the lot's tiles raised by the storeys in half metre blocks and tagged concrete, windows lit by the shader; the doorway, the floors, the stairs and the lamps are RUNS of blocks in a column, nothing placed and nothing to align |
 | a wall on foot | the FIELD: a ring of points round the body between its step and its head, each pushed out along the field's own gradient, sideways only | any tile round the body standing higher than a step, pushed off along the line from its middle |
 | a room | a face whose air side is in a room cut is TAGGED inside; both pages light an inside face from the building's lamps and nothing else, with the sun ignored | the same tag, on the wall faces toward an interior tile |
-| the concrete | three planes in a LOCAL frame: the arc east and north of the pole and the height off the building's base, so a wall's panels run level and plumb whatever the planet's axes do, and the material rides the triangle FLAT, so concrete meets rock on a line | UVs in the TOWN's frame: a cap on east and north, a wall along the town axis it faces across and up from its base, so the panel seams meet the blocks and the floors |
+| the concrete | three planes in the BUILDING's own frame: its anchor and its east ride the vertex, so the position from the anchor is the recipe's e, n and u, panels of 3 m level and plumb on each building whatever the planet's axes do, and the material rides the triangle FLAT, so concrete meets rock on a line | UVs in the TOWN's frame: a cap on east and north, a wall along the town axis it faces across and up from its base, so the panel seams meet the blocks and the floors |
 
 **The walker is one class and the page supplies three functions.** `Walker`
 is a direction on the sphere and a height off the ground, a heading carried
@@ -394,10 +394,12 @@ what a block kit cannot make and the reason to want a field.
 **The material is the DEEPEST solid at a sample**, the one whose surface is
 farthest away. The mesher asks the field a hand inside each triangle's
 middle for its material and a hand outside for its room, and hands both to
-the triangle FLAT (`flat varying`, the last vertex of a triangle winning,
-so every triangle ends on a vertex that carries its values, duplicated
-where none does), so a triangle is one material, a material boundary runs
-along triangle edges, and concrete meets rock on a line however the
+the triangle FLAT (`flat varying`, and EVERY vertex of a triangle carries
+its values, a vertex its triangles disagree on being split, because a flat
+value is read off whichever vertex a driver calls provoking: the last on
+paper, and the first cut leaned on the last, and the owner's GPU hatched
+every wall along the quads), so a triangle is one material, a material
+boundary runs along triangle edges, and concrete meets rock on a line however the
 geometry blends. The rule has a price the recipes pay: a hand inside can be
 most of a cell inside the surface, so a thin thing on a thick one (a street
 on the ground, a lamp under a slab) is SUNK into its host by at least a
@@ -424,11 +426,18 @@ six is 0.22 m) with the buildings in the field, in chunks of four coarse
 cells a side, so an edit remeshes the chunk or two its brush touches. The
 fine lattice is not marched: marching cubes bevels every edge across the
 cell that holds it and can never make a right angle, and a building is
-right angles. It is dual contoured: one vertex per fine cell, at the least
-squares point of its edge crossings' positions and normals held a little
-toward their middle, and a quad for every crossing edge round the four
-cells that share it, so a box's corner is a corner and its wall a plane at
-any lattice, and a curved brush stays curved. The crossings are found by
+right angles. It is dual contoured: one vertex per SURFACE in a fine cell,
+at the least squares point of that surface's edge crossings' positions and
+normals held a little toward their middle, and a quad for every crossing
+edge round the four cells that share it, each cell giving the vertex of
+the surface the edge is on, so a box's corner is a corner and its wall a
+plane at any lattice, and a curved brush stays curved. Which crossings are
+one surface is what the marching cubes case already says: its triangles
+for the cell's corner signs, joined where they share an edge, so a plate's
+two faces in one cell, or a step and the wall it stands out from, are two
+vertices and not one between them. One vertex a cell was the first cut,
+and it put a pit in every ceiling and a slit of sky in every pillar,
+because the pillars stand 0.27 m out of the walls. The crossings are found by
 bisection along the edge where a structure is involved (a box's distance
 curves round its corners and the straight line's guess beaded every edge),
 their normals are the field's gradient there, and a chunk computes a shell
@@ -458,7 +467,8 @@ was scaled by the gradient's DIFFERENCE rather than the gradient, so a one
 centimetre contact threw the body fourteen and a pane threw it out through
 the glass; the local panel frame was built at the fragment, and a point on
 a sphere projected on its own tangent plane is nought everywhere, so the
-panels were float noise until they were measured as arcs from the pole;
+panels were float noise until they were measured as arcs from the pole,
+and now from the structure's own anchor, which is exact and needs no trig;
 a body that steps DOWN by less than a step was airborne every frame of
 a downslope, flickering down every plinth's fillet, until a small drop
 became a step; and a walker that climbs anything rising less than a step

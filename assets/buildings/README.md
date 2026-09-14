@@ -49,10 +49,13 @@ ground (`u = 0` is the town's level). `footprint` is what the lot becomes,
   faces of a plate puts its one vertex between them: a 0.3 m slab came out
   pitted, one pit a coarse cell. Walls, slabs, ramps, rails, eaves and
   lamps are 0.4 (the diagonal is 0.39) and the kit warns on anything under
-  0.4. Windows are openings, so there is no pane to be thin. The game's
-  near lattice is a cube sphere patch's, level and plumb where a town
-  stands, so there a plate need only beat the cell and only a pitched
-  thing the diagonal.
+  0.4. Windows are openings, so there is no pane to be thin. The mesher
+  has held a vertex a SURFACE in each cell since (a plate's two faces in
+  one cell are two vertices), so the diagonal is a margin now rather than
+  the limit; the cell is: a plate thinner than 0.22 m can fall between
+  the corner samples and vanish. The game's near lattice is a cube sphere
+  patch's, level and plumb where a town stands, so there a plate need only
+  beat the cell and only a pitched thing the diagonal.
 - **A cut leaves the material it cut through**, so a doorway's reveal is
   the wall's concrete.
 - **Order is meaning.** Add the shell, cut the room, cut the door, add the
