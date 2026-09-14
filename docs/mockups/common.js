@@ -77,6 +77,10 @@ export class Planet {
   }
   // Relief at a direction, metres above the mean radius, sites applied.
   surface(dx, dy, dz) {
+    // On a levelled site the relief is the site's height and nothing else,
+    // so the noise is not asked: a town marched at 0.22 m is a million
+    // samples, nearly all of them on the level.
+    for (const site of this.sites) if (this.siteWeight(site, dx, dy, dz) >= 1) return { s: site.h, keep: 0 };
     let s = (fbm3(dx * this.lumps, dy * this.lumps, dz * this.lumps, this.seed, this.octaves) * 2 - 1) * this.relief * 0.5;
     let keep = 1;
     for (const site of this.sites) {
@@ -214,18 +218,24 @@ export function lotFrame(planet, town, x, z) {
 
 // ------------------------------------------------------------ the shader --
 
+// The tag and the material are FLAT: a triangle takes its last vertex's,
+// unblended, so concrete meets rock on a line and never as a gradient. The
+// mesher orders every triangle so its last vertex is the one whose material
+// should win.
 const VERT = /* glsl */`
   attribute float tag;
   attribute float base;
+  attribute float mat;
   varying vec3 vPos;
   varying vec3 vNrm;
   varying vec2 vUv;
-  varying float vTag;
+  flat varying float vTag;
+  flat varying float vMat;
   varying float vBase;
   void main() {
     vPos = (modelMatrix * vec4(position, 1.0)).xyz;
     vNrm = normalize(mat3(modelMatrix) * normal);
-    vUv = uv; vTag = tag; vBase = base;
+    vUv = uv; vTag = tag; vBase = base; vMat = mat;
     gl_Position = projectionMatrix * viewMatrix * vec4(vPos, 1.0);
   }
 `;
@@ -236,21 +246,29 @@ export const MAX_LAMPS = 96;
 
 // Five sets blended by slope and height, sampled on three planes each: rock
 // on the steep, sand up to the shore line, grass above it, ice above the snow
-// line. Anything a mesh TAGS is built and wears concrete on the mesh's own
-// UVs, which a hex page lays in the town's frame so the panels line up with
-// the blocks: 1 is a building's outside (windows are the shader's: a storey
-// is three metres up from the tag's base, a pane is the middle of the storey
-// along the wall, lit or not off a hash), 2 is a street, 3 is INSIDE, where
-// the sun does not reach and the light is the room's lamps, and 4 is a lamp,
-// which glows and is lit by nothing. Outside, lighting is a sun and a dim
-// sky, GGX for the highlight, no fog: this is vacuum.
+// line. Anything with a MATERIAL is built: 1 concrete, 2 plate, 3 glass, 4 a
+// lamp (glows, lit by nothing), 5 a lit pane, 6 a street (concrete, darker).
+// It wears its maps on the mesh's own UVs (the hex page lays them in the
+// town's frame so the panels meet the blocks) or, on the marched page where
+// a building is the field and has no UVs, on three planes in a LOCAL frame,
+// east, north and up at the fragment, so a wall's panels run level and
+// plumb whatever the planet's axes do, and up is measured from the tag's
+// base so the seams meet the floors. The TAG is the light: 0 and 1 are the
+// sun, 2 the sun on a street, 3 INSIDE, where the sun does not reach and
+// the light is the room's lamps, 4 a lamp. A hex wall gets its panes from a
+// hash (uShaderWindows); a marched wall has them as glass brushes. Outside,
+// lighting is a sun and a dim sky, GGX for the highlight, no fog: vacuum.
 const FRAG = /* glsl */`
   precision highp float;
   varying vec3 vPos;
   varying vec3 vNrm;
   varying vec2 vUv;
-  varying float vTag;
+  flat varying float vTag;
+  flat varying float vMat;
   varying float vBase;
+  uniform float uBuiltUv;
+  uniform float uShaderWindows;
+  uniform float uDebug;
   uniform vec4 uLamps[${MAX_LAMPS}];
   uniform int uLampCount;
   uniform vec3 uSun;
@@ -266,7 +284,8 @@ const FRAG = /* glsl */`
   uniform sampler2D tGrassC, tGrassN, tGrassR;
   uniform sampler2D tSnowC, tSnowN, tSnowR;
   uniform sampler2D tConcC, tConcN, tConcR;
-  uniform vec3 uRockFlat, uSandFlat, uGrassFlat, uSnowFlat, uConcFlat;
+  uniform sampler2D tPlateC, tPlateN, tPlateR;
+  uniform vec3 uRockFlat, uSandFlat, uGrassFlat, uSnowFlat, uConcFlat, uPlateFlat;
 
   vec3 triW(vec3 n) { vec3 w = pow(abs(n), vec3(4.0)); return w / (w.x + w.y + w.z); }
   vec4 tri(sampler2D t, vec3 p, vec3 w) { return texture2D(t, p.yz) * w.x + texture2D(t, p.xz) * w.y + texture2D(t, p.xy) * w.z; }
@@ -278,6 +297,15 @@ const FRAG = /* glsl */`
     ty = vec3(ty.xy + n.xz, abs(ty.z) * n.y);
     tz = vec3(tz.xy + n.xy, abs(tz.z) * n.z);
     return normalize(tx.zyx * w.x + ty.xzy * w.y + tz.xyz * w.z);
+  }
+  // A built material's maps, on the mesh's UVs or on three local planes. The
+  // normal comes back in the frame it was read in; the caller turns it out.
+  void builtMaps(sampler2D tc, sampler2D tn, sampler2D tr, vec2 uv, vec3 lp, vec3 lw, vec3 ln, out vec3 alb, out vec3 orm, out vec3 nml) {
+    if (uBuiltUv > 0.5) {
+      alb = texture2D(tc, uv).rgb; orm = texture2D(tr, uv).rgb; nml = texture2D(tn, uv).xyz * 2.0 - 1.0;
+    } else {
+      alb = tri(tc, lp, lw).rgb; orm = tri(tr, lp, lw).rgb; nml = triN(tn, lp, lw, ln);
+    }
   }
   float ggx(float nh, float a) { float a2 = a * a; float d = nh * nh * (a2 - 1.0) + 1.0; return a2 / (3.14159 * d * d); }
   float hashf(vec2 p) { vec3 q = fract(vec3(p.xyx) * vec3(443.897, 441.423, 437.195)); q += dot(q, q.yzx + 19.19); return fract((q.x + q.y) * q.z); }
@@ -291,26 +319,60 @@ const FRAG = /* glsl */`
     vec3 p = vPos / uTexScale;
     vec3 w = triW(n);
     vec3 albedo; float rough; vec3 nm; float ao = 1.0; vec3 glow = vec3(0.0);
+    vec3 dbg = vec3(0.0);
 
+    // The material rides in the low bits and a flag in the eighth: a curved
+    // brush is shaded smooth on its vertex normals, a box is shaded FLAT on
+    // the triangle's own face, because a box's edges are edges and a normal
+    // interpolated across them rounds every corner over a cell.
+    int m = int(mod(vMat, 8.0) + 0.5);
+    bool curved = vMat >= 8.0;
     bool inside = vTag > 2.5 && vTag < 3.5;
-    bool lamp = vTag > 3.5;
-    if (vTag > 0.5) {
-      // Built: concrete on the mesh's own UVs, and windows on an outside wall.
-      if (uTextured > 0.5) {
-        vec3 orm = texture2D(tConcR, vUv).rgb;
-        albedo = texture2D(tConcC, vUv).rgb; rough = orm.g; ao = orm.r;
-        // The map's tangent frame is the UV's; a wall's u runs along it and v up it.
-        vec3 tn = texture2D(tConcN, vUv).xyz * 2.0 - 1.0;
-        vec3 t1 = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-        vec3 t2 = cross(t1, n);
+    bool lamp = vTag > 3.5 || m == 4;
+    bool built = m > 0 || vTag > 0.5;
+    if (built && !curved && uBuiltUv < 0.5) {
+      vec3 fn = cross(dFdx(vPos), dFdy(vPos));
+      if (dot(fn, fn) > 0.0) { fn = normalize(fn); n = dot(fn, n) < 0.0 ? -fn : fn; }
+    }
+    if (built) {
+      // The local frame: east, north and up at the fragment for the normal,
+      // and for the POSITION the arc east and north of a fixed pole, in
+      // metres, with up measured from the tag's base, in panels of 3 m.
+      // Not the position projected on the frame at the fragment: a point on
+      // a sphere projected on its own tangent plane is nought everywhere,
+      // and the first cut's panels were float noise.
+      vec3 pole = abs(up.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+      vec3 e = normalize(cross(pole, up));
+      vec3 nn = cross(up, e);
+      vec3 ln = vec3(dot(n, e), dot(n, nn), dot(n, up));
+      float lat = asin(clamp(up.y, -1.0, 1.0));
+      vec3 lp = vec3(atan(up.z, up.x) * r * cos(lat), lat * r, r - vBase) / 3.0;
+      vec3 lw = triW(ln);
+      dbg = uDebug > 2.5 ? fract(lp) : lw;
+      if (uTextured > 0.5 && m != 3 && m != 5) {
+        vec3 alb, orm, nml;
+        if (m == 2) builtMaps(tPlateC, tPlateN, tPlateR, vUv, lp, lw, ln, alb, orm, nml);
+        else builtMaps(tConcC, tConcN, tConcR, vUv, lp, lw, ln, alb, orm, nml);
+        albedo = alb; rough = orm.g; ao = orm.r;
+        vec3 bumped;
+        if (uBuiltUv > 0.5) {
+          // The map's tangent frame is the UV's; a wall's u runs along it and v up it.
+          vec3 t1 = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+          vec3 t2 = cross(t1, n);
+          bumped = normalize(t1 * nml.x + t2 * nml.y + n * nml.z);
+        } else {
+          bumped = normalize(e * nml.x + nn * nml.y + up * nml.z);
+        }
         // At half strength: a lamp a metre off a wall lights every grain of
         // a full strength map from the side, and the panel reads as stipple.
-        nm = normalize(mix(n, normalize(t1 * tn.x + t2 * tn.y + n * tn.z), 0.5));
-      } else { albedo = uConcFlat; rough = 0.85; nm = n; }
-      if (vTag > 1.5 && vTag < 2.5) { albedo *= 0.42; rough = 0.95; }
+        nm = normalize(mix(n, bumped, 0.5));
+      } else { albedo = m == 2 ? uPlateFlat : uConcFlat; rough = 0.85; nm = n; }
+      if ((vTag > 1.5 && vTag < 2.5) || m == 6) { albedo *= 0.42; rough = 0.95; }
       if (inside) { albedo *= 1.15; }
+      if (m == 3) { albedo = vec3(0.05, 0.06, 0.07); rough = 0.12; nm = n; }
+      if (m == 5) { albedo = vec3(0.03); rough = 0.15; nm = n; glow = vec3(1.0, 0.78, 0.5) * 1.6; }
       if (lamp) { albedo = vec3(0.8); glow = vec3(1.0, 0.86, 0.66) * 0.9; }
-      if (vTag < 1.5 && slope > 0.5) {
+      if (uShaderWindows > 0.5 && vTag > 0.5 && vTag < 1.5 && slope > 0.5) {
         float storey = (r - vBase) / 3.0;
         float f = fract(storey);
         vec3 t = normalize(cross(n, up));
@@ -379,6 +441,18 @@ const FRAG = /* glsl */`
       colour = albedo * (sunColour * nl + fill * ao) + sunColour * spec * nl + glow;
     }
     gl_FragColor = vec4(colour, 1.0);
+    if (uDebug > 0.5) {
+      vec3 dpole = abs(up.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+      vec3 de = normalize(cross(dpole, up)); vec3 dn = cross(up, de);
+      if (uDebug < 1.5) gl_FragColor = vec4(albedo, 1.0);
+      else if (uDebug < 2.5) gl_FragColor = vec4(nm * 0.5 + 0.5, 1.0);
+      else if (uDebug < 3.5) gl_FragColor = vec4(dbg, 1.0);
+      else if (uDebug < 4.5) gl_FragColor = vec4(vMat / 6.0, vTag / 4.0, 0.0, 1.0);
+      else if (uDebug < 5.5) gl_FragColor = vec4(fract(vPos / 3.0), 1.0);
+      else if (uDebug < 6.5) gl_FragColor = vec4(fract(vec3(dot(vPos, de), dot(vPos, dn), r - vBase) / 3.0), 1.0);
+      else gl_FragColor = vec4(de * 0.5 + 0.5, 1.0);
+      return;
+    }
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -413,14 +487,15 @@ export const SUN = new THREE.Vector3(0.55, 0.7, 0.45).normalize();
 export async function terrainMaterial(renderer) {
   const base = await textureBase();
   const loader = new THREE.TextureLoader();
-  const sets = { Rock: 'basalt', Sand: 'dunes', Grass: 'grass', Snow: 'ice', Conc: 'concrete' };
+  const sets = { Rock: 'basalt', Sand: 'dunes', Grass: 'grass', Snow: 'ice', Conc: 'concrete', Plate: 'hull_plate' };
   const uniforms = {
     uSun: { value: SUN.clone() }, uCentre: { value: new THREE.Vector3(0, 0, 0) },
     uRadius: { value: PLANET.radius }, uSea: { value: PLANET.sea }, uShore: { value: PLANET.shore },
     uTexScale: { value: 4.0 }, uTextured: { value: base ? 1.0 : 0.0 }, uSnowLine: { value: 7.0 },
     uRockFlat: { value: new THREE.Color(0.30, 0.28, 0.27) }, uSandFlat: { value: new THREE.Color(0.78, 0.66, 0.45) },
     uGrassFlat: { value: new THREE.Color(0.25, 0.4, 0.14) }, uSnowFlat: { value: new THREE.Color(0.86, 0.90, 0.95) },
-    uConcFlat: { value: new THREE.Color(0.6, 0.6, 0.58) },
+    uConcFlat: { value: new THREE.Color(0.6, 0.6, 0.58) }, uPlateFlat: { value: new THREE.Color(0.45, 0.47, 0.5) },
+    uBuiltUv: { value: 0.0 }, uShaderWindows: { value: 0.0 }, uDebug: { value: 0.0 },
     uLamps: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4(0, 0, 0, 0)) },
     uLampCount: { value: 0 },
   };
@@ -448,23 +523,6 @@ export async function terrainMaterial(renderer) {
     uniforms.uLampCount.value = n;
   };
   return mat;
-}
-
-// A standard material dressed in one of the baked sets, for the meshes a
-// page builds itself (the block kit). The ORM map serves three slots.
-export function dressed(textures, name, extra) {
-  const t = textures[name];
-  const m = new THREE.MeshStandardMaterial(Object.assign({ color: 0xffffff, roughness: 1, metalness: 1 }, extra || {}));
-  if (t && t.albedo) {
-    m.map = t.albedo; m.normalMap = t.normal; m.roughnessMap = t.orm; m.metalnessMap = t.orm;
-    m.normalScale = new THREE.Vector2(0.6, 0.6);
-  } else { m.color = new THREE.Color(0.6, 0.6, 0.58); m.roughness = 0.85; m.metalness = 0; }
-  return m;
-}
-
-// The lamp on a ceiling, as a standard material: it glows and casts nothing.
-export function lampMaterial() {
-  return new THREE.MeshStandardMaterial({ color: 0x2a2620, roughness: 0.4, metalness: 0.1, emissive: 0xffd9a8, emissiveIntensity: 2.4 });
 }
 
 // ------------------------------------------------------------- the scene --
@@ -649,8 +707,12 @@ export class Walker {
     let moved = tryStep(this.vel.x, this.vel.y) || tryStep(this.vel.x, 0) || tryStep(0, this.vel.y);
     if (moved) {
       this.dir.copy(moved.d);
-      // Standing on ground that rose a little is a step up; ground that fell is a fall.
-      this.h = Math.max(0, foot - moved.g);
+      // Standing on ground that rose a little is a step up. Ground that fell
+      // by no more than a step is a step DOWN and the feet stay on it: the
+      // first cut went airborne on every downslope and flickered down a
+      // plinth's fillet. Further than a step is a fall.
+      const drop = foot - moved.g;
+      this.h = this.onGround && drop <= this.step ? 0 : Math.max(0, drop);
     } else if (f !== 0 || r !== 0) { this.vel.multiplyScalar(0.5); }
     // Vertical.
     if (this.keys.has('Space') && this.onGround) { this.vy = this.jumpV; this.onGround = false; }

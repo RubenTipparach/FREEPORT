@@ -251,10 +251,10 @@ is what a building is and what the ground does under it:
 | | the field, marched | the tiles, stacked |
 | --- | --- | --- |
 | the ground under a town | the field is FLATTENED under it (`Planet.surface` blends the relief to the site's height and fades the volumetric term), so the plateau has a smooth skirt cut by the same field | the tiles are LEVELLED, so the plateau has a wall of blocks wherever the hill was higher |
-| a building | a block kit: slab, panels, panes, pillars, parapet or gable, a doorway, a floor a storey, a flight of stairs, a lamp, placed free on the lot, each building plumb on its own patch of the sphere | the lot's tiles raised by the storeys in half metre blocks and tagged concrete, windows lit by the shader; the doorway, the floors, the stairs and the lamps are RUNS of blocks in a column, nothing placed and nothing to align |
-| a wall on foot | a box the body is pushed out of along the face it came in least by | any tile round the body standing higher than a step, pushed off along the line from its middle |
-| a room | the sun casts a shadow map over the port, so a room is dark because the walls are between it and the sky, and a point light per lamp warms it | a face toward the inside is TAGGED inside and the shader lights it from the building's lamps and nothing else, with the sun ignored |
-| the concrete | box UVs in metres | UVs in the TOWN's frame: a cap on east and north, a wall along the town axis it faces across and up from its base, so the panel seams meet the blocks and the floors |
+| a building | a list of BRUSHES in the same field (`assets/buildings/*.json`, the kit in `docs/mockups/kit.js`): boxes, cylinders, spheres and flights of steps added or cut in list order, in concrete, plate, glass or lamp, marched on a lattice six times finer under the town, each building plumb on its own patch of the sphere | the lot's tiles raised by the storeys in half metre blocks and tagged concrete, windows lit by the shader; the doorway, the floors, the stairs and the lamps are RUNS of blocks in a column, nothing placed and nothing to align |
+| a wall on foot | the FIELD: a ring of points round the body between its step and its head, each pushed out along the field's own gradient, sideways only | any tile round the body standing higher than a step, pushed off along the line from its middle |
+| a room | a face whose air side is in a room cut is TAGGED inside; both pages light an inside face from the building's lamps and nothing else, with the sun ignored | the same tag, on the wall faces toward an interior tile |
+| the concrete | three planes in a LOCAL frame: the arc east and north of the pole and the height off the building's base, so a wall's panels run level and plumb whatever the planet's axes do, and the material rides the triangle FLAT, so concrete meets rock on a line | UVs in the TOWN's frame: a cap on east and north, a wall along the town axis it faces across and up from its base, so the panel seams meet the blocks and the floors |
 
 **The walker is one class and the page supplies three functions.** `Walker`
 is a direction on the sphere and a height off the ground, a heading carried
@@ -345,6 +345,104 @@ whole ceiling at a grazing angle and a plain cosine there lights every
 grain of the normal map on one side: the ceiling came out as gravel and the
 map is at half strength inside for the same reason.
 
+## A building is a field too, on a finer lattice, and the material is flat
+
+The question was whether a building can be built out of the same marching
+cubes as the planet, with the two textures kept apart rather than blended.
+It can, and the marched mockup now does it, which answers three things at
+once: what a building IS in a field, how a fine thing lives in a coarse
+lattice, and how a material stays hard.
+
+**A building is a list of brushes.** A recipe (`assets/buildings/*.json`,
+the schema in that folder's README, bundled by `tools/bundle_buildings.py`
+into `docs/mockups/buildings.js` under the one source rule the marching
+cubes tables live under) is a list of signed distance brushes in the
+building's frame: a box, a cylinder on any axis, a sphere, a flight of
+steps (kept in the kit, unused: the recipes climb on RAMPS, one pitched box
+each, exact under the walker at any lattice where a flight of ten boxes
+was chunky at every lattice a browser can afford), a window, which is an
+OPENING onto the room and nothing in it. Each is ADDED (a union,
+or a smooth one with `blend`, for a plinth poured into the ground) or CUT,
+in list order, so a door cut after a wall goes through the wall and a
+flight added after a room stands in it; `each` repeats a brush a storey at
+a time and `alternate` mirrors it through the centre on odd storeys, so a
+ramp is on the west wall rising north and then the east rising south, with
+the opening in the floor above it cut from where a climber's head would
+meet the slab to the wall beyond, a body's width wider than the ramp;
+`clip` bounds a brush in the building's up, so a vault is a cylinder from
+the wall line and nothing under the floor; a cut that is a `room` names the
+inside. `kit.js` is the reference implementation, and it knows nothing of
+planets: the page hands it local coordinates and takes back a density and
+a material, which is what lets the core evaluate the same list one day.
+Six recipes ship: a house and a cottage with a gable, a round tower, a
+hangar with a barrel vault and an arched door, a dome with an oculus, and a
+dugout with a trench of steps down into the ground. The last three are
+what a block kit cannot make and the reason to want a field.
+
+**The material is the DEEPEST solid at a sample**, the one whose surface is
+farthest away. The mesher asks the field a hand inside each triangle's
+middle for its material and a hand outside for its room, and hands both to
+the triangle FLAT (`flat varying`, the last vertex of a triangle winning,
+so every triangle ends on a vertex that carries its values, duplicated
+where none does), so a triangle is one material, a material boundary runs
+along triangle edges, and concrete meets rock on a line however the
+geometry blends. The rule has a price the recipes pay: a hand inside can be
+most of a cell inside the surface, so a thin thing on a thick one (a street
+on the ground, a lamp under a slab) is SUNK into its host by at least a
+cell or it draws as its host, and a skin is thicker than a cell or is the
+whole of the solid. Nothing thinner than the lattice exists: at 0.22 m a
+wall is 0.35, a step 0.3, a lamp 0.3, and the kit warns on anything under
+0.3. A vertex on an edge that touches a structure is put where the field
+CROSSES, by bisection along the edge, because a box's distance curves round
+its corners and the straight line's guess beaded every edge of every
+building; and a box face is shaded FLAT on its own normal (`dFdx`, the
+curved brushes flagged to stay smooth), because a normal interpolated
+across a corner rounds it over a cell.
+
+**A fine lattice under each town, in chunks, meeting the coarse one on cell
+faces.** The planet is marched at 1.33 m with no buildings in its field.
+Every coarse cell a structure's box touches is REPLACED by its subdivision
+(four, six or eight ways, the page's select; six is 0.22 m) marched with
+the buildings in the field, in chunks of four coarse cells a side, so an
+edit remarches the chunk or two its brush touches. The join is on coarse
+cell faces where the field is the terrain alone on both sides, because a
+structure's box is inside its cells, so the two surfaces differ there by
+the coarse lattice's own interpolation error and nothing else. That is
+MEASURED, not assumed: every fine vertex on a join face is checked against
+the bilinear coarse field on that face, and the page reports the mean and
+the worst gap. On this seed 6,413 vertices lie on the join, 5 mm apart on
+average and 108 mm at worst, the worst being where a street runs out of
+the levelled site into the skirt, which is the chord sag this file already
+knows about. The game's answer for a crack a pixel can see is still the
+skirt or transvoxel listed under the streamer; the number says when it is
+needed.
+
+**The walker walks the field and nothing else.** The ground is the first
+solid under the feet going down from a step above them, the ceiling the
+first solid going up, and a wall is any solid a ring of points round the
+body meets between its step and its head, pushed out along the field's own
+gradient, sideways only. There is no collider list to keep in step with
+the picture because the picture is the collider, a ramp is walkable at any
+pitch the ground query can follow, and a sculpted block is walkable the
+frame it is placed. Three things the numbers found: the push
+was scaled by the gradient's DIFFERENCE rather than the gradient, so a one
+centimetre contact threw the body fourteen and a pane threw it out through
+the glass; the local panel frame was built at the fragment, and a point on
+a sphere projected on its own tangent plane is nought everywhere, so the
+panels were float noise until they were measured as arcs from the pole;
+and a body that steps DOWN by less than a step was airborne every frame of
+a downslope, flickering down every plinth's fillet, until a small drop
+became a step.
+
+**Sculpting is the same list, longer.** On foot, B: a brush at the point
+the crosshair meets the field (a march along the look ray, the field's
+gradient for the face), snapped to half a metre in the town's frame and
+placed plumb on its own patch, added with the left button and cut with the
+right, taken back with Z, exported as JSON with a button. An edit is a
+structure like any other, so it lives in the same buckets, the same fine
+region and the same collision, and a town somebody sculpts is a recipe
+they have not written down yet.
+
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
 Every planet, moon and station's position is a closed form function of the
@@ -433,6 +531,7 @@ python3 tools/shape.py --check                    # no file over 900 lines, no f
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
 tools/bake_materials.sh --check                   # the maps match their graphs
+python3 tools/bundle_buildings.py --check         # the mockup's recipes match assets/buildings
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
 ./target/release/freeport_app                     # a window: one marched planetoid, a light, a camera
@@ -478,8 +577,18 @@ Numbers in the commit message. What is measured so far:
   and every step is a wall, and a room is walls all the way round.
 - The walker, both pages, headless: 7 m up the port's main street to the
   first face, 19.4 m along it, a jump to 1.4 m, the same to a few
-  decimetres; then in at a door, up two flights to floor two, 6.35 m over
-  the base on the kit and 6.04 on the blocks.
+  decimetres; then in at a door, up two flights to floor two, 6.04 m over
+  the base on the blocks; and on the marched page, in at the house's door,
+  up the ramp to floor one and the second to floor two, the page naming
+  the recipe, the building and the floor at every stage.
+- The towns in the field: 284 structures (twenty buildings, the streets in
+  pieces) in 33,564 coarse cells replaced by 0.22 m ones over 924 chunks,
+  11.5 million samples and 908,807 triangles in 5.5 s, against 84,179
+  triangles and 0.9 s for the rest of the planet. The join between the
+  lattices: 6,413 vertices on it, 5 mm apart on average, 108 mm at the
+  worst. A sculpted slab or a cut doorway remarches the chunk or two it
+  touches in about 150 ms and the walker stands on it, or walks through it
+  into the house, the same frame.
 - Material Maker under lavapipe: seven graphs, twenty eight maps at 2048,
   exported in about six minutes on four cores, and byte identical on a
   re-export of the same graphs on the same machine (five sets unchanged when

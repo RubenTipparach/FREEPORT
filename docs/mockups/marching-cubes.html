@@ -6,48 +6,68 @@
 <canvas id="c"></canvas>
 <div class="busy" id="busy">MARCHING THE FIELD</div>
 <div class="cross" id="cross" hidden></div>
-<div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span></div>
+<div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>B</b> build <b>Esc</b> release the mouse, then Orbit to leave<span id="walkstat"></span><span id="buildstat" hidden></span></div>
 <aside class="panel">
   <h1>Freeport <span>marching cubes</span></h1>
-  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. Three towns stand on ground the field itself was <b>flattened</b> under, built from a <b>block kit</b>: slabs, wall panels, glass, pillars, parapets, gables, a doorway on the street, a floor a storey, a flight of stairs along a wall, a lamp on every ceiling. Walk in.</p>
+  <p>A planet with a sea, sandy shores and green land as a <b>density field</b>, marched on the classic tables the core carries. The towns are in the <b>same field</b>: a building is a list of <b>brushes</b> (boxes, cylinders, spheres and ramps, added or cut, in concrete or plate) composed into it and marched on a finer lattice under the town, so the ground, the walls, the floors and the stairs are one mesh with one collision rule. A material switches <b>hard</b>: a triangle is the deepest solid under it, and a plinth poured into the rock still meets it on a line. Press <b>B</b> on foot to place and cut blocks.</p>
   <div class="hud" id="hud"></div>
   <div class="controls">
     <button id="walk">Walk the port</button>
     <button id="orbit" class="on">Orbit</button>
     <button id="tex" class="on">Textured</button>
     <button id="wire">Wire</button>
-    <select id="res"><option value="80">1.9 m cells</option><option value="112" selected>1.3 m cells</option><option value="144">1.0 m cells</option></select>
+    <select id="res"><option value="80">1.9 m cells</option><option value="112" selected>1.3 m cells</option></select>
+    <select id="sub"><option value="4">towns 4x finer</option><option value="6" selected>towns 6x finer</option><option value="8">towns 8x finer</option></select>
     <button id="reseed">New seed</button>
+    <button id="export">Export edits</button>
   </div>
+  <textarea id="edits" rows="4" hidden readonly></textarea>
   <div class="look">What to judge on foot, against the hex mockup on the same seed:
     <ul>
       <li>a slope is a slope: you walk up a hill and down to the beach without a step anywhere, and a cliff stops you</li>
-      <li>the town's plateau meets the hillside in a smooth skirt, cut by the field rather than laid on it</li>
-      <li>buildings stand plumb on their own patch of a curved world; walk through the door, up the stairs, floor by floor, in the sun's shadow and the lamps' light</li>
-      <li>the shore: wet sand at the water line, and the sea holds you at wading depth</li>
+      <li>the plinth melts into the ground and the concrete still stops on a line; the dome, the vault and the dugout are shapes a block kit cannot make</li>
+      <li>walk through a door, up the ramp, floor by floor, under the lamps, and look out of a window, which is an opening onto the room and nothing in it</li>
+      <li>B, then place a slab with the mouse and walk onto it, cut a hole in a wall and walk through: the picture is the collider</li>
     </ul></div>
 </aside>
 <script type="module">
-import { THREE, Planet, PLANET, planTowns, lotFrame, makeScene, makeSea, terrainMaterial, dressed, lampMaterial, viewOrbit, surfaceRadius, hash3, Walker, hud, fmt } from './common.js';
+import { THREE, Planet, PLANET, planTowns, lotFrame, makeScene, makeSea, terrainMaterial, viewOrbit, hash3, Walker, hud, fmt } from './common.js';
 import { EDGE_TABLE, TRI_TABLE } from './mc_tables.js';
+import { MAT, MAT_NAMES, compile, single } from './kit.js';
+import { evalBrushes } from './kit.js';
+import { BUILDINGS } from './buildings.js';
 
 // `march.rs`, transcribed: Bourke's corners and edges, a corner bit set when
 // it is air, shared vertices through an edge cache, normals off the field's
-// gradient by central differences and pointed out of the rock.
+// gradient and pointed out of the rock.
 const CORNER = [[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]];
 const EDGE_AT = [[[0,0,0],0],[[1,0,0],1],[[0,1,0],0],[[0,0,0],1],[[0,0,1],0],[[1,0,1],1],[[0,1,1],0],[[0,0,1],1],[[0,0,0],2],[[1,0,0],2],[[1,1,0],2],[[0,1,0],2]];
+// Fine cells per coarse cell under a town: 1.33 m over six is 0.22 m, which
+// is the lattice a 0.35 m wall, a 0.3 m pane and a 0.3 m step are drawn on.
+// Four is what a wall survives at all, eight is what the steps deserve and
+// the browser pays for; the select sets it.
+let SUB = 6;
+// The fine lattice is meshed in CHUNKS of four coarse cells a side, so an
+// edit remarches the chunk or two its brush touches and nothing else.
+const CH = 4;
+const PIECE = 3.5;   // metres of street laid on one patch of the sphere, or a chord sags on a planet this small
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-function march(field, corner, cell, n) {
+// The coarse lattice: the whole planet with no buildings in it, skipping the
+// cells a town's fine lattice replaces.
+function march(planet, corner, cell, n, skip) {
   const s = n + 3, vals = new Float32Array(s * s * s);
   const at = (i, j, k) => vals[((k + 1) * s + (j + 1)) * s + (i + 1)];
   for (let k = -1; k <= n + 1; k++) for (let j = -1; j <= n + 1; j++) for (let i = -1; i <= n + 1; i++) {
-    vals[((k + 1) * s + (j + 1)) * s + (i + 1)] = field.at(corner + i * cell, corner + j * cell, corner + k * cell);
+    vals[((k + 1) * s + (j + 1)) * s + (i + 1)] = planet.at(corner + i * cell, corner + j * cell, corner + k * cell);
   }
   const L = n + 1, cache = new Int32Array(L * L * L * 3).fill(-1);
   const pos = [], nrm = [], idx = [];
   const grad = (i, j, k) => [(at(i + 1, j, k) - at(i - 1, j, k)) * 0.5, (at(i, j + 1, k) - at(i, j - 1, k)) * 0.5, (at(i, j, k + 1) - at(i, j, k - 1)) * 0.5];
   const onEdge = new Int32Array(12);
+  let skipped = 0;
   for (let k = 0; k < n; k++) for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    if (skip(i, j, k)) { skipped++; continue; }
     let config = 0;
     for (let c = 0; c < 8; c++) if (at(i + CORNER[c][0], j + CORNER[c][1], k + CORNER[c][2]) < 0) config |= 1 << c;
     const crossed = EDGE_TABLE[config];
@@ -60,7 +80,7 @@ function march(field, corner, cell, n) {
       if (cache[slot] < 0) {
         const step = [0, 0, 0]; step[axis] = 1;
         const va = at(a, b, c), vb = at(a + step[0], b + step[1], c + step[2]);
-        const t = Math.abs(vb - va) < 1e-12 ? 0.5 : Math.min(1, Math.max(0, (0 - va) / (vb - va)));
+        const t = Math.abs(vb - va) < 1e-12 ? 0.5 : clamp((0 - va) / (vb - va), 0, 1);
         const p = [corner + a * cell, corner + b * cell, corner + c * cell]; p[axis] += t * cell;
         const ga = grad(a, b, c), gb = grad(a + step[0], b + step[1], c + step[2]);
         let nx = -(ga[0] + (gb[0] - ga[0]) * t), ny = -(ga[1] + (gb[1] - ga[1]) * t), nz = -(ga[2] + (gb[2] - ga[2]) * t);
@@ -76,351 +96,560 @@ function march(field, corner, cell, n) {
     }
   }
   const g = new THREE.BufferGeometry();
+  const count = pos.length / 3;
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-  g.setAttribute('tag', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1));
-  g.setAttribute('base', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1));
+  g.setAttribute('tag', new THREE.Float32BufferAttribute(new Float32Array(count), 1));
+  g.setAttribute('mat', new THREE.Float32BufferAttribute(new Float32Array(count), 1));
+  g.setAttribute('base', new THREE.Float32BufferAttribute(new Float32Array(count), 1));
   g.setIndex(idx);
-  return { geometry: g, triangles: idx.length / 3, vertices: pos.length / 3, samples: s * s * s };
+  return { geometry: g, triangles: idx.length / 3, vertices: count, samples: s * s * s, skipped };
 }
 
-// ------------------------------------------------------------ the block kit --
-// A building is a list of boxes in its own frame (x east, y up, z SOUTH,
-// origin at the middle of its footprint on the ground), each box in one of
-// the materials and one of four KINDS the walker reads: a wall stops it, a
-// floor and a step hold it up, a lamp is nothing to it. Boxes rather than a
-// modelled facade because a kit is what a game ships: a slab, a panel, a
-// pane, a pillar, a parapet, a gable, a flight of steps, a lamp, each a size
-// and a place, and a building is a plan that names them. The doorway is on
-// the street side, the floors have a hole over the flight below, the flight
-// runs along the west wall northward and then the east wall southward so the
-// next one is across the room.
-const STOREY = 3.0, WALL = 0.3, SLAB = 0.35, FLOOR = 0.25, DOOR_W = 1.3, DOOR_H = 2.2;
-// Ten risers of 0.3 m up a three metre storey, on 0.3 m treads: a flight is
-// three metres long, and with the stride it stands clear of the wall it fits
-// a five metre lot with a hand's width to spare.
-const RISE = 0.3, RUN = 0.3, STEPS = 10, STAIR_W = 1.0, GAP = 1.3;
-function kit(lot, seed) {
-  const boxes = [];
-  const box = (mat, kind, w, h, d, x, y, z, ry) => boxes.push({ mat, kind, size: [w, h, d], pos: [x, y, z], ry: ry || 0 });
-  const { w, d, storeys } = lot;
-  const H = storeys * STOREY;
-  const xIn = w / 2 - WALL, zIn = d / 2 - WALL;
-  // The door is east of the middle of the street side, because the flights
-  // hang off the west wall and a door in the middle of a five metre lot
-  // opened onto the bottom of the stair.
-  const doorX = w / 4;
-  box('concrete', 'floor', w + 0.6, SLAB, d + 0.6, 0, SLAB / 2, 0);                    // the ground slab
-  // A flight starts GAP clear of the wall it faces, so a walker can get on
-  // at its bottom step: the first cut started it a step from the wall and
-  // the rail's end and the wall left a body's width between them.
-  const flightZ = (s, j) => (s % 2 === 0 ? zIn - GAP - (j - 0.5) * RUN : -zIn + GAP + (j - 0.5) * RUN);
-  const flightX = (s) => (s % 2 === 0 ? -1 : 1) * (xIn - STAIR_W / 2 - 0.1);
-  for (let s = 0; s < storeys; s++) {
-    const ys = SLAB + s * STOREY;
-    box('concrete', 'wall', w, STOREY, WALL, 0, ys + STOREY / 2, -d / 2 + WALL / 2);     // north
-    if (s === 0) {
-      const west = doorX - DOOR_W / 2 + w / 2, east = w / 2 - doorX - DOOR_W / 2;
-      box('concrete', 'wall', west, STOREY, WALL, -w / 2 + west / 2, ys + STOREY / 2, d / 2 - WALL / 2);
-      box('concrete', 'wall', east, STOREY, WALL, w / 2 - east / 2, ys + STOREY / 2, d / 2 - WALL / 2);
-      box('concrete', 'wall', DOOR_W, STOREY - DOOR_H, WALL, doorX, ys + DOOR_H + (STOREY - DOOR_H) / 2, d / 2 - WALL / 2);   // the lintel
-      box('trim', 'wall', 0.18, DOOR_H, WALL + 0.1, doorX - DOOR_W / 2 - 0.09, ys + DOOR_H / 2, d / 2 - WALL / 2);          // the jambs
-      box('trim', 'wall', 0.18, DOOR_H, WALL + 0.1, doorX + DOOR_W / 2 + 0.09, ys + DOOR_H / 2, d / 2 - WALL / 2);
-    } else {
-      box('concrete', 'wall', w, STOREY, WALL, 0, ys + STOREY / 2, d / 2 - WALL / 2);    // south
+// ---------------------------------------------------------------- the field --
+// The planet's field with STRUCTURES in it: a building, a piece of street or
+// a sculpted brush, each a compiled brush list in a frame on the sphere (an
+// origin on the ground, east, north and up). A structure is registered in
+// the coarse cells its box crosses, which is both the bucket a sample looks
+// in and the set of cells the fine lattice replaces, so the coarse mesh
+// never sees a building and the fine mesh never ends inside one: the two
+// meet on cell faces where the field is the terrain alone on both sides.
+class Field {
+  constructor(planet, corner, cell, n) {
+    this.planet = planet; this.corner = corner; this.cell = cell; this.n = n;
+    this.structures = []; this.buckets = new Map(); this.mask = new Uint8Array(n * n * n); this.rooms = 0;
+  }
+  key(i, j, k) { return (k * this.n + j) * this.n + i; }
+  place(compiled, frame, kind, extra) {
+    const origin = frame.dir.clone().multiplyScalar(frame.base);
+    const s = Object.assign({ origin, east: frame.east, north: frame.north, up: frame.dir, base: frame.base + (kind === 'building' ? 0.35 : 0), kind,
+      brushes: compiled.brushes, rooms: compiled.rooms, bbox: compiled.bbox, compiled }, extra || {});
+    s.lamps = compiled.lamps.map(([e, n, u, reach]) => {
+      const p = origin.clone().addScaledVector(s.east, e).addScaledVector(s.north, n).addScaledVector(s.up, u);
+      return new THREE.Vector4(p.x, p.y, p.z, reach);
+    });
+    s.id = this.structures.length; s.roomBase = this.rooms; this.rooms += s.rooms.length;
+    this.structures.push(s);
+    // The world box of the local box, then every coarse cell it touches.
+    const bb = s.bbox, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let c = 0; c < 8; c++) {
+      const p = origin.clone().addScaledVector(s.east, c & 1 ? bb[1] : bb[0]).addScaledVector(s.north, c & 2 ? bb[3] : bb[2]).addScaledVector(s.up, c & 4 ? bb[5] : bb[4]);
+      for (let a = 0; a < 3; a++) { const v = p.getComponent(a); lo[a] = Math.min(lo[a], v); hi[a] = Math.max(hi[a], v); }
     }
-    box('concrete', 'wall', WALL, STOREY, d, w / 2 - WALL / 2, ys + STOREY / 2, 0);      // east and west
-    box('concrete', 'wall', WALL, STOREY, d, -w / 2 + WALL / 2, ys + STOREY / 2, 0);
-    // The floor line, outside: four bars round the walls and not a slab the
-    // size of the lot, which filled the stairwell at head height and, as a
-    // collider, shoved a climber out through the west wall at the fourth step.
-    const yl = ys + STOREY - 0.12;
-    box('trim', 'deco', w + 0.5, 0.25, 0.25, 0, yl, d / 2 + 0.12); box('trim', 'deco', w + 0.5, 0.25, 0.25, 0, yl, -d / 2 - 0.12);
-    box('trim', 'deco', 0.25, 0.25, d + 0.5, w / 2 + 0.12, yl, 0); box('trim', 'deco', 0.25, 0.25, d + 0.5, -w / 2 - 0.12, yl, 0);
-    // Panes: one every 2.2 m along each side, lit or dark off a hash.
-    for (const [side, len, sx, sz] of [[0, w, 0, 1], [1, w, 0, -1], [2, d, 1, 0], [3, d, -1, 0]]) {
-      const count = Math.max(1, Math.floor((len - 1.2) / 2.2));
-      for (let i = 0; i < count; i++) {
-        const along = (i + 0.5) / count * (len - 1.2) - (len - 1.2) / 2;
-        if (s === 0 && side === 0 && Math.abs(along - doorX) < DOOR_W / 2 + 0.7) continue;      // not over the door
-        const lit = hash3(lot.id, s * 4 + side, i, seed) > 0.42 && s > 0 || (s === 0 && hash3(lot.id, 99, i, seed) > 0.7);
-        const mat = lit ? 'lit' : 'glass';
-        if (side < 2) box(mat, 'wall', 1.3, 1.4, 0.12, along, ys + STOREY * 0.55, sz * (d / 2 + 0.02));
-        else box(mat, 'wall', 0.12, 1.4, 1.3, sx * (w / 2 + 0.02), ys + STOREY * 0.55, along);
+    const ci = [0, 1, 2].map((a) => clamp(Math.floor((lo[a] - this.corner) / this.cell), 0, this.n - 1));
+    const cx = [0, 1, 2].map((a) => clamp(Math.floor((hi[a] - this.corner) / this.cell), 0, this.n - 1));
+    s.cells = [];
+    for (let k = ci[2]; k <= cx[2]; k++) for (let j = ci[1]; j <= cx[1]; j++) for (let i = ci[0]; i <= cx[0]; i++) {
+      const key = this.key(i, j, k);
+      let list = this.buckets.get(key);
+      if (!list) { list = []; this.buckets.set(key, list); }
+      list.push(s.id); s.cells.push(key); this.mask[key] = 1;
+    }
+    return s;
+  }
+  // Density, material, room and owner at a world point.
+  at(x, y, z, out) {
+    out.d = this.planet.at(x, y, z); out.mat = 0; out.room = -1; out.sid = -1;
+    const i = Math.floor((x - this.corner) / this.cell), j = Math.floor((y - this.corner) / this.cell), k = Math.floor((z - this.corner) / this.cell);
+    if (i < 0 || j < 0 || k < 0 || i >= this.n || j >= this.n || k >= this.n) return out;
+    const list = this.buckets.get(this.key(i, j, k));
+    if (!list) return out;
+    for (const sid of list) {
+      const s = this.structures[sid];
+      const qx = x - s.origin.x, qy = y - s.origin.y, qz = z - s.origin.z;
+      const e = qx * s.east.x + qy * s.east.y + qz * s.east.z, nn = qx * s.north.x + qy * s.north.y + qz * s.north.z, u = qx * s.up.x + qy * s.up.y + qz * s.up.z;
+      const bb = s.bbox;
+      if (e < bb[0] || e > bb[1] || nn < bb[2] || nn > bb[3] || u < bb[4] || u > bb[5]) continue;
+      evalBrushes(s.brushes, e, nn, u, out, sid, s.roomBase);
+    }
+    return out;
+  }
+  gradient(x, y, z, eps, g) {
+    const o = this.tmp;
+    g[0] = this.at(x + eps, y, z, o).d - this.at(x - eps, y, z, o).d;
+    g[1] = this.at(x, y + eps, z, o).d - this.at(x, y - eps, z, o).d;
+    g[2] = this.at(x, y, z + eps, o).d - this.at(x, y, z - eps, o).d;
+    return g;
+  }
+}
+Field.prototype.tmp = { d: 0, mat: 0, room: -1, sid: -1 };
+
+// The fine lattice under a town: the coarse cells its structures touch,
+// each cut SUB ways and marched with the buildings in the field. A vertex
+// on an edge that touches a structure is put where the FIELD crosses,
+// found by bisection along the edge, not where a straight line between the
+// two samples would put it: a box's distance curves round its corners and
+// the line's guess beaded every edge of every building. Its normal is the
+// field's gradient at the vertex itself, because a wall thinner than two
+// cells has no gradient a lattice difference can find. Then every triangle
+// takes its material, its tag and its base from the field at its own
+// middle (a hand inside for the solid, a hand outside for the room), and
+// its last vertex, the one the flat varying hands the fragment, is a vertex
+// that carries them, duplicated where none does: a material boundary runs
+// along triangle edges and a lit pane wears no halo.
+function marchFine(field, cellKeys, seam) {
+  const { corner, cell, n } = field, fine = cell / SUB, L = SUB + 1, FN = n * SUB + 1;
+  const vals = new Float32Array(L * L * L), sids = new Int32Array(L * L * L);
+  const cache = new Map();
+  const pos = [], nrm = [], vsid = [], tris = [];
+  const out = { d: 0, mat: 0, room: -1, sid: -1, curved: false }, g = [0, 0, 0];
+  const onEdge = new Int32Array(12);
+  let samples = 0;
+  const at = (a, b, c) => vals[(c * L + b) * L + a];
+  for (const key of cellKeys) {
+    const i = key % n, j = Math.floor(key / n) % n, k = Math.floor(key / (n * n));
+    const fx0 = i * SUB, fy0 = j * SUB, fz0 = k * SUB;
+    for (let c = 0; c < L; c++) for (let b = 0; b < L; b++) for (let a = 0; a < L; a++) {
+      field.at(corner + (fx0 + a) * fine, corner + (fy0 + b) * fine, corner + (fz0 + c) * fine, out);
+      const q = (c * L + b) * L + a;
+      vals[q] = out.d; sids[q] = out.sid; samples++;
+    }
+    for (let c = 0; c < SUB; c++) for (let b = 0; b < SUB; b++) for (let a = 0; a < SUB; a++) {
+      let config = 0;
+      for (let cc = 0; cc < 8; cc++) if (at(a + CORNER[cc][0], b + CORNER[cc][1], c + CORNER[cc][2]) < 0) config |= 1 << cc;
+      const crossed = EDGE_TABLE[config];
+      if (crossed === 0) continue;
+      for (let e = 0; e < 12; e++) {
+        if (!(crossed & (1 << e))) continue;
+        const [d, axis] = EDGE_AT[e];
+        const la = a + d[0], lb = b + d[1], lc = c + d[2];
+        const fi = fx0 + la, fj = fy0 + lb, fk = fz0 + lc;
+        const slot = ((fk * FN + fj) * FN + fi) * 3 + axis;
+        let vi = cache.get(slot);
+        if (vi === undefined) {
+          const step = [0, 0, 0]; step[axis] = 1;
+          const ia = (lc * L + lb) * L + la, ib = ((lc + step[2]) * L + (lb + step[1])) * L + (la + step[0]);
+          const va = vals[ia], vb = vals[ib];
+          let t = Math.abs(vb - va) < 1e-12 ? 0.5 : clamp((0 - va) / (vb - va), 0, 1);
+          const p = [corner + fi * fine, corner + fj * fine, corner + fk * fine];
+          const solid = va > 0 ? ia : ib;
+          if (sids[ia] >= 0 || sids[ib] >= 0) {
+            // Bisect the field along the edge: five halvings is under a centimetre.
+            let lo = 0, hi = 1;
+            for (let it = 0; it < 5; it++) {
+              const tm = (lo + hi) * 0.5; const q = p.slice(); q[axis] += tm * fine;
+              if ((field.at(q[0], q[1], q[2], out).d > 0) === (va > 0)) lo = tm; else hi = tm;
+            }
+            t = (lo + hi) * 0.5; samples += 5;
+          }
+          p[axis] += t * fine;
+          field.gradient(p[0], p[1], p[2], 0.03, g);
+          const len = Math.hypot(g[0], g[1], g[2]) || 1;
+          vi = pos.length / 3; cache.set(slot, vi);
+          pos.push(p[0], p[1], p[2]); nrm.push(-g[0] / len, -g[1] / len, -g[2] / len);
+          vsid.push(sids[solid]);
+          if (seam) measureSeam(field, seam, fi, fj, fk, axis, t);
+        }
+        onEdge[e] = vi;
       }
+      const row = config * 16;
+      for (let t = 0; t < 16 && TRI_TABLE[row + t] >= 0; t += 3) tris.push(onEdge[TRI_TABLE[row + t]], onEdge[TRI_TABLE[row + t + 1]], onEdge[TRI_TABLE[row + t + 2]]);
     }
-    // The floor of this storey, with a hole over the flight up from below:
-    // from a little short of the third step, which is the first whose
-    // climber's head would meet the slab, to the far edge of the top step
-    // and not a centimetre past it, or the flight tops out over a drop.
-    if (s > 0) {
-      const below = s - 1, west = below % 2 === 0, sgn = west ? 1 : -1;
-      const hx0 = west ? -xIn : xIn - STAIR_W - 0.5, hx1 = west ? -xIn + STAIR_W + 0.5 : xIn;
-      const zA = flightZ(below, 3) + sgn * (RUN / 2 + 0.35), zB = flightZ(below, STEPS) - sgn * RUN / 2;
-      const hz0 = Math.min(zA, zB), hz1 = Math.max(zA, zB);
-      const y = ys - FLOOR / 2;
-      const mainX0 = west ? hx1 : -xIn, mainX1 = west ? xIn : hx0;
-      box('concrete', 'floor', mainX1 - mainX0, FLOOR, 2 * zIn, (mainX0 + mainX1) / 2, y, 0);
-      if (hz0 > -zIn) box('concrete', 'floor', hx1 - hx0, FLOOR, hz0 + zIn, (hx0 + hx1) / 2, y, (-zIn + hz0) / 2);
-      if (hz1 < zIn) box('concrete', 'floor', hx1 - hx0, FLOOR, zIn - hz1, (hx0 + hx1) / 2, y, (hz1 + zIn) / 2);
-    }
-    // The flight up to the next floor.
-    if (s < storeys - 1) {
-      for (let j = 1; j <= STEPS; j++) box('trim', 'step', STAIR_W, j * RISE, RUN, flightX(s), ys + j * RISE / 2, flightZ(s, j));
-      // A handrail on the open side, from the third step up: the two low
-      // steps are climbable from the side, and a rail down to the floor is
-      // a wall a walker has to go round the end of to get on.
-      box('trim', 'wall', 0.08, 1.0, (STEPS - 2) * RUN, flightX(s) + (s % 2 === 0 ? STAIR_W / 2 : -STAIR_W / 2), ys + STOREY / 2 + 0.2, flightZ(s, (STEPS + 3) / 2));
-    }
-    // The lamp under the ceiling.
-    box('lamp', 'lamp', 0.7, 0.08, 0.7, 0, ys + STOREY - FLOOR - 0.06, 0);
   }
-  for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) box('trim', 'wall', 0.45, H + 0.5, 0.45, x * (w / 2 - 0.1), 0.35 + (H + 0.5) / 2 - 0.2, z * (d / 2 - 0.1)); // the pillars
-  if (lot.kind === 'gable') {
-    const rise = w * 0.32;
-    const slant = Math.hypot(w / 2, rise), ang = Math.atan2(rise, w / 2);
-    box('roof', 'roof', slant + 0.4, 0.22, d + 0.8, -w / 4, 0.35 + H + rise / 2, 0, ang);
-    box('roof', 'roof', slant + 0.4, 0.22, d + 0.8, w / 4, 0.35 + H + rise / 2, 0, -ang);
-    box('concrete', 'wall', w - 0.3, rise, 0.25, 0, 0.35 + H + rise / 2 - 0.05, d / 2 - 0.2);   // the gable ends, plain
-    box('concrete', 'wall', w - 0.3, rise, 0.25, 0, 0.35 + H + rise / 2 - 0.05, -d / 2 + 0.2);
-    box('concrete', 'roof', w - 0.4, FLOOR, d - 0.4, 0, 0.35 + H - FLOOR / 2, 0);            // the top ceiling
-  } else {
-    box('roof', 'roof', w + 0.4, 0.3, d + 0.4, 0, 0.35 + H + 0.15, 0);
-    box('trim', 'wall', w + 0.5, 0.7, 0.25, 0, 0.35 + H + 0.5, d / 2 + 0.12);       // the parapet
-    box('trim', 'wall', w + 0.5, 0.7, 0.25, 0, 0.35 + H + 0.5, -d / 2 - 0.12);
-    box('trim', 'wall', 0.25, 0.7, d + 0.5, w / 2 + 0.12, 0.35 + H + 0.5, 0);
-    box('trim', 'wall', 0.25, 0.7, d + 0.5, -w / 2 - 0.12, 0.35 + H + 0.5, 0);
-    if (storeys > 2) box('trim', 'wall', 2.2, 1.6, 2.2, w * 0.2, 0.35 + H + 1.1, -d * 0.15);   // the plant room
+  // Materials per triangle, then a provoking vertex that carries them.
+  const nv0 = pos.length / 3;
+  const vmat = new Array(nv0).fill(-1), vtag = new Array(nv0).fill(0), vbase = new Array(nv0).fill(0);
+  const idx = [];
+  let split = 0;
+  for (let t = 0; t < tris.length; t += 3) {
+    const a = tris[t], b = tris[t + 1], c = tris[t + 2];
+    let m = 0, tag = 0, base = 0;
+    if (vsid[a] >= 0 || vsid[b] >= 0 || vsid[c] >= 0) {
+      const cx = (pos[3 * a] + pos[3 * b] + pos[3 * c]) / 3, cy = (pos[3 * a + 1] + pos[3 * b + 1] + pos[3 * c + 1]) / 3, cz = (pos[3 * a + 2] + pos[3 * b + 2] + pos[3 * c + 2]) / 3;
+      let nx = nrm[3 * a] + nrm[3 * b] + nrm[3 * c], ny = nrm[3 * a + 1] + nrm[3 * b + 1] + nrm[3 * c + 1], nz = nrm[3 * a + 2] + nrm[3 * b + 2] + nrm[3 * c + 2];
+      const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+      field.at(cx - nx * 0.04, cy - ny * 0.04, cz - nz * 0.04, out); samples++;
+      m = out.mat + (out.curved ? 8 : 0); base = out.sid >= 0 ? field.structures[out.sid].base : 0;
+      field.at(cx + nx * 0.06, cy + ny * 0.06, cz + nz * 0.06, out); samples++;
+      tag = (m & 7) === MAT.lamp ? 4 : out.room >= 0 ? 3 : (m & 7) === MAT.street ? 2 : (m & 7) > 0 ? 1 : 0;
+    }
+    let chosen = null;
+    for (const [p, q, r] of [[a, b, c], [b, c, a], [c, a, b]]) if (vmat[r] === m && vtag[r] === tag && vbase[r] === base) { chosen = [p, q, r]; break; }
+    if (!chosen) for (const [p, q, r] of [[a, b, c], [b, c, a], [c, a, b]]) if (vmat[r] === -1) { vmat[r] = m; vtag[r] = tag; vbase[r] = base; chosen = [p, q, r]; break; }
+    if (!chosen) {
+      const r = pos.length / 3;
+      pos.push(pos[3 * c], pos[3 * c + 1], pos[3 * c + 2]); nrm.push(nrm[3 * c], nrm[3 * c + 1], nrm[3 * c + 2]);
+      vmat.push(m); vtag.push(tag); vbase.push(base); split++;
+      chosen = [a, b, r];
+    }
+    idx.push(chosen[0], chosen[1], chosen[2]);
   }
-  return boxes;
+  for (let i = 0; i < vmat.length; i++) if (vmat[i] < 0) vmat[i] = 0;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  geo.setAttribute('tag', new THREE.Float32BufferAttribute(vtag, 1));
+  geo.setAttribute('mat', new THREE.Float32BufferAttribute(vmat, 1));
+  geo.setAttribute('base', new THREE.Float32BufferAttribute(vbase, 1));
+  geo.setIndex(idx);
+  return { geometry: geo, triangles: idx.length / 3, vertices: pos.length / 3, samples, cells: cellKeys.length, split };
 }
 
-// Merge boxes into one geometry per material, in world space, with UVs in
-// metres so the concrete's pour lines are the same size on every panel.
-function mergeBoxes(list) {
-  const out = {};
-  for (const { mat, matrix, size } of list) {
-    const g = new THREE.BoxGeometry(size[0], size[1], size[2]);
-    const uv = g.attributes.uv;
-    const dims = [[size[2], size[1]], [size[2], size[1]], [size[0], size[2]], [size[0], size[2]], [size[0], size[1]], [size[0], size[1]]];
-    for (let f = 0; f < 6; f++) for (let v = f * 4; v < f * 4 + 4; v++) uv.setXY(v, uv.getX(v) * dims[f][0] / 3, uv.getY(v) * dims[f][1] / 3);
-    g.applyMatrix4(matrix);
-    (out[mat] = out[mat] || []).push(g);
+// The join between the lattices, measured: a fine vertex on a coarse cell
+// face whose other side is coarse lies on the fine surface, and the coarse
+// surface there is where the bilinear interpolation of the face's four
+// coarse samples is nought, so that value at the vertex is the gap between
+// the two surfaces in metres, the field being a distance near its surface.
+// The coarse triangle is a chord of that zero set, so the crack a pixel
+// sees is this plus the chord's sag, which on level ground is nothing.
+const coarseAt = new Map();
+function measureSeam(field, seam, fi, fj, fk, axis, t) {
+  const { corner, cell, n } = field;
+  const f = [fi, fj, fk]; f[axis] += t;
+  for (let a = 0; a < 3; a++) {
+    if (a === axis || f[a] % SUB !== 0) continue;
+    const I = Math.round(f[a] / SUB);
+    const c = [Math.floor(f[0] / SUB), Math.floor(f[1] / SUB), Math.floor(f[2] / SUB)];
+    // The coarse cell on the far side of this face: unmasked means a join.
+    const far = c.slice(); far[a] = I - 1; const near = c.slice(); near[a] = I;
+    const inside = (q) => q.every((v) => v >= 0 && v < n);
+    const masked = (q) => inside(q) && field.mask[field.key(q[0], q[1], q[2])];
+    if (masked(far) && masked(near)) continue;
+    if (!inside(far) && !inside(near)) continue;
+    const u = a === 0 ? 1 : 0, v = a === 2 ? 1 : 2;
+    const fu = f[u] / SUB - Math.floor(f[u] / SUB), fv = f[v] / SUB - Math.floor(f[v] / SUB);
+    const base = [Math.floor(f[0] / SUB), Math.floor(f[1] / SUB), Math.floor(f[2] / SUB)]; base[a] = I;
+    const val = (du, dv) => {
+      const q = base.slice(); q[u] += du; q[v] += dv;
+      const key = (q[2] * (n + 1) + q[1]) * (n + 1) + q[0];
+      let d = coarseAt.get(key);
+      if (d === undefined) { d = field.planet.at(corner + q[0] * cell, corner + q[1] * cell, corner + q[2] * cell); coarseAt.set(key, d); }
+      return d;
+    };
+    const gap = Math.abs((1 - fu) * (1 - fv) * val(0, 0) + fu * (1 - fv) * val(1, 0) + (1 - fu) * fv * val(0, 1) + fu * fv * val(1, 1));
+    seam.count++; seam.sum += gap; seam.max = Math.max(seam.max, gap);
   }
-  const merged = {};
-  for (const [mat, gs] of Object.entries(out)) {
-    let nv = 0, ni = 0;
-    for (const g of gs) { nv += g.attributes.position.count; ni += g.index.count; }
-    const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = new Uint32Array(ni);
-    let vo = 0, io = 0;
-    for (const g of gs) {
-      pos.set(g.attributes.position.array, vo * 3); nrm.set(g.attributes.normal.array, vo * 3); uv.set(g.attributes.uv.array, vo * 2);
-      for (let i = 0; i < g.index.count; i++) idx[io + i] = g.index.array[i] + vo;
-      vo += g.attributes.position.count; io += g.index.count;
-    }
-    const m = new THREE.BufferGeometry();
-    m.setAttribute('position', new THREE.BufferAttribute(pos, 3)); m.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-    m.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); m.setIndex(new THREE.BufferAttribute(idx, 1));
-    merged[mat] = m;
-  }
-  return merged;
 }
 
-// Every town's buildings and streets as world geometry, every box of every
-// building as a collider in its lot's frame (x east, y up, z south), and a
-// lamp's position per storey for the lights.
-function buildTowns(planet, towns, seed) {
-  const list = [], colliders = [], lamps = [];
-  let id = 0, count = 0;
+// ------------------------------------------------------------- the towns --
+// A lot picks a recipe off its hash and takes the recipe's footprint and a
+// storey count in the recipe's range; the port's first tall lot is always a
+// house, so a visitor and the harness find a flight where they expect one.
+const RECIPES = Object.keys(BUILDINGS);
+function assignRecipes(towns, seed) {
+  let id = 0;
   for (const town of towns) {
+    let tall = false;
     for (const lot of town.lots) {
       lot.id = id++;
-      const f = lotFrame(planet, town, lot.x, lot.z);
-      // x east, y up, z SOUTH: east cross up is south, and a right handed
-      // frame is what keeps a box's faces winding outward. The first cut
-      // used north and every building drew inside out, black but for its
-      // windows.
-      const south = f.north.clone().negate();
-      const m = new THREE.Matrix4().makeBasis(f.east, f.up, south).setPosition(f.dir.clone().multiplyScalar(f.base));
-      const boxes = [];
-      for (const b of kit(lot, seed)) {
-        const local = new THREE.Matrix4().makeRotationZ(b.ry).setPosition(b.pos[0], b.pos[1], b.pos[2]);
-        list.push({ mat: b.mat, size: b.size, matrix: m.clone().multiply(local) });
-        if (b.kind === 'lamp') lamps.push({ town, pos: new THREE.Vector3(b.pos[0], b.pos[1] - 0.3, b.pos[2]).applyMatrix4(m) });
-        else if (b.kind !== 'deco') boxes.push({ kind: b.kind, x: b.pos[0], y: b.pos[1], z: b.pos[2], hw: Math.abs(Math.cos(b.ry)) * b.size[0] / 2 + Math.abs(Math.sin(b.ry)) * b.size[1] / 2, hh: Math.abs(Math.cos(b.ry)) * b.size[1] / 2 + Math.abs(Math.sin(b.ry)) * b.size[0] / 2, hd: b.size[2] / 2 });
-      }
-      colliders.push({ id: lot.id, dir: f.dir, east: f.east, south, base: f.base, hw: lot.w / 2 + 1.2, hd: lot.d / 2 + 1.2, boxes });
-      count++;
-    }
-    // A street is laid in short pieces, each on its own patch of the sphere:
-    // one straight bar the length of the town is a CHORD, and on a planet
-    // this small a 56 m chord sags six metres at its ends, so the first cut's
-    // streets hung out past the horizon while every building, placed on its
-    // own patch, sat down. On a thousand kilometre world the same chord sags
-    // under a millimetre; the mockup's planet is what makes the rule visible.
-    const PIECE = 3.5;
-    for (const st of town.streets) {
-      const along = st.along === 'north' ? st.d : st.w;
-      const n = Math.ceil(along / PIECE);
-      for (let i = 0; i < n; i++) {
-        const off = (i + 0.5) * along / n - along / 2;
-        const x = st.along === 'north' ? st.x : st.x + off, z = st.along === 'north' ? st.z + off : st.z;
-        if (Math.hypot(x, z) > town.radius + 3) continue;
-        const f = lotFrame(planet, town, x, z);
-        const m = new THREE.Matrix4().makeBasis(f.east, f.up, f.north.clone().negate()).setPosition(f.dir.clone().multiplyScalar(f.base));
-        const size = st.along === 'north' ? [st.w, 0.12, along / n + 0.05] : [along / n + 0.05, 0.12, st.d];
-        list.push({ mat: 'street', size, matrix: m.clone().multiply(new THREE.Matrix4().setPosition(0, 0.06, 0)) });
-      }
+      let name = RECIPES[Math.floor(hash3(lot.id, 3, 3, seed) * RECIPES.length) % RECIPES.length];
+      if (town === towns[0] && !tall && lot.storeys >= 3) { name = 'house'; tall = true; }
+      const r = BUILDINGS[name];
+      lot.recipe = name; lot.w = r.footprint[0]; lot.d = r.footprint[1];
+      lot.storeys = clamp(lot.storeys, r.storeys[0], r.storeys[1]); lot.door = r.door || 0;
     }
   }
-  return { geometries: mergeBoxes(list), colliders, lamps, buildings: count };
+}
+
+// Every structure into a fresh field: the buildings, the streets in pieces,
+// then the sculpted edits in the order they were made.
+function buildField(planet, towns, corner, cell, n, edits, seed) {
+  const field = new Field(planet, corner, cell, n);
+  const warnings = new Set();
+  towns.forEach((town, ti) => {
+    for (const lot of town.lots) {
+      const compiled = compile(BUILDINGS[lot.recipe], lot.storeys, seed, (i, sd) => hash3(lot.id, i, 7, sd));
+      for (const w of compiled.warnings) warnings.add(`${lot.recipe}: ${w}`);
+      field.place(compiled, lotFrame(planet, town, lot.x, lot.z), 'building', { town: ti, lot, name: lot.recipe });
+    }
+    for (const st of town.streets) {
+      const along = st.along === 'north' ? st.d : st.w, count = Math.ceil(along / PIECE);
+      for (let i = 0; i < count; i++) {
+        const off = (i + 0.5) * along / count - along / 2;
+        const x = st.along === 'north' ? st.x : st.x + off, z = st.along === 'north' ? st.z + off : st.z;
+        if (Math.hypot(x, z) > town.radius + 3) continue;
+        const size = st.along === 'north' ? [st.w, along / count + 0.05, 0.64] : [along / count + 0.05, st.d, 0.64];
+        field.place(single({ op: 'add', shape: 'box', at: [0, 0, -0.2], size }, 'street'), lotFrame(planet, town, x, z), 'street', { town: ti });
+      }
+    }
+  });
+  for (const ed of edits) {
+    const brush = { op: ed.op, shape: ed.shape, at: [0, 0, ed.u], size: ed.size.slice() };
+    if (ed.pitch) brush.pitch = ed.pitch;
+    const s = field.place(single(brush, ed.mat), lotFrame(planet, towns[ed.town], ed.e, ed.n), 'edit', { town: ed.town, edit: ed });
+    ed.cells = s.cells;
+  }
+  for (const w of warnings) console.warn('kit:', w);
+  return field;
 }
 
 const canvas = document.getElementById('c');
-const { renderer, scene, camera, controls, sun } = makeScene(canvas);
-// The sun casts shadows over the port, which is what makes the inside of a
-// building dark: a room is a room because the walls are between it and the
-// sky. The shadow camera is fitted to the port and nothing else, because a
-// map that covered the planet would have no pixels left for a doorway.
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
-const sunTarget = new THREE.Object3D(); scene.add(sunTarget); sun.target = sunTarget;
+const { renderer, scene, camera, controls } = makeScene(canvas);
 const material = await terrainMaterial(renderer);
-const materials = {
-  concrete: dressed(material.textures, 'concrete'),
-  trim: dressed(material.textures, 'concrete', { color: 0x9a9a96 }),
-  roof: dressed(material.textures, 'hull_plate', { color: 0x777a7c }),
-  street: dressed(material.textures, 'concrete', { color: 0x4a4b4a }),
-  glass: new THREE.MeshStandardMaterial({ color: 0x0b1319, roughness: 0.15, metalness: 0.7 }),
-  lit: new THREE.MeshStandardMaterial({ color: 0x1a1a14, roughness: 0.2, metalness: 0.2, emissive: 0xffc070, emissiveIntensity: 1.5 }),
-  lamp: lampMaterial(),
-};
-let seed = PLANET.seed, planet = null, towns = null, colliders = [];
-let meshes = [], lights = [], stats = {};
+let seed = PLANET.seed, planet = null, towns = null, field = null;
+let coarse = null, chunks = new Map(), stats = {}, edits = [], lattice = null;
 const sea = makeSea(new Planet(PLANET)); scene.add(sea);
 
-// On foot the ground is the field's own first crossing, or the highest
-// floor, step or roof of a building no more than a step above the feet;
-// the ceiling is the lowest box above the feet; and a wall is any box
-// between knee and head, which the body is pushed out of along the face it
-// came in least by, so it slides. A step is a wall from the front and a
-// floor from above, which is what a step is.
-const SPAN = 30;   // metres round a lot inside which its boxes are looked at
-function near(to, foot) {
-  const R = planet.radius, out = [];
-  for (const c of colliders) {
-    if (c.dir.dot(to) < Math.cos(SPAN / R)) continue;
-    const rel = to.clone().sub(c.dir).multiplyScalar(R);
-    const x = rel.dot(c.east), z = rel.dot(c.south);
-    if (Math.abs(x) > c.hw || Math.abs(z) > c.hd) continue;
-    out.push({ c, x, z, y: foot - c.base });
-  }
-  return out;
+// ------------------------------------------------------------- on foot --
+// The walker walks the FIELD, buildings and all: the ground is the first
+// solid under the feet going down from a step above them, the ceiling the
+// first solid going up, and a wall is any solid a ring of points round the
+// body meets between its step and its head, pushed out of along the
+// field's own gradient, sideways only, because up and down are the other
+// two rules' business. There is no list of colliders to keep in step with
+// the picture, because the picture is the collider.
+const q = { d: 0, mat: 0, room: -1, sid: -1 }, g3 = [0, 0, 0];
+const solidAt = (dir, r) => field.at(dir.x * r, dir.y * r, dir.z * r, q).d > 0;
+function bisect(dir, lo, hi) {   // solid at lo, air at hi
+  for (let i = 0; i < 7; i++) { const m = (lo + hi) * 0.5; if (solidAt(dir, m)) lo = m; else hi = m; }
+  return (lo + hi) * 0.5;
 }
 const walker = new Walker(camera, canvas, new Planet(PLANET), {
   ground: (dir, w) => {
-    let best = surfaceRadius(planet, dir);
-    for (const { c, x, z } of near(dir, w.foot)) {
-      for (const b of c.boxes) {
-        if (b.kind === 'wall' || Math.abs(x - b.x) > b.hw || Math.abs(z - b.z) > b.hd) continue;
-        const top = c.base + b.y + b.hh;
-        if (top <= w.foot + w.step + 0.01 && top > best) best = top;
-      }
+    const known = Number.isFinite(w.foot);
+    const top = planet.radius + planet.relief * 0.6 + planet.overhang + 30;
+    const floor = planet.radius - planet.relief * 0.6 - planet.overhang - 6;
+    let r = known ? w.foot + w.step + 0.01 : top;
+    const step = known ? 0.1 : 0.5;
+    if (solidAt(dir, r)) {
+      // Something is where the step would be: its top is the ground, if it is under a head.
+      let hi = r;
+      for (let i = 0; i < 40 && solidAt(dir, hi); i++) hi += 0.1;
+      return bisect(dir, hi - 0.1, hi);
     }
-    return best;
+    let prev = r;
+    for (r -= step; r > floor; r -= step) { if (solidAt(dir, r)) return bisect(dir, r, prev); prev = r; }
+    return floor;
   },
   ceiling: (dir, w) => {
-    let ceil = Infinity;
-    for (const { c, x, z } of near(dir, w.foot)) {
-      for (const b of c.boxes) {
-        if (Math.abs(x - b.x) > b.hw || Math.abs(z - b.z) > b.hd) continue;
-        const bottom = c.base + b.y - b.hh;
-        if (bottom > w.foot + 0.2 && bottom < ceil) ceil = bottom;
-      }
-    }
-    return ceil;
+    let r = w.foot + 0.25;
+    for (let i = 0; i < 24; i++) { r += 0.15; if (solidAt(dir, r)) return r - 0.075; }
+    return Infinity;
   },
   resolve: (to, footTop, w) => {
     const R = planet.radius;
-    let d = to.clone();
-    for (let pass = 0; pass < 2; pass++) {
-      for (const { c, x, z } of near(d, w.foot)) {
-        for (const b of c.boxes) {
-          const bottom = c.base + b.y - b.hh, top = c.base + b.y + b.hh;
-          // The same centimetre of slack the ground query gives: two risers
-          // are exactly a step, and without it the second step up was a
-          // wall on the frames the sum rounded up.
-          if (top <= footTop + 0.01 || bottom >= w.foot + w.head) continue;
-          const px = b.hw + w.radius - Math.abs(x - b.x), pz = b.hd + w.radius - Math.abs(z - b.z);
-          if (px <= 0 || pz <= 0) continue;
-          if (px < pz) d.addScaledVector(c.east, Math.sign(x - b.x || 1) * px / R); else d.addScaledVector(c.south, Math.sign(z - b.z || 1) * pz / R);
-          d.normalize();
-        }
+    const d = to.clone();
+    const heights = [w.foot + w.step + 0.08, w.foot + 1.1, w.foot + w.head - 0.08];
+    const push = new THREE.Vector3();
+    for (let pass = 0; pass < 3; pass++) {
+      const pole = Math.abs(d.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+      const e = new THREE.Vector3().crossVectors(pole, d).normalize(), nn = new THREE.Vector3().crossVectors(d, e).normalize();
+      let pushed = false;
+      for (const h of heights) for (let a = 0; a < 12; a++) {
+        const ang = a * Math.PI / 6, sx = Math.cos(ang) * w.radius, sy = Math.sin(ang) * w.radius;
+        const px = d.x * h + e.x * sx + nn.x * sy, py = d.y * h + e.y * sx + nn.y * sy, pz = d.z * h + e.z * sx + nn.z * sy;
+        if (field.at(px, py, pz, q).d <= 0) continue;
+        field.gradient(px, py, pz, 0.04, g3);
+        const len = Math.hypot(g3[0], g3[1], g3[2]);
+        if (len < 1e-6) continue;
+        // The gradient is a difference over twice the step; the field is a
+        // distance where it matters, so the way out is the density over
+        // the slope, plus a little.
+        const out = q.d / (len / 0.08) + 0.02;
+        push.set(-g3[0], -g3[1], -g3[2]).divideScalar(len);
+        push.addScaledVector(d, -push.dot(d));                 // sideways only
+        if (push.length() < 0.25) continue;                    // a floor or a ceiling is not a wall
+        if (window.__mock && window.__mock.resolveLog) window.__mock.resolveLog.push({ h: +(h - w.foot).toFixed(2), a, d: +q.d.toFixed(3), mat: q.mat, sid: q.sid, out: +out.toFixed(3), x: px, y: py, z: pz });
+        d.addScaledVector(push, out / R).normalize();
+        pushed = true;
       }
+      if (!pushed) break;
     }
     return d;
   },
   where: (dir, w) => {
-    for (const { c, x, z } of near(dir, w.foot)) {
-      if (Math.abs(x) < c.hw - 1.2 && Math.abs(z) < c.hd - 1.2) return `inside building ${c.id + 1}, floor ${Math.max(0, Math.round((w.foot - c.base - SLAB) / STOREY))}`;
+    const r = w.foot + 0.9;
+    field.at(dir.x * r, dir.y * r, dir.z * r, q);
+    if (q.room >= 0) {
+      const s = field.structures.find((st) => st.kind === 'building' && q.room >= st.roomBase && q.room < st.roomBase + st.rooms.length);
+      if (s) return `inside the ${s.name} (building ${s.lot.id + 1}), floor ${Math.max(0, Math.round((w.foot - s.base) / s.compiled.storey))}`;
     }
-    return 'outside';
+    const rg = w.foot - 0.05;
+    field.at(dir.x * rg, dir.y * rg, dir.z * rg, q);
+    return q.mat === MAT.street ? 'on a street' : q.mat > 0 ? `on ${MAT_NAMES[q.mat]}` : 'outside';
   },
 });
 
+// ---------------------------------------------------------------- sculpt --
+// On foot, B: a brush at the point the crosshair meets the field, snapped to
+// half a metre in the town's frame, placed plumb on its own patch of the
+// sphere. Left button adds it, right button cuts it, Z takes the last one
+// back, and the edits are a list a page can export, because a sculpted town
+// is a recipe somebody has not written down yet.
+const SHAPES = [
+  { name: 'block', shape: 'box', size: [1, 1, 1] }, { name: 'slab', shape: 'box', size: [2, 2, 0.5] },
+  { name: 'pillar', shape: 'box', size: [0.5, 0.5, 3] }, { name: 'ball', shape: 'sphere', size: [1.2, 1.2, 1.2] },
+  { name: 'ramp', shape: 'box', size: [1.4, 1.6, 0.4], pitch: 30 },
+];
+const SCULPT_MATS = ['concrete', 'plate', 'glass', 'lamp'];
+const sculpt = { on: false, shape: 0, mat: 0 };
+const ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x7fd7ff, wireframe: true, depthTest: false }));
+ghost.visible = false; ghost.matrixAutoUpdate = false; scene.add(ghost);
+let aimed = null;
+function townOf(dir) { let best = 0, bd = -2; towns.forEach((t, i) => { const d = t.dir.dot(dir); if (d > bd) { bd = d; best = i; } }); return best; }
+// Where the crosshair meets the field: a march along the look ray, then the
+// field's gradient there for the face.
+function aim() {
+  const o = camera.position, dir = camera.getWorldDirection(new THREE.Vector3());
+  let prev = 0.3;
+  for (let t = 0.4; t < 7; t += 0.08) {
+    if (field.at(o.x + dir.x * t, o.y + dir.y * t, o.z + dir.z * t, q).d > 0) {
+      let lo = prev, hi = t;
+      for (let i = 0; i < 6; i++) { const m = (lo + hi) / 2; if (field.at(o.x + dir.x * m, o.y + dir.y * m, o.z + dir.z * m, q).d > 0) hi = m; else lo = m; }
+      const p = o.clone().addScaledVector(dir, (lo + hi) / 2);
+      field.gradient(p.x, p.y, p.z, 0.04, g3);
+      const normal = new THREE.Vector3(-g3[0], -g3[1], -g3[2]).normalize();
+      return { p, normal };
+    }
+    prev = t;
+  }
+  return null;
+}
+// The brush a click would make: snapped, in the town frame, with its frame.
+function proposal(cut) {
+  const hit = aim(); if (!hit) return null;
+  const sh = SHAPES[sculpt.shape], half = [sh.size[0] / 2, sh.size[1] / 2, sh.size[2] / 2];
+  const ti = townOf(hit.p.clone().normalize()), town = towns[ti], R = planet.radius;
+  const reach = Math.abs(hit.normal.dot(town.dir)) > 0.7 ? half[2] : Math.max(half[0], half[1]);
+  const c = hit.p.clone().addScaledVector(hit.normal, cut ? -(reach - 0.05) : reach + 0.02);
+  const dir = c.clone().normalize(), rel = dir.clone().sub(town.dir).multiplyScalar(R);
+  const e = Math.round(rel.dot(town.east) * 2) / 2, n = Math.round(rel.dot(town.north) * 2) / 2;
+  const u = Math.round((c.length() - (R + town.h)) * 2) / 2;
+  return { town: ti, e, n, u, shape: sh.shape, size: sh.size.slice(), pitch: sh.pitch || 0, mat: SCULPT_MATS[sculpt.mat], op: cut ? 'cut' : 'add' };
+}
+function showGhost() {
+  aimed = sculpt.on && walker.active ? proposal(false) : null;
+  ghost.visible = !!aimed;
+  if (!aimed) return;
+  const f = lotFrame(planet, towns[aimed.town], aimed.e, aimed.n);
+  const m = new THREE.Matrix4().makeBasis(f.east, f.north, f.dir).setPosition(f.dir.clone().multiplyScalar(f.base + aimed.u));
+  if (aimed.pitch) m.multiply(new THREE.Matrix4().makeRotationX(aimed.pitch * Math.PI / 180));
+  ghost.matrix.copy(m).scale(new THREE.Vector3(aimed.size[0], aimed.size[1], aimed.size[2]));
+}
+function applyEdit(ed) {
+  edits.push(ed);
+  remarch(() => ed.cells);
+  sayBuild();
+}
+function sayBuild() {
+  const el = document.getElementById('buildstat');
+  el.hidden = !sculpt.on;
+  el.textContent = sculpt.on ? ` | BUILD ${SHAPES[sculpt.shape].name} of ${SCULPT_MATS[sculpt.mat]}: LMB add, RMB cut, [ ] shape, , . material, Z undo (${edits.length} edits)` : '';
+}
+document.addEventListener('keydown', (ev) => {
+  if (!walker.active) return;
+  if (ev.code === 'KeyB') { sculpt.on = !sculpt.on; sayBuild(); }
+  if (!sculpt.on) return;
+  if (ev.code === 'BracketRight') sculpt.shape = (sculpt.shape + 1) % SHAPES.length;
+  if (ev.code === 'BracketLeft') sculpt.shape = (sculpt.shape + SHAPES.length - 1) % SHAPES.length;
+  if (ev.code === 'Period') sculpt.mat = (sculpt.mat + 1) % SCULPT_MATS.length;
+  if (ev.code === 'Comma') sculpt.mat = (sculpt.mat + SCULPT_MATS.length - 1) % SCULPT_MATS.length;
+  if (ev.code === 'KeyZ' && edits.length) { const last = edits.pop(); remarch(() => last.cells); }
+  sayBuild();
+});
+canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+canvas.addEventListener('mousedown', (ev) => {
+  if (!walker.active || !sculpt.on || document.pointerLockElement !== canvas) return;
+  const ed = proposal(ev.button === 2);
+  if (ed) applyEdit(ed);
+});
+document.getElementById('export').addEventListener('click', () => {
+  const ta = document.getElementById('edits'); ta.hidden = false; ta.value = JSON.stringify(edits); ta.select();
+});
+
+// ---------------------------------------------------------------- build --
+const chunkOf = (key) => { const n = lattice.n, cn = Math.ceil(n / CH); const i = key % n, j = Math.floor(key / n) % n, k = Math.floor(key / (n * n)); return ((k >> 2) * cn + (j >> 2)) * cn + (i >> 2); };
+// Every chunk that has a fine cell in it, with its cells.
+function chunkCells() {
+  const cc = new Map();
+  for (const st of field.structures) for (const key of st.cells) {
+    const ck = chunkOf(key);
+    let set = cc.get(ck); if (!set) { set = new Set(); cc.set(ck, set); }
+    set.add(key);
+  }
+  return cc;
+}
+function buildChunk(ck, cells) {
+  const t0 = performance.now();
+  const built = marchFine(field, [...cells], stats.seam);
+  built.ms = performance.now() - t0;
+  const m = new THREE.Mesh(built.geometry, material);
+  m.userData = { chunk: ck, built };
+  return m;
+}
+function dropChunk(ck) {
+  const old = chunks.get(ck);
+  if (old) { scene.remove(old); old.geometry.dispose(); chunks.delete(ck); }
+}
+function buildCoarse() {
+  const { n, cell, half } = lattice;
+  const t0 = performance.now();
+  const built = march(planet, -half, cell, n, (i, j, k) => field.mask[field.key(i, j, k)]);
+  built.ms = performance.now() - t0;
+  if (coarse) { scene.remove(coarse); coarse.geometry.dispose(); }
+  coarse = new THREE.Mesh(built.geometry, material);
+  coarse.userData = { built };
+  scene.add(coarse);
+}
+function setLamps() {
+  const lamps = [];
+  for (const s of field.structures) lamps.push(...s.lamps);
+  material.setLamps(lamps);
+  stats.lamps = lamps.length;
+}
+function tally() {
+  const fine = [...chunks.values()].map((m) => m.userData.built);
+  stats.coarse = coarse.userData.built;
+  stats.structures = field.structures.length;
+  stats.buildings = field.structures.filter((s) => s.kind === 'building').length;
+  stats.chunks = chunks.size;
+  stats.fineCells = fine.reduce((a, b) => a + b.cells, 0);
+  stats.fineTris = fine.reduce((a, b) => a + b.triangles, 0);
+  stats.fineSamples = fine.reduce((a, b) => a + b.samples, 0);
+}
+// After an edit: the field again, the coarse mesh again only if the set of
+// fine cells moved, and only the chunks whose field changed remarched.
+function remarch(cellsOf) {
+  const before = field.mask;
+  const t0 = performance.now();
+  field = buildField(planet, towns, -lattice.half, lattice.cell, lattice.n, edits, seed);
+  const dirty = new Set((cellsOf() || []).map(chunkOf));
+  let moved = false;
+  for (let i = 0; i < before.length; i++) if (field.mask[i] !== before[i]) { moved = true; dirty.add(chunkOf(i)); }
+  if (moved) buildCoarse();
+  const cc = chunkCells();
+  for (const ck of dirty) { dropChunk(ck); const cells = cc.get(ck); if (cells) { const m = buildChunk(ck, cells); chunks.set(ck, m); scene.add(m); } }
+  setLamps(); tally();
+  stats.tEdit = performance.now() - t0; stats.dirty = dirty.size;
+  say();
+}
 function rebuild() {
   const busy = document.getElementById('busy'); busy.hidden = false;
   requestAnimationFrame(() => setTimeout(() => {
     planet = new Planet({ ...PLANET, seed });
     walker.planet = planet;
+    SUB = parseInt(document.getElementById('sub').value, 10);
     const t0 = performance.now();
     towns = planTowns(planet, 3, seed);
-    const tTowns = performance.now() - t0;
+    assignRecipes(towns, seed);
     const n = parseInt(document.getElementById('res').value, 10);
     const half = PLANET.radius + PLANET.relief * 0.5 + PLANET.overhang + 2;
-    const cell = (2 * half) / n;
+    lattice = { n, cell: (2 * half) / n, half };
+    field = buildField(planet, towns, -half, lattice.cell, n, edits, seed);
+    stats = { n, cell: lattice.cell, tPlan: performance.now() - t0, seam: { count: 0, sum: 0, max: 0 }, tEdit: 0 };
+    coarseAt.clear();
+    for (const ck of [...chunks.keys()]) dropChunk(ck);
+    buildCoarse();
     const t1 = performance.now();
-    const built = march(planet, -half, cell, n);
-    const tMarch = performance.now() - t1;
-    const t2 = performance.now();
-    const city = buildTowns(planet, towns, seed);
-    colliders = city.colliders;
-    const tCity = performance.now() - t2;
-    for (const m of meshes) { scene.remove(m); m.geometry.dispose(); }
-    for (const l of lights) scene.remove(l);
-    meshes = [new THREE.Mesh(built.geometry, material)];
-    let cityTris = 0;
-    for (const [mat, g] of Object.entries(city.geometries)) {
-      const m = new THREE.Mesh(g, materials[mat]);
-      if (mat !== 'lamp' && mat !== 'glass' && mat !== 'lit') { m.castShadow = true; m.receiveShadow = true; }
-      meshes.push(m); cityTris += g.index.count / 3;
-    }
-    for (const m of meshes) scene.add(m);
-    // A point light per lamp in the PORT: a standard material pays for every
-    // light in every fragment, so the other towns keep their glowing lamps
-    // and no light, and the port is where the walker starts.
-    lights = city.lamps.filter((l) => l.town === towns[0]).map((l) => { const p = new THREE.PointLight(0xffcf9a, 14, 9, 2); p.position.copy(l.pos); return p; });
-    for (const l of lights) scene.add(l);
-    const port = towns[0], centre = port.dir.clone().multiplyScalar(planet.radius + port.h);
-    sunTarget.position.copy(centre);
-    sun.position.copy(centre).addScaledVector(sun.position.clone().normalize(), 220);
-    const sc = sun.shadow.camera; sc.left = -44; sc.right = 44; sc.top = 44; sc.bottom = -44; sc.near = 100; sc.far = 340; sc.updateProjectionMatrix();
-    stats = { n, cell, tMarch, tCity, tTowns, cityTris, buildings: city.buildings, lights: lights.length, lamps: city.lamps.length, ...built };
+    for (const [ck, cells] of chunkCells()) { const m = buildChunk(ck, cells); chunks.set(ck, m); scene.add(m); }
+    stats.fineMs = performance.now() - t1;
+    setLamps(); tally();
     busy.hidden = true;
     say();
   }, 20));
 }
 
 function say() {
+  const recipes = {};
+  for (const s of field.structures) if (s.kind === 'building') recipes[s.name] = (recipes[s.name] || 0) + 1;
   hud(document.getElementById('hud'), [
-    ['seed', seed], ['lattice', `${stats.n}³ cells of ${stats.cell.toFixed(2)} m`],
-    ['terrain', `${fmt(stats.triangles)} triangles, ${stats.tMarch.toFixed(0)} ms`],
-    ['towns', `${towns.length}, ${stats.buildings} buildings, ${fmt(stats.cityTris)} triangles`],
-    ['inside', `${stats.lamps} lamps, ${stats.lights} of them lights, sun shadows over the port`],
-    ['planned in', `${stats.tTowns.toFixed(0)} ms, built in ${stats.tCity.toFixed(0)} ms`],
+    ['seed', seed], ['lattice', `${stats.n}³ cells of ${stats.cell.toFixed(2)} m, then ${(stats.cell / SUB).toFixed(2)} m under the towns`],
+    ['terrain', `${fmt(stats.coarse.triangles)} triangles, ${stats.coarse.ms.toFixed(0)} ms, ${fmt(stats.coarse.skipped)} cells left to the towns`],
+    ['towns', `${towns.length}, ${stats.buildings} buildings: ${Object.entries(recipes).map(([k, v]) => `${v} ${k}`).join(', ')}`],
+    ['field', `${stats.structures} structures in ${fmt(stats.fineCells)} fine cells over ${stats.chunks} chunks, ${fmt(stats.fineSamples)} samples, ${fmt(stats.fineTris)} triangles, ${stats.fineMs.toFixed(0)} ms`],
+    ['seam', stats.seam.count ? `${fmt(stats.seam.count)} vertices on the join, gap ${(stats.seam.sum / stats.seam.count * 1000).toFixed(1)} mm mean, ${(stats.seam.max * 1000).toFixed(0)} mm max` : 'none'],
+    ['lamps', `${stats.lamps}, lighting every face tagged inside`],
+    ['edits', `${edits.length}${stats.tEdit ? `, the last remarched ${stats.dirty} chunk${stats.dirty === 1 ? '' : 's'} in ${stats.tEdit.toFixed(0)} ms` : ''}`],
     ['textures', material.hasTextures ? 'Material Maker bakes' : 'not found, flat colours'],
   ]);
 }
@@ -431,6 +660,7 @@ function walkMode(onFoot) {
   document.getElementById('cross').hidden = !onFoot; document.getElementById('walkhud').hidden = !onFoot;
   mark('walk', onFoot); mark('orbit', !onFoot);
   controls.enabled = !onFoot;
+  if (!onFoot) { sculpt.on = false; ghost.visible = false; sayBuild(); }
 }
 on('orbit', () => { walker.exit(); walkMode(false); viewOrbit(controls, camera); });
 on('walk', () => {
@@ -441,18 +671,21 @@ on('walk', () => {
   walkMode(true);
 });
 on('tex', () => { const v = material.uniforms.uTextured.value > 0.5 ? 0 : 1; material.uniforms.uTextured.value = material.hasTextures ? v : 0; mark('tex', material.uniforms.uTextured.value > 0.5); });
-on('wire', () => { material.wireframe = !material.wireframe; for (const m of Object.values(materials)) m.wireframe = material.wireframe; mark('wire', material.wireframe); });
-on('reseed', () => { seed = (seed * 1103515245 + 12345) >>> 0; rebuild(); });
+on('wire', () => { material.wireframe = !material.wireframe; mark('wire', material.wireframe); });
+on('reseed', () => { seed = (seed * 1103515245 + 12345) >>> 0; edits = []; rebuild(); });
 document.getElementById('res').addEventListener('change', rebuild);
+document.getElementById('sub').addEventListener('change', rebuild);
 mark('tex', material.hasTextures);
 
 rebuild();
 let last = performance.now();
 renderer.setAnimationLoop((now) => {
   const dt = (now - last) / 1000; last = now;
-  if (walker.active) { walker.update(dt); document.getElementById('walkstat').textContent = walker.stat; } else controls.update();
+  if (walker.active) { walker.update(dt); document.getElementById('walkstat').textContent = walker.stat; showGhost(); } else controls.update();
   renderer.render(scene, camera);
 });
-// For a harness that wants one frame rather than a loop (the screenshots in docs/img).
-window.__mock = { renderer, scene, camera, controls, walker, get towns() { return towns; }, get planet() { return planet; }, lotFrame, walkMode };
+// For a harness that wants one frame rather than a loop (the screenshots in
+// docs/img), and to sculpt without a mouse.
+window.__mock = { renderer, scene, camera, controls, walker, get towns() { return towns; }, get planet() { return planet; }, get field() { return field; },
+  get edits() { return edits; }, get stats() { return stats; }, lotFrame, walkMode, aim, proposal, sculpt: (ed) => applyEdit(ed), undo: () => { const last = edits.pop(); if (last) remarch(() => last.cells); }, sculptState: sculpt, SHAPES, MAT };
 </script>

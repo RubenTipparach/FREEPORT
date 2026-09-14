@@ -245,9 +245,11 @@ function plan(tiles, planet, towns) {
 // panels meet the blocks and the floors.
 function columns(tiles, p, planet, towns) {
   const R = planet.radius, rad = p.rad;
-  const pos = [], nrm = [], idx = [], tags = [], bases = [], uvs = [];
+  const pos = [], nrm = [], idx = [], tags = [], mats = [], bases = [], uvs = [];
   let walls = 0;
-  const push = (v, n, t, b, u, w) => { pos.push(v[0], v[1], v[2]); nrm.push(n[0], n[1], n[2]); tags.push(t); bases.push(b); uvs.push(u, w); return pos.length / 3 - 1; };
+  // Every built face is concrete and a lamp cap is a lamp; the material rides
+  // the vertex, flat, the same attribute the marched page fills per brush.
+  const push = (v, n, t, b, u, w) => { pos.push(v[0], v[1], v[2]); nrm.push(n[0], n[1], n[2]); tags.push(t); mats.push(t === 4 ? 4 : t > 0 ? 1 : 0); bases.push(b); uvs.push(u, w); return pos.length / 3 - 1; };
   const runsOf = (i) => p.runs.get(i) || [[0, p.tb[i]]];
   const town = (i) => p.townOf[i] >= 0 ? towns[p.townOf[i]] : null;
   const capUv = (c, tw) => {
@@ -298,6 +300,7 @@ function columns(tiles, p, planet, towns) {
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   g.setAttribute('tag', new THREE.Float32BufferAttribute(tags, 1));
+  g.setAttribute('mat', new THREE.Float32BufferAttribute(mats, 1));
   g.setAttribute('base', new THREE.Float32BufferAttribute(bases, 1));
   g.setIndex(idx);
   return { geometry: g, triangles: idx.length / 3, vertices: pos.length / 3, walls };
@@ -306,6 +309,9 @@ function columns(tiles, p, planet, towns) {
 const canvas = document.getElementById('c');
 const { renderer, scene, camera, controls } = makeScene(canvas);
 const material = await terrainMaterial(renderer);
+// The columns carry their own UVs, laid in the town's frame, and their
+// windows are the shader's.
+material.uniforms.uBuiltUv.value = 1.0; material.uniforms.uShaderWindows.value = 1.0;
 let seed = PLANET.seed, planet = null, towns = null;
 let mesh = null, stats = {}, tiles = null, tilesSub = -1, plan_ = null;
 scene.add(makeSea(new Planet(PLANET)));
