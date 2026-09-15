@@ -69,6 +69,39 @@ pub fn f32_step(x: f64) -> f64 {
     (f32::from_bits(f.to_bits() + 1) - f) as f64
 }
 
+/// `normalize(anchor + step) - anchor` for a UNIT `anchor` and a small
+/// `step`, computed so it can be done in f32 without losing the answer.
+///
+/// This is how a vertex shader draws at a precision it does not have. A
+/// point on a planet is `direction * radius`, and at a thousand
+/// kilometres an f32 direction carries six hundredths of a micron of
+/// error, which is TWELVE CENTIMETRES on the ground: the ground
+/// quantises, and it shifts again every time the origin rebases. The way
+/// out is never to form the direction at all. Every vertex is an OFFSET
+/// from one anchor the CPU works out in f64, so the shader multiplies the
+/// radius by a SMALL number that is accurate rather than by a number near
+/// one that is not.
+///
+/// Doing that naively (`normalize(a + q) - a`) throws the accuracy away
+/// again, because it subtracts two nearly equal vectors. So the
+/// subtraction is done in closed form instead:
+/// `normalize(a + q) - a = a * (k - 1) + q * k` with
+/// `k = 1 / sqrt(1 + s)` and `s = 2 a.q + q.q`, and `k - 1` is written as
+/// `-s / (sqrt(1+s) * (1 + sqrt(1+s)))`, which has no cancellation in it
+/// at all. `a_small_step_keeps_its_metres_at_a_thousand_kilometres`
+/// measures what that buys, and `frame.wgsl` is the transcription.
+pub fn unit_offset(anchor: DVec3, step: DVec3) -> DVec3 {
+    let s = 2.0 * anchor.dot(step) + step.dot(step);
+    let root = (1.0 + s).max(0.0).sqrt();
+    if root <= 0.0 {
+        return -anchor;
+    }
+    let k = 1.0 / root;
+    // `k - 1`, without ever forming the difference of two ones.
+    let g = -s / (root * (1.0 + root));
+    anchor * g + step * k
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,6 +133,67 @@ mod tests {
         assert!(origin.follow(eye));
         assert_eq!(origin.at, DVec3::new(3_000.0, -1_000.0, 0.0));
         assert!(!origin.follow(eye));
+    }
+
+    #[test]
+    fn a_small_step_keeps_its_metres_at_a_thousand_kilometres() {
+        // What a vertex shader has to do on a big planet, done three
+        // ways: in f64 (the answer), the naive f32 way a shader reaches
+        // for first, and `unit_offset` in f32. The naive one is what puts
+        // a planet's ground on a twelve centimetre grid.
+        let radius = 1.0e6_f64;
+        let anchor = DVec3::new(0.31, 0.62, 0.72).normalize();
+        let (east, north) = (
+            anchor.cross(DVec3::Y).normalize(),
+            anchor.cross(anchor.cross(DVec3::Y).normalize()).normalize(),
+        );
+        let (mut naive, mut stable) = (0.0_f64, 0.0_f64);
+        for i in 0..40 {
+            for j in 0..40 {
+                // A step of up to a couple of hundred metres, as a hex
+                // window or a near leaf is.
+                let metres = DVec3::new(i as f64 - 20.0, 0.0, j as f64 - 20.0) * 8.0;
+                let step = (east * metres.x + north * metres.z) / radius;
+                let exact = unit_offset(anchor, step) * radius;
+                // The naive way: two unit vectors in f32, subtracted.
+                let a32 = anchor.as_vec3();
+                let p32 = (anchor + step).as_vec3().normalize();
+                let got = ((p32 - a32).as_dvec3()) * radius;
+                naive = naive.max((got - exact).length());
+                // The stable way, every step of it in f32.
+                let mine = unit_offset_f32(a32, step.as_vec3()).as_dvec3() * radius;
+                stable = stable.max((mine - exact).length());
+            }
+        }
+        println!("at {radius} m: naive {naive:.4} m, stable {stable:.6} m");
+        assert!(naive > 0.05, "the naive way was not the problem: {naive} m");
+        assert!(stable < 1.0e-3, "the stable way drifted {stable} m");
+        assert!(stable * 100.0 < naive, "{stable} against {naive}");
+    }
+
+    /// `unit_offset` with every step of it taken in f32, which is what a
+    /// shader does.
+    fn unit_offset_f32(anchor: glam::Vec3, step: glam::Vec3) -> glam::Vec3 {
+        let s = 2.0 * anchor.dot(step) + step.dot(step);
+        let root = (1.0 + s).max(0.0).sqrt();
+        let k = 1.0 / root;
+        let g = -s / (root * (1.0 + root));
+        anchor * g + step * k
+    }
+
+    #[test]
+    fn an_offset_is_the_difference_it_says_it_is() {
+        let anchor = DVec3::new(-0.2, 0.9, 0.35).normalize();
+        for step in [
+            DVec3::ZERO,
+            DVec3::new(1.0e-6, 0.0, 2.0e-6),
+            DVec3::new(0.01, -0.02, 0.03),
+            DVec3::new(0.4, 0.3, -0.2),
+        ] {
+            let want = (anchor + step).normalize() - anchor;
+            let got = unit_offset(anchor, step);
+            assert!((want - got).length() < 1e-12, "{want} against {got}");
+        }
     }
 
     #[test]

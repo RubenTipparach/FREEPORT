@@ -8,13 +8,17 @@
 //! here is swarm-demo's: if two clients computed this differently, would the
 //! world diverge? Then it lives in the core.
 
+pub mod atmos;
 pub mod audit;
 pub mod dc;
 pub mod field;
 pub mod lattice;
 pub mod march;
+pub mod model;
 pub mod pos;
 pub mod qef;
 pub mod sphere;
 pub mod tables;
+pub mod town;
 pub mod walker;
+pub mod water;

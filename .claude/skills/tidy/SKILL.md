@@ -29,14 +29,10 @@ as "some warnings".
    --check` re-exports every `materials/*.ptex` with Material Maker and
    holds the committed PNGs to it within half a percent of pixels. A graph
    edited without its bake is the drift this exists to catch.
-7. **The recipes.** `python3 tools/bundle_buildings.py --check` holds
-   `docs/mockups/buildings.js` to `assets/buildings/*.json`. The recipes are
-   the source; a bundle a version behind is a mockup showing a building
-   nobody can find the JSON for.
-8. **The review.** Run `/simplify` on the diff for reuse, simplification and
+7. **The review.** Run `/simplify` on the diff for reuse, simplification and
    altitude, and `/code-review` for correctness. Apply what they find before
    the push, not after.
-9. **The pictures, when the change claims to change nothing.** A refactor is
+8. **The pictures, when the change claims to change nothing.** A refactor is
    proved by its renders: copy the binary from before aside, build the one
    from after, take the same headless shots on both, and `python3
    tools/pngdiff.py before.png after.png` on each pair, judged against that

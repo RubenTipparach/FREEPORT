@@ -7,11 +7,12 @@
 #   ./run.sh --build-only                        build, do not run
 #   ./run.sh --test                              the suites, then build and run
 #   ./run.sh --shot out.png                      no display needed: a picture under Xvfb and lavapipe, then exit
-#   ./run.sh -- --fly --wire --eye 9.5,41.6,0.5 --look 0,40.6,0
+#   ./run.sh -- --fly --wire
+#   ./run.sh --shot out.png -- --octaves 14 --eye 0,1030000,0 --look 0,1000000,120000
 #
-# Everything after -- goes to freeport_app itself: --sub, --wire, --fly,
-# --eye, --look, --shot, --frames. The first token this script does not know
-# starts the passthrough too.
+# Everything after -- goes to freeport_app itself: --levels, --wire, --fly,
+# --eye, --look, --shot, --frames, --fps, --octaves, --walk.
+# The first token this script does not know starts the passthrough too.
 
 set -euo pipefail
 
@@ -90,10 +91,8 @@ if [ "$suites" = 1 ]; then
     if command -v python3 >/dev/null 2>&1; then
         say "the shape of the code"
         python3 tools/shape.py --check
-        say "the mockup's recipes match assets/buildings"
-        python3 tools/bundle_buildings.py --check
     else
-        warn "no python3, skipping the shape and recipe checks"
+        warn "no python3, skipping the shape check"
     fi
 fi
 

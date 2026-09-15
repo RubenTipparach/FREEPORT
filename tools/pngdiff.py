@@ -80,12 +80,24 @@ def read_png(path):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    # A flag's own value is not a file name: `--max 0.5` left "0.5" in the
+    # positional list and every call with a limit exited on the usage text,
+    # which read as a drift the bake check could never clear.
+    argv = sys.argv[1:]
+    args = []
+    limit = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--max" and i + 1 < len(argv):
+            limit = float(argv[i + 1])
+            i += 2
+            continue
+        if not a.startswith("--"):
+            args.append(a)
+        i += 1
     if len(args) != 2:
         raise SystemExit(__doc__)
-    limit = None
-    if "--max" in sys.argv:
-        limit = float(sys.argv[sys.argv.index("--max") + 1])
     step = 8
     a = read_png(args[0])
     b = read_png(args[1])
