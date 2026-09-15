@@ -6,7 +6,7 @@
 //! a rebase moves them too. A city of thousands of lamps is not thousands
 //! of lights.
 
-use crate::stream::{Chunk, Frame};
+use crate::stream::{Anchored, Frame};
 use crate::{Eye, Ground};
 use bevy::prelude::*;
 use freeport_core::pos::WorldPos;
@@ -73,9 +73,7 @@ pub fn light_lamps(
                 ..default()
             },
             Transform::from_translation(frame.0.local(WorldPos(at))),
-            Chunk {
-                corner: WorldPos(at),
-            },
+            Anchored { at: WorldPos(at) },
             Lamp(i),
         ));
     }

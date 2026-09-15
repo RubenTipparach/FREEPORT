@@ -12,6 +12,7 @@
 //! enough for the ground to curve under it is placed in one piece.
 
 use crate::field::{hash3, Density, Planet};
+use crate::model::Kind;
 use glam::DVec3;
 
 /// A place on the planet levelled for a town: its direction, its height
@@ -24,14 +25,14 @@ pub struct Site {
 }
 
 /// A lot: where on the town's grid, metres east and north of its middle,
-/// how big, how tall, and which recipe.
+/// how big, how tall, and what kind of building stands on it.
 #[derive(Clone, Debug)]
 pub struct Lot {
     pub x: f64,
     pub z: f64,
     pub storeys: u32,
-    pub recipe: &'static str,
-    /// A number of its own, for what a recipe hashes.
+    pub kind: Kind,
+    /// A number of its own, for what a model hashes.
     pub id: u32,
 }
 
@@ -242,13 +243,13 @@ fn lay(dir: DVec3, h: f64, radius: f64, index: usize, seed: u32) -> Town {
             let near = 1.0 - cx.hypot(cz) / radius;
             let tall = 1 + ((hash(i, j, 3) * 0.4 + near * near) * 7.0).floor() as u32;
             let pick = hash(i, j, 6);
-            let (recipe, storeys) = choose(tall, pick);
+            let (kind, storeys) = choose(tall, pick);
             let jitter = BLOCK - 8.0;
             lots.push(Lot {
                 x: cx + (hash(i, j, 4) - 0.5) * jitter,
                 z: cz + (hash(i, j, 5) - 0.5) * jitter,
                 storeys,
-                recipe,
+                kind,
                 id: ((i + 64) as u32) << 8 | (j + 64) as u32,
             });
         }
@@ -289,34 +290,28 @@ fn lay(dir: DVec3, h: f64, radius: f64, index: usize, seed: u32) -> Town {
     }
 }
 
-/// Which recipe a lot of a wanted height gets, and how many storeys it
-/// ends up with: towers in the middle, one floor houses at the edge, and
-/// the odd hangar, dome or dugout among them.
-fn choose(tall: u32, pick: f64) -> (&'static str, u32) {
+/// What kind of building a lot of a wanted height gets, and how many
+/// storeys it ends up with: towers in the middle, one floor houses at the
+/// edge, and the odd hangar among them.
+fn choose(tall: u32, pick: f64) -> (Kind, u32) {
     if tall >= 4 {
         if pick < 0.6 {
-            ("block", tall.clamp(4, 8))
+            (Kind::Block, tall.clamp(4, 8))
         } else {
-            ("tower", tall.clamp(3, 5))
+            (Kind::Tower, tall.clamp(3, 5))
         }
     } else if tall == 1 {
-        if pick < 0.4 {
-            ("bungalow", 1)
-        } else if pick < 0.6 {
-            ("cottage", 1)
-        } else if pick < 0.72 {
-            ("dome", 1)
-        } else if pick < 0.84 {
-            ("hangar", 1)
-        } else if pick < 0.9 {
-            ("dugout", 1)
+        if pick < 0.45 {
+            (Kind::Bungalow, 1)
+        } else if pick < 0.7 {
+            (Kind::House, 1)
         } else {
-            ("house", 1)
+            (Kind::Hangar, 1)
         }
-    } else if pick < 0.8 {
-        ("house", tall)
+    } else if pick < 0.85 {
+        (Kind::House, tall)
     } else {
-        ("cottage", tall.min(2))
+        (Kind::Block, tall.max(4))
     }
 }
 

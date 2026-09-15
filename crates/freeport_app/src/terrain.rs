@@ -93,7 +93,7 @@ impl Plugin for TerrainPlugin {
 
 /// Where the assets are: `FREEPORT_ASSETS`, else the checkout this was
 /// built from, else `assets` beside the working directory.
-pub fn assets_dir() -> Option<PathBuf> {
+fn assets_dir() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(root) = std::env::var("FREEPORT_ASSETS") {
         candidates.push(PathBuf::from(root));
@@ -105,7 +105,7 @@ pub fn assets_dir() -> Option<PathBuf> {
     candidates.push(PathBuf::from("assets"));
     candidates
         .into_iter()
-        .find(|c| c.join("buildings").is_dir())
+        .find(|c| c.join("textures/terrain").is_dir())
 }
 
 /// Where the baked sets are: under the one asset root, if the bakes are

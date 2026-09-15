@@ -195,11 +195,13 @@ fn built_planet() -> (Planet, Vec<Block>, Lattice, Rings) {
         centre: DVec3::new(0.0, top - 0.1, 0.0),
         half: DVec3::new(3.0, 3.0, 0.25),
         axes: [DVec3::X, DVec3::Z, DVec3::Y],
+        material: CONCRETE,
     };
     let wall = Block {
         centre: DVec3::new(2.0, top + 1.0, 0.0),
         half: DVec3::new(0.2, 2.5, 1.1),
         axes: [DVec3::X, DVec3::Z, DVec3::Y],
+        material: CONCRETE,
     };
     let lat = Lattice::new(DVec3::splat(-24.0 + 0.125), 0.25);
     let rings = Rings::around(&lat, DVec3::new(0.0, top, 0.0), 3);
@@ -212,9 +214,7 @@ fn a_planet_with_a_slab_and_a_wall_is_closed_and_the_slab_is_flat() {
     let slab = blocks[0].clone();
     let built = Built {
         ground: &planet,
-        blocks,
-        structures: vec![],
-        cell: 0.25,
+        blocks: blocks.iter().collect(),
     };
     let chunks = contour_rings(&built, &lat, &rings);
     let a = audit(&built, &chunks);
@@ -290,12 +290,11 @@ fn a_face_on_a_lattice_plane_pinches_and_half_a_cell_of_offset_does_not() {
         centre: DVec3::new(0.0, 5.0, 0.0),
         half: DVec3::new(1.0, 1.0, 0.3),
         axes: [DVec3::X, DVec3::Z, DVec3::Y],
+        material: CONCRETE,
     };
     let built = Built {
         ground: &ground,
-        blocks: vec![pad],
-        structures: vec![],
-        cell: 0.25,
+        blocks: vec![&pad],
     };
     let mut pinched = Vec::new();
     for offset in [0.0, 0.125] {

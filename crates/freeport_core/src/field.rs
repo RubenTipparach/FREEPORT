@@ -271,6 +271,8 @@ pub struct Block {
     pub half: DVec3,
     /// Its axes, unit and orthogonal: east, north, up.
     pub axes: [DVec3; 3],
+    /// What it is made of, for a walker that asks what it is standing on.
+    pub material: u8,
 }
 
 impl Density for Block {
@@ -287,132 +289,56 @@ impl Density for Block {
     }
 }
 
-/// A building standing on the planet: its recipe compiled, the frame it
-/// stands in, and the box round it in the field's frame.
-#[derive(Clone, Debug)]
-pub struct Structure {
-    pub frame: crate::town::Frame,
-    pub building: crate::recipe::Building,
-    pub lo: DVec3,
-    pub hi: DVec3,
-}
-
-impl Structure {
-    /// A building in a frame, its box the frame's image of the building's.
-    pub fn new(frame: crate::town::Frame, building: crate::recipe::Building) -> Structure {
-        let (mut lo, mut hi) = (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY));
-        for c in 0..8 {
-            let l = DVec3::new(
-                if c & 1 != 0 {
-                    building.hi.x
-                } else {
-                    building.lo.x
-                },
-                if c & 2 != 0 {
-                    building.hi.y
-                } else {
-                    building.lo.y
-                },
-                if c & 4 != 0 {
-                    building.hi.z
-                } else {
-                    building.lo.z
-                },
-            );
-            let w = frame.world(l);
-            lo = lo.min(w);
-            hi = hi.max(w);
-        }
-        Structure {
-            frame,
-            building,
-            lo,
-            hi,
-        }
-    }
-
-    /// Whether the box round the structure meets another box.
-    pub fn meets(&self, lo: DVec3, hi: DVec3) -> bool {
-        self.lo.cmple(hi).all() && self.hi.cmpge(lo).all()
-    }
-
-    /// Every lamp in the building, in the field's frame, with its reach.
-    pub fn lamps(&self) -> Vec<(DVec3, f64)> {
-        self.building
-            .lamps
-            .iter()
-            .map(|(at, reach)| (self.frame.world(*at), *reach))
-            .collect()
-    }
-}
-
-/// Past this cell, metres, a building is its massing: on a lattice that
-/// cannot hold a wall, a house is a block and a tower a drum.
-pub const DETAIL: f64 = 0.5;
-
-/// A field with things built on it: the ground, blocks ADDED to it in
-/// order, each a union, and structures evaluated in their own frames, each
-/// brush in list order. `cell` is what the field is being contoured on:
-/// past `DETAIL` a structure is its massing.
+/// A field with things built on it: the ground, and the boxes of whatever
+/// stands on it, each a union. What is built is a MODEL and not a brush
+/// (`model.rs`), so a chunk is contoured on the ground alone and this is
+/// what the WALKER walks: the boxes a model was drawn from, so the picture
+/// and the collider are the same numbers.
 pub struct Built<'a> {
     pub ground: &'a dyn Density,
-    pub blocks: Vec<Block>,
-    pub structures: Vec<&'a Structure>,
-    pub cell: f64,
+    pub blocks: Vec<&'a Block>,
 }
 
 impl Built<'_> {
-    /// What is at a point and what it is made of.
-    pub fn sample(&self, p: DVec3) -> crate::recipe::Sample {
-        let mut s = crate::recipe::Sample {
-            d: self.ground.at(p),
-            mat: TERRAIN,
-            room: -1,
-            curved: true,
-        };
+    /// The ground alone, which is what a chunk is contoured on.
+    pub fn bare(ground: &dyn Density) -> Built<'_> {
+        Built {
+            ground,
+            blocks: Vec::new(),
+        }
+    }
+
+    /// What is at a point, and what it is made of: the DEEPEST solid, the
+    /// one whose surface is farthest away, so a wall poured into a
+    /// hillside meets the rock on a line and never as a blend.
+    fn sample(&self, p: DVec3) -> (f64, u8) {
+        let mut out = (self.ground.at(p), TERRAIN);
         for b in &self.blocks {
             let v = b.at(p);
-            if v > s.d {
-                s.d = v;
-                s.mat = CONCRETE;
-                s.curved = false;
+            if v > out.0 {
+                out = (v, b.material);
             }
         }
-        for st in &self.structures {
-            if !(p.cmpge(st.lo).all() && p.cmple(st.hi).all()) {
-                continue;
-            }
-            let local = st.frame.local(p);
-            s = if self.cell > DETAIL {
-                st.building.massing(local, s, self.cell)
-            } else {
-                st.building.sample(local, s)
-            };
-        }
-        s
+        out
     }
 }
 
 impl Density for Built<'_> {
     fn at(&self, p: DVec3) -> f64 {
-        self.sample(p).d
+        self.sample(p).0
     }
 
-    /// The deepest solid at `p`: a block whose density beats the ground's
-    /// is what the rock there is made of, so a slab poured into a hillside
-    /// meets the rock on a line and never as a blend.
     fn material(&self, p: DVec3) -> u8 {
-        self.sample(p).mat
+        self.sample(p).1
     }
 
-    /// The ground's answer, unless a block or a structure reaches into the
-    /// box.
+    /// The ground's answer, unless a block reaches into the box.
     fn solid(&self, lo: DVec3, hi: DVec3) -> Option<bool> {
         let ground = self.ground.solid(lo, hi)?;
         let touched = self.blocks.iter().any(|b| {
             let (blo, bhi) = b.bounds();
             blo.cmple(hi).all() && bhi.cmpge(lo).all()
-        }) || self.structures.iter().any(|st| st.meets(lo, hi));
+        });
         (!touched).then_some(ground)
     }
 
@@ -639,6 +565,7 @@ mod tests {
             centre: DVec3::new(1.0, 2.0, 3.0),
             half: DVec3::new(2.0, 1.0, 0.5),
             axes: [DVec3::Z, DVec3::X, DVec3::Y],
+            material: CONCRETE,
         };
         assert_eq!(b.at(b.centre), 0.5);
         // A metre past the up face (world y) is minus one.
@@ -651,9 +578,7 @@ mod tests {
         let ground = Sphere { radius: 1.0 };
         let built = Built {
             ground: &ground,
-            blocks: vec![b.clone()],
-            structures: vec![],
-            cell: 0.25,
+            blocks: vec![&b],
         };
         assert_eq!(built.at(b.centre), 0.5);
         assert_eq!(built.at(DVec3::ZERO), 1.0);
@@ -694,12 +619,11 @@ mod tests {
             centre: DVec3::new(0.0, 104.0, 0.0),
             half: DVec3::new(1.0, 1.0, 0.2),
             axes: [DVec3::X, DVec3::Z, DVec3::Y],
+            material: CONCRETE,
         };
         let built = Built {
             ground: &planet,
-            blocks: vec![slab.clone()],
-            structures: vec![],
-            cell: 0.25,
+            blocks: vec![&slab],
         };
         assert_eq!(built.solid(high.0, high.1), None, "a slab in the box");
         // The slope bound holds: the field between two points a step apart

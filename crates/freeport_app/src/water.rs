@@ -88,7 +88,7 @@ impl Plugin for WaterPlugin {
     }
 }
 
-/// A mark on the sea's chunks, beside their `Chunk`.
+/// A mark on the sea's chunks, beside their `Anchored`.
 #[derive(Component)]
 pub struct Sheet;
 

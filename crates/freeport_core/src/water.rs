@@ -6,19 +6,21 @@
 //! MATERIAL, per triangle: a triangle of the sphere whose middle stands in
 //! the ground's rock is BURIED and never drawn, and one over air is
 //! SURFACE; the depth test settles the shoreline to the pixel, since the
-//! ground is drawn first. That alone would put water in any hole dug below
-//! the level, wherever it was dug, so water is FINITE: a cut is DRY unless
-//! it touched water when it was made, the surface is buried inside a dry
-//! cut, and a cut that touches water and reaches a dry one wets it, and
-//! every dry cut that one reaches, so a channel dug from the shore floods
-//! the basin at its end the moment it breaks through and never before.
+//! ground is drawn first.
+//!
+//! It is a SURFACE and not a volume, which is what the owner asked for
+//! now: a hole dug below the level away from the sea would hold water
+//! here, and there is nothing that digs one. Voxel water, where a cut is
+//! dry unless it touched the sea when it was made and a channel from the
+//! shore floods the basin at its end, is what a world with digging in it
+//! needs, and it comes back with the thing that digs.
 
-use crate::field::{box_radii, Block, Density};
+use crate::field::{box_radii, Density};
 use glam::DVec3;
 
 /// A triangle of the sea's surface over air: drawn.
 pub const SURFACE: u8 = 8;
-/// A triangle of the sphere inside the ground, or in a dry cut: not drawn.
+/// A triangle of the sphere inside the ground: not drawn.
 pub const BURIED: u8 = 9;
 
 /// The sea: a level, as a radius from the planet's centre.
@@ -27,13 +29,18 @@ pub struct Sea {
     pub radius: f64,
 }
 
-/// The sea on a planet: its surface, the ground that buries it, and the
-/// cuts it has not reached.
+/// The sea on a planet: a level, and the ground that buries its surface.
+///
+/// Water is a SURFACE here and not a volume, which is the owner's ask for
+/// now: the sheet is the sphere at the level, contoured by the same
+/// mesher in the same chunks as the ground, and what clips it is the
+/// MATERIAL per triangle. Voxel water, where a hole dug away from the sea
+/// is dry and one dug from the shore floods, is what a cut in the ground
+/// needs and there is nothing that cuts the ground yet: it comes back
+/// with the thing that digs.
 pub struct Water<'a> {
     pub sea: Sea,
     pub ground: &'a dyn Density,
-    /// Cuts made in the dry, which water never enters.
-    pub dry: Vec<Block>,
 }
 
 impl Density for Water<'_> {
@@ -42,14 +49,15 @@ impl Density for Water<'_> {
         self.sea.radius - p.length()
     }
 
-    /// Where the surface over `p` stands: over air and outside every dry
-    /// cut it is the surface, else buried.
+    /// Where the surface over `p` stands: over air it is the surface, and
+    /// inside the ground's rock it is buried and never drawn. The depth
+    /// test settles the shoreline to the pixel, since the ground is drawn
+    /// first.
     fn material(&self, p: DVec3) -> u8 {
         let Some(dir) = p.try_normalize() else {
             return BURIED;
         };
-        let on = dir * self.sea.radius;
-        if self.ground.at(on) > 0.0 || self.dry.iter().any(|c| c.at(on) > 0.0) {
+        if self.ground.at(dir * self.sea.radius) > 0.0 {
             BURIED
         } else {
             SURFACE
@@ -75,57 +83,10 @@ impl Density for Water<'_> {
 }
 
 impl Water<'_> {
-    /// Whether there is water at `p`: under the level, in the ground's air,
-    /// and outside every dry cut.
+    /// Whether there is water at `p`: under the level and in the ground's
+    /// own air, which is what holds a walker at wading depth.
     pub fn has_water(&self, p: DVec3) -> bool {
-        p.length() < self.sea.radius
-            && self.ground.at(p) < 0.0
-            && !self.dry.iter().any(|c| c.at(p) > 0.0)
-    }
-
-    /// Whether a cut, made now into this ground, touches water: any point
-    /// of a grid over its box, grown by `reach`, has water. That is what
-    /// decides whether the cut is dry.
-    pub fn touches(&self, cut: &Block, reach: f64) -> bool {
-        let (lo, hi) = cut.bounds();
-        let (lo, hi) = (lo - DVec3::splat(reach), hi + DVec3::splat(reach));
-        let (near, _) = box_radii(lo, hi);
-        if near > self.sea.radius || self.ground.solid(lo, hi) == Some(true) {
-            return false;
-        }
-        let n = 6;
-        for k in 0..=n {
-            for j in 0..=n {
-                for i in 0..=n {
-                    let t = DVec3::new(i as f64, j as f64, k as f64) / n as f64;
-                    if self.has_water(lo + (hi - lo) * t) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    /// Wet every dry cut a wet cut reaches, and every dry cut those reach:
-    /// the dry cuts whose boxes meet `wet`'s, taken out of the dry list.
-    /// Returns how many were wetted.
-    pub fn flood(&mut self, wet: &Block) -> usize {
-        let mut wetted = 0;
-        let mut front = vec![wet.bounds()];
-        while let Some((lo, hi)) = front.pop() {
-            let mut i = 0;
-            while i < self.dry.len() {
-                let (clo, chi) = self.dry[i].bounds();
-                if clo.cmple(hi).all() && chi.cmpge(lo).all() {
-                    front.push(self.dry.remove(i).bounds());
-                    wetted += 1;
-                } else {
-                    i += 1;
-                }
-            }
-        }
-        wetted
+        p.length() < self.sea.radius && self.ground.at(p) < 0.0
     }
 }
 
@@ -185,13 +146,6 @@ mod tests {
         )
     }
 
-    /// A frame on the sphere at a direction: east, north, up.
-    fn frame(d: DVec3) -> [DVec3; 3] {
-        let east = d.cross(DVec3::Y).normalize_or(DVec3::X);
-        let north = d.cross(east);
-        [east, north, d]
-    }
-
     #[test]
     fn water_lies_in_the_air_under_the_level_and_nowhere_else() {
         let planet = shore();
@@ -200,7 +154,6 @@ mod tests {
         let water = Water {
             sea,
             ground: &planet,
-            dry: vec![],
         };
         let bed = top(&planet, low);
         assert!(water.has_water(low * (bed + 0.5)), "water over the bed");
@@ -234,7 +187,6 @@ mod tests {
         let water = Water {
             sea,
             ground: &planet,
-            dry: vec![],
         };
         let lat = Lattice::new(DVec3::splat(-80.0 + 0.125), 0.25);
         let rings = Rings::around(&lat, low * 60.0, 4);
@@ -286,75 +238,5 @@ mod tests {
             "{surface} surface, {buried} buried"
         );
         assert!(worst < 0.3, "a triangle {worst} m off the level");
-    }
-
-    #[test]
-    fn a_cut_in_the_dry_stays_dry_until_a_wet_one_reaches_it() {
-        let planet = shore();
-        let sea = Sea { radius: 60.0 };
-        let (low, high) = low_and_high(&planet, sea.radius, 2.0);
-        // A pit dug on the hill, its floor a metre under the level: dry
-        // ground all round it.
-        let pit = Block {
-            centre: high * (sea.radius + 1.0),
-            half: DVec3::new(1.0, 1.0, 2.0),
-            axes: frame(high),
-        };
-        let before = Water {
-            sea,
-            ground: &planet,
-            dry: vec![],
-        };
-        assert!(
-            !before.touches(&pit, 0.5),
-            "a pit on a hill touches no water"
-        );
-        let dug = Cut {
-            ground: &planet,
-            cuts: vec![pit.clone()],
-        };
-        let mut water = Water {
-            sea,
-            ground: &dug,
-            dry: vec![pit.clone()],
-        };
-        let in_pit = pit.centre - high * 1.5;
-        assert!(dug.at(in_pit) < 0.0, "the pit is air");
-        assert!(!water.has_water(in_pit), "the dry pit holds no water");
-        assert_eq!(water.material(in_pit), BURIED, "and draws none");
-        // A pool at the shore touches the sea and reaches no dry cut.
-        let pool = Block {
-            centre: low * (sea.radius - 0.5),
-            half: DVec3::new(1.0, 1.0, 1.0),
-            axes: frame(low),
-        };
-        assert!(water.touches(&pool, 0.5));
-        assert_eq!(water.flood(&pool), 0);
-        // A wet cut that reaches the pit floods it.
-        let channel = Block {
-            centre: pit.centre,
-            half: DVec3::new(1.5, 1.5, 2.5),
-            axes: frame(high),
-        };
-        assert_eq!(water.flood(&channel), 1);
-        assert!(water.dry.is_empty());
-        assert!(water.has_water(in_pit), "the wetted pit holds water");
-        assert_eq!(water.material(in_pit), SURFACE);
-    }
-
-    /// The ground with cuts taken out of it, as an editor makes it.
-    struct Cut<'a> {
-        ground: &'a dyn Density,
-        cuts: Vec<Block>,
-    }
-
-    impl Density for Cut<'_> {
-        fn at(&self, p: DVec3) -> f64 {
-            let mut d = self.ground.at(p);
-            for c in &self.cuts {
-                d = d.min(-c.at(p));
-            }
-            d
-        }
     }
 }

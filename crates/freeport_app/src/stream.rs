@@ -25,18 +25,20 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::dc::{contour, DcMesh};
 use freeport_core::field::Density;
-use freeport_core::lattice::{ChunkId, Lattice, Rings, MARGIN};
+use freeport_core::lattice::{ChunkId, Lattice, Rings};
 use freeport_core::pos::{Origin, WorldPos};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// A drawn chunk: where its corner is in the world frame, which is what
-/// the origin's move needs.
+/// Anything DRAWN at a place in the world: a chunk, its sheet of sea, a
+/// lamp, a town's models. It carries where it is in the world frame,
+/// which is what the origin's move needs, and `rebase_origin` is the one
+/// system that moves any of them.
 #[derive(Component)]
-pub struct Chunk {
-    pub corner: WorldPos,
+pub struct Anchored {
+    pub at: WorldPos,
 }
 
 /// The floating origin the render frame is measured from.
@@ -58,9 +60,6 @@ const AHEAD: usize = 64;
 struct Job {
     id: ChunkId,
     sig: u64,
-    /// Which world the job was given: a result from an older one is
-    /// dropped, because an edit has changed the field since.
-    gen: u64,
     lat: Lattice,
     rings: Arc<Rings>,
     world: Arc<World>,
@@ -69,7 +68,6 @@ struct Job {
 struct Done {
     id: ChunkId,
     sig: u64,
-    gen: u64,
     mesh: DcMesh,
     /// The sea's surface through the chunk, contoured on the same cells.
     sheet: DcMesh,
@@ -108,17 +106,9 @@ pub struct Streamer {
     material: Handle<TerrainMaterial>,
     water: Handle<WaterMaterial>,
     fresh: bool,
-    /// Bumped by every edit, so results contoured on the old world are
-    /// dropped when they arrive.
-    gen: u64,
     pub stats: Stats,
     started: Instant,
     settled: Option<f32>,
-    /// An edit's remesh in progress: when it began, how many chunks it
-    /// marked and the work done before it, logged when they have all landed.
-    edit: Option<(Instant, usize, f32)>,
-    /// How many edits have been made, so a scripted picture waits for one.
-    edits: u32,
 }
 
 impl Streamer {
@@ -148,45 +138,10 @@ impl Streamer {
             material,
             water,
             fresh: true,
-            gen: 0,
             stats: Stats::default(),
             started: Instant::now(),
             settled: None,
-            edit: None,
-            edits: 0,
         }
-    }
-
-    /// The field changed inside a box: every drawn chunk reaching into it
-    /// is contoured again, on the world as it is now, and whatever is in
-    /// flight on the old world is dropped when it lands.
-    pub fn dirty(&mut self, lo: DVec3, hi: DVec3) {
-        self.gen += 1;
-        self.pending.clear();
-        let lat = self.lat;
-        let mut marked = 0;
-        for (id, loaded) in self.loaded.iter_mut() {
-            let (clo, chi) = id.bounds(&lat, MARGIN);
-            if clo.cmple(hi).all() && chi.cmpge(lo).all() {
-                loaded.1 = u64::MAX;
-                marked += 1;
-            }
-        }
-        let (began, before, work) = self.edit.unwrap_or((Instant::now(), 0, self.stats.work_ms));
-        self.edit = Some((began, marked + before, work));
-        self.edits += 1;
-    }
-
-    /// How many edits have dirtied the ground.
-    pub fn edits(&self) -> u32 {
-        self.edits
-    }
-
-    /// Whether the first load has settled: every chunk wanted at the start
-    /// drawn once, which is when a scripted edit is placed so its remesh
-    /// is measured on its own.
-    pub fn settled(&self) -> bool {
-        self.settled.is_some()
     }
 
     /// Whether every wanted chunk is drawn.
@@ -207,9 +162,11 @@ impl Streamer {
         self.wanted.clear();
         for id in self.rings.chunks() {
             let (lo, hi) = id.bounds(&self.lat, 0);
-            // The field in this chunk's box alone: a chunk far from every
-            // town tests a box a town, never every structure on the planet.
-            let ground = world.field_in(lo, hi, self.lat.cell(id.level));
+            // The GROUND alone, which is all a chunk is contoured on:
+            // what is built on a town is a model beside the field rather
+            // than a brush in it, so a chunk under a city is ruled the
+            // same way a chunk in the wilderness is.
+            let ground = world.ground();
             if ground.solid(lo, hi).is_some() && world.water(&ground).solid(lo, hi).is_some() {
                 continue;
             }
@@ -248,7 +205,6 @@ impl Streamer {
             let job = Job {
                 id,
                 sig,
-                gen: self.gen,
                 lat: self.lat,
                 rings: rings.clone(),
                 world: world.clone(),
@@ -275,15 +231,15 @@ impl Streamer {
         }
         drop(rx);
         for done in finished {
-            // A result from before an edit is nobody's: the job was resent
+            // A result nobody is waiting for: the job was resent
             // on the new world and is still pending.
-            if done.gen == self.gen && self.pending.get(&done.id) == Some(&done.sig) {
+            if self.pending.get(&done.id) == Some(&done.sig) {
                 self.pending.remove(&done.id);
             }
             self.stats.built += 1;
             self.stats.work_ms += done.ms;
             self.stats.last_ms = done.ms;
-            if self.wanted.get(&done.id) != Some(&done.sig) || done.gen != self.gen {
+            if self.wanted.get(&done.id) != Some(&done.sig) {
                 continue;
             }
             if let Some((old, _, _)) = self.loaded.remove(&done.id) {
@@ -293,7 +249,7 @@ impl Streamer {
             }
             let corner = WorldPos(done.id.corner(&self.lat));
             let at = Transform::from_translation(origin.local(corner));
-            let chunk = || Chunk { corner };
+            let chunk = || Anchored { at: corner };
             let mut entities = Vec::new();
             let mut triangles = 0;
             if done.mesh.triangles() > 0 {
@@ -421,8 +377,7 @@ fn spawn_workers(n: usize) -> (Sender<Job>, Receiver<Done>) {
             };
             let t0 = Instant::now();
             let (lo, hi) = job.id.bounds(&job.lat, 0);
-            let (mlo, mhi) = job.id.bounds(&job.lat, MARGIN);
-            let field = job.world.field_in(mlo, mhi, job.lat.cell(job.id.level));
+            let field = job.world.ground();
             let mesh = if field.solid(lo, hi).is_none() {
                 contour(&field, &job.lat, job.id, &*job.rings)
             } else {
@@ -439,7 +394,6 @@ fn spawn_workers(n: usize) -> (Sender<Job>, Receiver<Done>) {
                 .send(Done {
                     id: job.id,
                     sig: job.sig,
-                    gen: job.gen,
                     mesh,
                     sheet,
                     ms,
@@ -458,7 +412,7 @@ fn spawn_workers(n: usize) -> (Sender<Job>, Receiver<Done>) {
 pub fn rebase_origin(
     eye: Res<Eye>,
     mut frame: ResMut<Frame>,
-    mut chunks: Query<(&Chunk, &mut Transform)>,
+    mut drawn: Query<(&Anchored, &mut Transform)>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
     mut waters: ResMut<Assets<WaterMaterial>>,
     streamer: Option<Res<Streamer>>,
@@ -468,8 +422,8 @@ pub fn rebase_origin(
     if !frame.0.follow(eye.0) {
         return;
     }
-    for (chunk, mut tf) in &mut chunks {
-        tf.translation = frame.0.local(chunk.corner);
+    for (a, mut tf) in &mut drawn {
+        tf.translation = frame.0.local(a.at);
     }
     if let Some(streamer) = streamer {
         let centre = frame.0.local(WorldPos(DVec3::ZERO));
@@ -495,17 +449,6 @@ pub fn stream(
     streamer.queue(eye.0 .0, &ground.0);
     streamer.drain(&mut commands, &mut meshes, &frame.0);
     streamer.prune(&mut commands);
-    if let Some((began, marked, work)) = streamer.edit {
-        if streamer.idle() {
-            info!(
-                "an edit's {} chunks contoured again in {:.0} ms of work, drawn {:.0} ms after the edit",
-                marked,
-                streamer.stats.work_ms - work,
-                began.elapsed().as_secs_f32() * 1000.0
-            );
-            streamer.edit = None;
-        }
-    }
     if streamer.settled.is_none() && streamer.idle() && streamer.stats.built > 0 {
         let took = streamer.started.elapsed().as_secs_f32();
         streamer.settled = Some(took);

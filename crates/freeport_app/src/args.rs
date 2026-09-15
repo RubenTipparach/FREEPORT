@@ -17,10 +17,6 @@ pub(crate) struct Args {
     pub(crate) levels: u8,
     pub(crate) shot: Option<String>,
     pub(crate) frames: u32,
-    /// A shape the builder places at the crosshair once the first load has
-    /// settled, so a headless run can photograph an edit and the chunks it
-    /// remade.
-    pub(crate) sculpt: Option<String>,
     /// Frames a second the loop is held to. Nought lifts it.
     pub(crate) fps: f64,
     /// How many octaves of relief the field carries: what a picture on a
@@ -43,7 +39,6 @@ pub(crate) fn parse_args() -> Args {
         levels: LEVELS,
         shot: None,
         frames: 30,
-        sculpt: None,
         fps: FPS,
         octaves: OCTAVES,
         walk: 0,
@@ -68,7 +63,6 @@ pub(crate) fn parse_args() -> Args {
             }
             "--shot" => args.shot = it.next(),
             "--frames" => args.frames = it.next().and_then(|v| v.parse().ok()).unwrap_or(30),
-            "--sculpt" => args.sculpt = it.next(),
             "--fps" => args.fps = it.next().and_then(|v| v.parse().ok()).unwrap_or(FPS),
             "--octaves" => {
                 args.octaves = it

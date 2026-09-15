@@ -25,7 +25,7 @@
 //! the planet's centre (on foot, the spot under it) and `--look` what to
 //! face; both default to the port.
 mod args;
-mod edit;
+mod city;
 mod lamps;
 mod sky;
 mod stream;
@@ -45,7 +45,6 @@ use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use edit::{build, Builder};
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
 use freeport_core::town;
@@ -153,7 +152,6 @@ fn main() {
         .init_resource::<Eye>()
         .init_resource::<Frame>()
         .init_resource::<Status>()
-        .init_resource::<Builder>()
         .add_systems(Startup, spawn_world)
         .add_systems(
             Update,
@@ -162,7 +160,6 @@ fn main() {
                 toggle_walk,
                 walk,
                 fly,
-                build,
                 rebase_origin,
                 stream,
                 light_lamps,
@@ -234,7 +231,6 @@ pub(crate) struct Eye(pub WorldPos);
 #[derive(Resource, Default)]
 pub(crate) struct Status {
     pub walker: String,
-    pub build: String,
 }
 
 /// The line of text that says where the walker stands.
@@ -250,7 +246,7 @@ fn spawn_world(
     mut skies: ResMut<Assets<sky::Sky>>,
     args: Res<Args>,
 ) {
-    let world = world::build(&args);
+    let (world, towns) = world::build(&args);
     let (start_eye, start_look) = start(&world);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
@@ -286,7 +282,21 @@ fn spawn_world(
         eye,
         says,
     );
-    commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));
+    commands.insert_resource(Streamer::new(
+        lat,
+        eye,
+        args.levels,
+        material.clone(),
+        sheet,
+    ));
+    // The towns are drawn once and never again: models, not chunks.
+    city::spawn_towns(
+        &mut commands,
+        &mut meshes,
+        &material,
+        &Frame::default(),
+        towns,
+    );
     // The sun, and everything that reads it: the WORLD's own start decides
     // which way it points and never `--eye`, so two pictures taken from
     // two places are lit the same and only the camera moved. The light,
@@ -520,14 +530,8 @@ fn show_status(
     let what = streamer.map(|s| s.status()).unwrap_or_default();
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
-            "{}   |   {}{}   |   F fly, B build, Tab wire, Esc mouse",
-            status.walker,
-            if status.build.is_empty() {
-                String::new()
-            } else {
-                format!("{}   |   ", status.build)
-            },
-            what
+            "{}   |   {}   |   F fly, Tab wire, Esc mouse",
+            status.walker, what
         );
     }
 }
@@ -577,13 +581,10 @@ fn take_shot(
         return;
     };
     *frame += 1;
-    // A scripted edit is placed the frame after the first load settles, so
-    // the picture waits for it and for the chunks it remade.
+    // The picture waits for the ground: every chunk the rings want drawn
+    // once, or ten times the frames asked for, whichever comes first.
     let ready = match &streamer {
-        Some(s) => {
-            let edited = args.sculpt.is_none() || s.edits() > 0;
-            (s.idle() && edited) || *frame >= args.frames * 10
-        }
+        Some(s) => s.idle() || *frame >= args.frames * 10,
         None => true,
     };
     if taken.is_none() && *frame >= args.frames && ready {

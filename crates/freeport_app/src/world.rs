@@ -1,28 +1,29 @@
-//! The world this harness builds: the planet, its towns and everything in
-//! them, and what a walker stands on.
+//! The world this harness builds: the planet, its towns and what a walker
+//! stands on.
 //!
 //! One `World`, built once at startup and shared behind an `Arc` so a
-//! worker mid job keeps the world it had. `field_in` is what the mesher
-//! asks and `underfoot` is what the walker asks, and they are the same
-//! field, which is what makes the picture the collider.
+//! worker mid job keeps the world it had. The ground is the PLANET and
+//! nothing else, which is what a chunk is contoured on (`ground`), and
+//! what stands on it is models (`freeport_core::model`), which the walker
+//! meets as the boxes they were drawn from (`field_near`). That is the
+//! whole of the difference between the two: one lattice carries terrain,
+//! and a building is geometry beside it rather than a brush in it.
 
-use crate::terrain;
-use crate::{Args, FINE, LUMPS, RADIUS, RELIEF, SEA, SEED, TOWNS, TOWN_RADIUS};
+use crate::{Args, LUMPS, RADIUS, RELIEF, SEA, SEED, TOWNS, TOWN_RADIUS};
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use freeport_core::field::{Block, Built, Density, Planet, Structure, STREET};
-use freeport_core::recipe::{Building, Recipe};
-use freeport_core::town::{self, lot_frame, Town};
+use freeport_core::dc::DcMesh;
+use freeport_core::field::{Block, Built, Density, Planet};
+use freeport_core::model;
+use freeport_core::town::{self, lot_frame, Frame, Town};
 use freeport_core::walker::Bounds;
 use freeport_core::water::{Sea, Water};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// A town's structures, contiguous in `World::structures`, and the box
-/// round all of them, so a chunk far from every town tests one box a town
-/// and never a structure. Edits are pushed after the last group and are
-/// tested one by one.
+/// A town's boxes, contiguous in `World::blocks`, and the box round all of
+/// them, so a walker far from every town tests one box a town and never a
+/// building.
 #[derive(Clone, Debug)]
 pub(crate) struct Group {
     pub lo: DVec3,
@@ -31,58 +32,63 @@ pub(crate) struct Group {
 }
 
 /// The field the harness stands on: the planet, what is built on it, and
-/// where the walker may look for the ground. Shared with the workers, and
-/// cloned whole for an edit, so a worker mid job keeps the world it had.
+/// where the walker may look for the ground.
 #[derive(Clone)]
 pub(crate) struct World {
     pub planet: Planet,
+    /// Every box every model was drawn from, a town at a time.
     pub blocks: Vec<Block>,
-    /// Every building and every piece of street on the planet.
-    pub structures: Vec<Structure>,
-    /// The structures a town at a time, with a box round each town's.
     pub groups: Vec<Group>,
     /// Every lamp in them, in the world frame, with its reach.
     pub lamps: Vec<(DVec3, f64)>,
     pub towns: Vec<Town>,
     pub bounds: Bounds,
     pub sea: Sea,
-    /// Cuts made in the dry, which the sea never enters.
-    pub dry: Vec<Block>,
+}
+
+/// A town's geometry, ready to draw: one mesh in the town's own frame and
+/// the frame it stands in. It is handed to the app at startup and spawned
+/// once, so the workers never carry it.
+pub(crate) struct TownMesh {
+    pub frame: Frame,
+    pub mesh: DcMesh,
 }
 
 impl World {
-    /// What a walker within `reach` of `p` stands on: the same field the
-    /// mesher contoured, which is what makes the picture the collider.
+    /// What a walker within `reach` of `p` stands on: the ground, and the
+    /// boxes of whatever is built near enough to be met.
     pub fn underfoot(&self, p: DVec3, reach: f64) -> Built<'_> {
         self.field_near(p, reach)
     }
 
-    /// The field inside a box, contoured on `cell`: the ground and every
-    /// structure reaching into the box.
-    pub fn field_in(&self, lo: DVec3, hi: DVec3, cell: f64) -> Built<'_> {
-        let mut structures = Vec::new();
-        let mut grouped = 0;
-        for g in &self.groups {
-            grouped = grouped.max(g.range.end);
-            if g.lo.cmple(hi).all() && g.hi.cmpge(lo).all() {
-                let town = &self.structures[g.range.clone()];
-                structures.extend(town.iter().filter(|st| st.meets(lo, hi)));
-            }
-        }
-        let loose = &self.structures[grouped.min(self.structures.len())..];
-        structures.extend(loose.iter().filter(|st| st.meets(lo, hi)));
-        Built {
-            ground: &self.planet,
-            blocks: self.blocks.clone(),
-            structures,
-            cell,
-        }
+    /// What a CHUNK is contoured on: the planet alone. A building is a
+    /// model and not a brush, so nothing built is in the field the mesher
+    /// sees, and a chunk under a city costs exactly what a chunk in the
+    /// wilderness does.
+    pub fn ground(&self) -> Built<'_> {
+        Built::bare(&self.planet)
     }
 
-    /// The field within `reach` of a point, at full detail: what a walker
-    /// stands on.
+    /// The field within `reach` of a point: the ground and the boxes near
+    /// it, which is what makes a wall a wall to the body that meets it.
     pub fn field_near(&self, p: DVec3, reach: f64) -> Built<'_> {
-        self.field_in(p - DVec3::splat(reach), p + DVec3::splat(reach), FINE)
+        let (lo, hi) = (p - DVec3::splat(reach), p + DVec3::splat(reach));
+        let mut blocks = Vec::new();
+        for g in &self.groups {
+            if !(g.lo.cmple(hi).all() && g.hi.cmpge(lo).all()) {
+                continue;
+            }
+            for b in &self.blocks[g.range.clone()] {
+                let (blo, bhi) = b.bounds();
+                if blo.cmple(hi).all() && bhi.cmpge(lo).all() {
+                    blocks.push(b);
+                }
+            }
+        }
+        Built {
+            ground: &self.planet,
+            blocks,
+        }
     }
 
     /// The sea on that ground.
@@ -90,7 +96,6 @@ impl World {
         Water {
             sea: self.sea,
             ground,
-            dry: self.dry.clone(),
         }
     }
 }
@@ -98,36 +103,8 @@ impl World {
 #[derive(Resource)]
 pub(crate) struct Ground(pub Arc<World>);
 
-/// The recipes in `assets/buildings`, by name.
-fn recipes() -> HashMap<String, Recipe> {
-    let mut out = HashMap::new();
-    let Some(dir) = terrain::assets_dir().map(|d| d.join("buildings")) else {
-        warn!("no assets folder: no recipes, so no buildings");
-        return out;
-    };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        warn!("no recipes in {}", dir.display());
-        return out;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "json") {
-            match std::fs::read_to_string(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|t| Recipe::parse(&t))
-            {
-                Ok(r) => {
-                    out.insert(r.name.clone(), r);
-                }
-                Err(e) => warn!("{}: {e}", path.display()),
-            }
-        }
-    }
-    out
-}
-
-/// Build it: the planet, its towns and everything in them.
-pub(crate) fn build(args: &Args) -> World {
+/// Build it: the planet, its towns, and the models standing in them.
+pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
     let t0 = Instant::now();
     let mut planet = Planet {
         radius: RADIUS,
@@ -142,50 +119,18 @@ pub(crate) fn build(args: &Args) -> World {
     let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
     planet.sites = towns.iter().map(town::site_of).collect();
     let planned = t0.elapsed();
-    let recipes = recipes();
-    let mut structures: Vec<Structure> = Vec::new();
-    let mut groups = Vec::new();
-    let mut buildings = 0;
-    for t in &towns {
-        let start = structures.len();
-        for lot in &t.lots {
-            let Some(recipe) = recipes.get(lot.recipe).or_else(|| recipes.get("house")) else {
-                continue;
-            };
-            let storeys = lot.storeys.clamp(recipe.storeys[0], recipe.storeys[1]);
-            let building = recipe.compile(storeys, SEED ^ lot.id);
-            structures.push(Structure::new(lot_frame(RADIUS, t, lot.x, lot.z), building));
-            buildings += 1;
-        }
-        for piece in &t.pieces {
-            let slab = Building::slab(
-                DVec3::new(0.0, 0.0, -0.05),
-                DVec3::new(piece.w, piece.d, 0.6),
-                STREET,
-                0.0,
-            );
-            structures.push(Structure::new(lot_frame(RADIUS, t, piece.x, piece.z), slab));
-        }
-        let town = &structures[start..];
-        groups.push(Group {
-            lo: town.iter().fold(DVec3::INFINITY, |lo, st| lo.min(st.lo)),
-            hi: town
-                .iter()
-                .fold(DVec3::NEG_INFINITY, |hi, st| hi.max(st.hi)),
-            range: start..structures.len(),
-        });
-    }
-    let lamps: Vec<(DVec3, f64)> = structures.iter().flat_map(Structure::lamps).collect();
-    say_port(&towns, &recipes);
+    let raised = raise(&towns);
+    say_port(&towns);
     info!(
-        "{} towns planned in {:.0} ms, {} buildings from {} recipes and {} pieces of street built in {:.0} ms, {} lamps",
+        "{} towns planned in {:.0} ms, {} buildings and {} pieces of street modelled in {:.0} ms: {} triangles, {} boxes, {} lamps",
         towns.len(),
         planned.as_secs_f64() * 1000.0,
-        buildings,
-        recipes.len(),
-        structures.len() - buildings,
+        raised.buildings,
+        raised.pieces,
         (t0.elapsed() - planned).as_secs_f64() * 1000.0,
-        lamps.len()
+        raised.meshes.iter().map(|m| m.mesh.triangles()).sum::<usize>(),
+        raised.blocks.len(),
+        raised.lamps.len()
     );
     let (floor, roof) = planet.band();
     let bounds = Bounds {
@@ -194,25 +139,65 @@ pub(crate) fn build(args: &Args) -> World {
         top: roof + 40.0,
         sea: 0.0,
     };
-    World {
-        planet,
-        blocks: Vec::new(),
-        structures,
-        groups,
-        lamps,
-        towns,
-        bounds,
-        sea: Sea { radius: SEA },
-        dry: Vec::new(),
+    (
+        World {
+            planet,
+            blocks: raised.blocks,
+            groups: raised.groups,
+            lamps: raised.lamps,
+            towns,
+            bounds,
+            sea: Sea { radius: SEA },
+        },
+        raised.meshes,
+    )
+}
+
+/// What the towns' models come to: one mesh a town in the town's own
+/// frame, every box and lamp in the world frame, and what they were built
+/// from.
+#[derive(Default)]
+struct Raised {
+    blocks: Vec<Block>,
+    groups: Vec<Group>,
+    lamps: Vec<(DVec3, f64)>,
+    meshes: Vec<TownMesh>,
+    buildings: usize,
+    pieces: usize,
+}
+
+/// Every town modelled.
+fn raise(towns: &[Town]) -> Raised {
+    let mut out = Raised::default();
+    for town in towns {
+        let f = model::fabric(town, RADIUS, SEED);
+        let start = out.blocks.len();
+        out.blocks.extend(f.blocks);
+        let here = &out.blocks[start..];
+        out.groups.push(Group {
+            lo: here
+                .iter()
+                .fold(DVec3::INFINITY, |lo, b| lo.min(b.bounds().0)),
+            hi: here
+                .iter()
+                .fold(DVec3::NEG_INFINITY, |hi, b| hi.max(b.bounds().1)),
+            range: start..out.blocks.len(),
+        });
+        out.lamps.extend(f.lamps);
+        out.buildings += f.buildings;
+        out.pieces += f.pieces;
+        out.meshes.push(TownMesh {
+            frame: lot_frame(RADIUS, town, 0.0, 0.0),
+            mesh: f.mesh,
+        });
     }
+    out
 }
 
 /// Where the port is, so a picture can be aimed at it: its middle, its
-/// levelled ground and how far that reaches, and where the door of its
-/// first lot stands where there are buildings at all. On the hex world a
-/// town is a plateau and nothing else yet, so the door line has nothing to
-/// say and the site line is the whole of it.
-fn say_port(towns: &[Town], recipes: &HashMap<String, Recipe>) {
+/// levelled ground and how far that reaches, and what its first lot
+/// carries.
+fn say_port(towns: &[Town]) {
     let Some(port) = towns.first() else {
         return;
     };
@@ -226,19 +211,15 @@ fn say_port(towns: &[Town], recipes: &HashMap<String, Recipe>) {
     let Some(lot) = port.lots.first() else {
         return;
     };
-    let Some(recipe) = recipes.get(lot.recipe) else {
-        return;
-    };
     let f = lot_frame(RADIUS, port, lot.x, lot.z);
-    let outside = f.world(DVec3::new(
-        recipe.door,
-        -recipe.footprint[1] / 2.0 - 2.5,
-        1.7,
-    ));
-    let inside = f.world(DVec3::new(recipe.door, 0.0, 1.7));
+    let outside = f.world(DVec3::new(0.0, -town::BLOCK / 2.0 - 2.5, 1.7));
+    let inside = f.world(DVec3::new(0.0, 0.0, 1.7));
     info!(
         "the port's first lot is a {} of {} storeys; its door from {:.2} looking at {:.2}",
-        lot.recipe, lot.storeys, outside, inside
+        lot.kind.name(),
+        lot.storeys,
+        outside,
+        inside
     );
 }
 

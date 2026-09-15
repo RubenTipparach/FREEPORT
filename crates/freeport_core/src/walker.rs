@@ -390,7 +390,7 @@ impl Walker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::{Block, Built, Sphere};
+    use crate::field::{Block, Built, Sphere, CONCRETE};
 
     /// A ball big enough that a flat block on its top is level with the
     /// ground for the length of a walk: on a 20 m ball the ground fell
@@ -438,6 +438,7 @@ mod tests {
             centre: DVec3::new(ahead + long / 2.0, R + rise / 2.0 - 0.1, 0.0),
             half: DVec3::new(long / 2.0, wide / 2.0, rise / 2.0 + 0.1),
             axes: [DVec3::X, DVec3::Z, DVec3::Y],
+            material: CONCRETE,
         }
     }
 
@@ -512,11 +513,10 @@ mod tests {
     #[test]
     fn a_step_is_climbed_and_a_wall_is_not() {
         let ball = Sphere { radius: R };
+        let box_ = block(3.0, 10.0, 0.4, 6.0);
         let kerb = Built {
             ground: &ball,
-            blocks: vec![block(3.0, 10.0, 0.4, 6.0)],
-            structures: vec![],
-            cell: 0.25,
+            blocks: vec![&box_],
         };
         let (w, _) = walk(
             &kerb,
@@ -532,11 +532,10 @@ mod tests {
             "standing at {} over the ball",
             w.foot - R
         );
+        let box_ = block(3.0, 0.8, 1.2, 6.0);
         let wall = Built {
             ground: &ball,
-            blocks: vec![block(3.0, 0.8, 1.2, 6.0)],
-            structures: vec![],
-            cell: 0.25,
+            blocks: vec![&box_],
         };
         let (w, _) = walk(
             &wall,
@@ -557,11 +556,10 @@ mod tests {
     #[test]
     fn a_wall_is_slid_along_and_a_ceiling_stops_a_jump() {
         let ball = Sphere { radius: R };
+        let box_ = block(3.0, 0.8, 1.2, 30.0);
         let wall = Built {
             ground: &ball,
-            blocks: vec![block(3.0, 0.8, 1.2, 30.0)],
-            structures: vec![],
-            cell: 0.25,
+            blocks: vec![&box_],
         };
         let (w, _) = walk(
             &wall,
@@ -587,12 +585,11 @@ mod tests {
             centre: DVec3::new(3.5, R + 2.6, 0.0),
             half: DVec3::new(3.0, 3.0, 0.2),
             axes: [DVec3::X, DVec3::Z, DVec3::Y],
+            material: CONCRETE,
         };
         let roofed = Built {
             ground: &ball,
-            blocks: vec![lintel],
-            structures: vec![],
-            cell: 0.25,
+            blocks: vec![&lintel],
         };
         let b = bounds();
         let mut w = Walker::enter(&roofed, &b, DVec3::Y, DVec3::X);
