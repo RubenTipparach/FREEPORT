@@ -126,6 +126,12 @@ pub struct Tier {
     /// Town frames, as `terrain::Terrain::frames`.
     #[uniform(100)]
     pub frames: [Vec4; FRAMES * 3],
+    /// The sky at the horizon and its density, as `terrain::Terrain::fog`.
+    #[uniform(100)]
+    pub fog: Vec4,
+    /// The ground fog's shape, as `terrain::Terrain::haze`.
+    #[uniform(100)]
+    pub haze: Vec4,
     #[texture(101, dimension = "2d_array")]
     #[sampler(102)]
     pub albedo: Handle<Image>,
@@ -166,6 +172,12 @@ pub struct SeaTier {
     pub foam: Vec4,
     #[uniform(100)]
     pub band: Vec4,
+    /// The sky at the horizon and its density, as `terrain::Terrain::fog`.
+    #[uniform(100)]
+    pub fog: Vec4,
+    /// The ground fog's shape, as `terrain::Terrain::haze`.
+    #[uniform(100)]
+    pub haze: Vec4,
     #[uniform(110)]
     pub lanes: Lanes,
     #[storage(111, read_only)]
@@ -504,6 +516,8 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
         params: Vec4::new(ground_tile, concrete_tile, 0.0, at.sea as f32),
         centre: Vec4::ZERO,
         frames: [Vec4::ZERO; FRAMES * 3],
+        fog: Vec4::ZERO,
+        haze: Vec4::ZERO,
         albedo: maps[0].clone(),
         normal: maps[1].clone(),
         orm: maps[2].clone(),
@@ -547,6 +561,8 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
             zenith: sheet.zenith,
             foam: sheet.foam,
             band: sheet.band,
+            fog: sheet.fog,
+            haze: sheet.haze,
             lanes,
             leaves: leaves.clone(),
             which: Which::Sea,

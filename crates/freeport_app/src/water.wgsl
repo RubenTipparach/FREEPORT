@@ -34,6 +34,13 @@ struct Water {
     foam: vec4<f32>,
     // Foam bands: crest low and high on the ripple height, slope low and high.
     band: vec4<f32>,
+    // The sky at the horizon in rgb, and how much of it is in the way per
+    // metre of view distance in w.
+    fog: vec4<f32>,
+    // The ground fog, as `terrain.wgsl`'s: x the metres it falls off
+    // over, y how many times the plain haze it is at the sea, z the
+    // radius that is measured from.
+    haze: vec4<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> water: Water;
@@ -151,6 +158,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     ) * water.foam.w * near;
     color = vec4<f32>(mix(color.rgb, water.foam.rgb * view.exposure, foam), color.a);
 
-    out.color = main_pass_post_lighting_processing(pbr_input, color);
+    color = main_pass_post_lighting_processing(pbr_input, color);
+    // The same air the ground fades into, so the sea meets the land in
+    // one haze and the horizon is one line.
+    let eye_up = length(view.world_position - water.centre.xyz) - water.haze.z;
+    let here_up = length(q) - water.haze.z;
+    let mid_up = max((eye_up + here_up) * 0.5, 0.0);
+    let pooled = 1.0 + (water.haze.y - 1.0) * exp(-mid_up / max(water.haze.x, 1.0));
+    let in_the_way = 1.0 - exp(-away * water.fog.w * pooled);
+    out.color = vec4<f32>(
+        mix(color.rgb, water.fog.rgb * view.exposure, in_the_way),
+        color.a,
+    );
     return out;
 }

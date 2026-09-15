@@ -39,6 +39,12 @@ pub struct WaterExt {
     pub foam: Vec4,
     #[uniform(100)]
     pub band: Vec4,
+    /// The sky at the horizon and its density, as `terrain::Terrain::fog`.
+    #[uniform(100)]
+    pub fog: Vec4,
+    /// The ground fog's shape, as `terrain::Terrain::haze`.
+    #[uniform(100)]
+    pub haze: Vec4,
 }
 
 impl MaterialExtension for WaterExt {
@@ -90,14 +96,21 @@ pub struct Sheet;
 /// contoured sea and the hex world's both wear these, and neither spells
 /// them itself.
 pub fn sheet_ext(sea: f64) -> WaterExt {
+    let nits = freeport_core::atmos::NITS as f32;
     WaterExt {
         centre: Vec4::new(0.0, 0.0, 0.0, sea as f32),
         wave: Vec4::new(0.75, 1.5, 0.65, 0.5),
         deep: Vec4::new(0.02, 0.10, 0.22, 2.0),
-        horizon: Vec4::new(0.85, 0.92, 0.98, 0.5),
-        zenith: Vec4::new(0.35, 0.55, 0.85, 1.6),
-        foam: Vec4::new(0.95, 0.97, 1.0, 0.10),
+        // The three the shader takes through the camera's exposure are in
+        // CANDELA, `atmos::NITS` times the colour they are authored as, or
+        // they arrive at five ten thousandths of the ground beside them
+        // and the sheet reflects nothing at all.
+        horizon: (Vec3::new(0.85, 0.92, 0.98) * nits).extend(0.5),
+        zenith: (Vec3::new(0.35, 0.55, 0.85) * nits).extend(1.6),
+        foam: (Vec3::new(0.95, 0.97, 1.0) * nits).extend(0.10),
         band: Vec4::new(0.35, 0.60, 0.50, 1.20),
+        fog: Vec4::ZERO,
+        haze: Vec4::ZERO,
     }
 }
 

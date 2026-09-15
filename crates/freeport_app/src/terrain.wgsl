@@ -27,6 +27,13 @@ struct Terrain {
     // Three lanes a town: its direction with the radius its ground is at
     // in w, its east, its north.
     frames: array<vec4<f32>, 48>,
+    // The sky at the horizon in rgb, and how much of it is in the way per
+    // metre of view distance in w.
+    fog: vec4<f32>,
+    // The ground fog: x the metres its density falls off over, y how many
+    // times the plain haze it is down at the sea, z the radius that is
+    // measured from.
+    haze: vec4<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> terrain: Terrain;
@@ -231,5 +238,21 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    // The air in front of this fragment, off the same march the dome is
+    // drawn by (`freeport_core::atmos`, sampled at the horizon on the CPU
+    // and handed down each frame), so a hillside fades into the sky
+    // standing right above it rather than into a colour of its own.
+    // The air POOLS in the low ground, so the fog is measured at the
+    // MIDDLE of the view ray rather than at either end: a valley seen
+    // from a ridge is hazy and the ridge seen from the valley is not.
+    let eye_up = length(view.world_position - terrain.centre.xyz) - terrain.haze.z;
+    let here_up = length(rel) - terrain.haze.z;
+    let mid_up = max((eye_up + here_up) * 0.5, 0.0);
+    let pooled = 1.0 + (terrain.haze.y - 1.0) * exp(-mid_up / max(terrain.haze.x, 1.0));
+    let in_the_way = 1.0 - exp(-away * terrain.fog.w * pooled);
+    out.color = vec4<f32>(
+        mix(out.color.rgb, terrain.fog.rgb * view.exposure, in_the_way),
+        out.color.a,
+    );
     return out;
 }

@@ -21,6 +21,7 @@
 
 mod edit;
 mod lamps;
+mod sky;
 mod stream;
 mod terrain;
 mod tiers;
@@ -70,6 +71,19 @@ const FINE: f64 = 0.25;
 /// across, 32 km at eleven, which holds the whole planet from any eye on
 /// it.
 const LEVELS: u8 = 11;
+/// Frames a second the loop is held to by default. Vsync is the MONITOR's
+/// cap and not a cap at all: a scene this cheap to simulate draws at the
+/// refresh rate and holds the card at full clock the whole time, which is
+/// a hot room for frames nobody asked for. swarm-demo's number and its
+/// rule, `--fps 0` lifts it.
+const FPS: f64 = 144.0;
+
+/// Where the sun is, as a direction: ONE number, read by the light that
+/// casts the shadows, by the sky dome and by the fog, so the three cannot
+/// point three ways. A little over the horizon at the harness's start,
+/// which is the light a landscape reads best in.
+const SUN: DVec3 = DVec3::new(0.42, 0.62, -0.66);
+
 /// The hex tier: metres a tile, how many tiles the disc reaches, and how
 /// deep a column's skirt hangs. The skirt has to cover the step between
 /// two columns and the step from the rim column to the level of detail
@@ -103,6 +117,8 @@ pub(crate) struct Args {
     /// settled, so a headless run can photograph an edit and the chunks it
     /// remade.
     sculpt: Option<String>,
+    /// Frames a second the loop is held to. Nought lifts it.
+    fps: f64,
     /// Draw the hex tiers: a disc of Goldberg columns round the eye and
     /// Planet-LOD past it, both made in the vertex stage. It is the
     /// DEFAULT, because the hex world is what this harness is; `--chunks`
@@ -121,6 +137,7 @@ fn parse_args() -> Args {
         frames: 30,
         sculpt: None,
         tiers: true,
+        fps: FPS,
     };
     let mut it = std::env::args().skip(1);
     let vec3 = |s: &str| -> Option<DVec3> {
@@ -150,6 +167,7 @@ fn parse_args() -> Args {
             // The dual contoured world: chunks, a sea of its own, the
             // towns and the builder, and the walker on foot in them.
             "--chunks" => args.tiers = false,
+            "--fps" => args.fps = it.next().and_then(|v| v.parse().ok()).unwrap_or(FPS),
             other => warn!("unknown argument {other}"),
         }
     }
@@ -171,12 +189,16 @@ fn main() {
             TerrainPlugin,
             WaterPlugin,
             tiers::TiersPlugin,
+            sky::SkyPlugin,
         ))
         .insert_resource(WireframeConfig {
             global: args.wire,
             default_color: Color::srgb(0.1, 0.1, 0.12),
         })
-        .insert_resource(ClearColor(Color::srgb(0.55, 0.72, 0.92)))
+        // What is BEHIND the sky is space, and the sky is the air: a
+        // painted blue would be a second answer to what the sky looks
+        // like, and the one that could not be right at dusk.
+        .insert_resource(ClearColor(Color::srgb(0.01, 0.012, 0.02)))
         .insert_resource(args)
         .init_resource::<Eye>()
         .init_resource::<Frame>()
@@ -199,9 +221,11 @@ fn main() {
                 tiers::feed_tiers.run_if(on_tiers),
                 light_lamps.run_if(not(on_tiers)),
                 place_eye,
+                sky::drift_sky,
                 show_status,
                 toggle_wireframe,
                 take_shot,
+                hold_frame,
             )
                 .chain(),
         )
@@ -515,6 +539,8 @@ fn spawn_world(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
     mut waters: ResMut<Assets<WaterMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut skies: ResMut<Assets<sky::Sky>>,
     args: Res<Args>,
 ) {
     let world = world(if args.tiers { 0 } else { TOWNS });
@@ -564,6 +590,39 @@ fn spawn_world(
     } else {
         commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));
     }
+    spawn_light(&mut commands);
+    spawn_status(&mut commands);
+    commands.insert_resource(GlobalAmbientLight {
+        // Nearly nothing: what fills a shadow is the SKY, through the
+        // baked cubemap on the camera, and a flat ambient over the top of
+        // it would be a second answer to the same question. What is left
+        // is a floor, so a face with no sky over it is the colour of the
+        // gap between two stars rather than a hole in the picture, which
+        // is swarm-demo's own lesson about a nought ambient.
+        brightness: 8.0,
+        ..default()
+    });
+    let weather = sky::Weather {
+        air: freeport_core::atmos::Air::round(RADIUS),
+        sea: SEA,
+        sun: SUN.normalize(),
+    };
+    sky::spawn_dome(&mut commands, &mut meshes, &mut skies, &weather);
+    let lit = Instant::now();
+    let env = images.add(sky::bake_env(&weather.air, weather.sun, eye));
+    info!(
+        "the sky baked into a cubemap in {} ms",
+        lit.elapsed().as_millis()
+    );
+    commands.insert_resource(weather);
+    spawn_camera(&mut commands, &world, &args, eye, look, env);
+    commands.insert_resource(Eye(WorldPos(eye)));
+    commands.insert_resource(Ground(Arc::new(world)));
+}
+
+/// The sun, and the light it casts. The direction is `SUN` and nothing
+/// else, so the shadows fall the way the sky says they should.
+fn spawn_light(commands: &mut Commands) {
     commands.spawn((
         DirectionalLight {
             illuminance: 8_000.0,
@@ -577,12 +636,14 @@ fn spawn_world(
             ..default()
         }
         .build(),
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, 0.5, 0.0)),
+        // The light shines the way the sun is NOT: Bevy's forward is
+        // negative Z and a directional light travels along it.
+        Transform::from_translation(Vec3::ZERO).looking_to(-SUN.as_vec3(), Vec3::Y),
     ));
-    commands.insert_resource(GlobalAmbientLight {
-        brightness: 90.0,
-        ..default()
-    });
+}
+
+/// The line of text along the bottom that says where the eye is.
+fn spawn_status(commands: &mut Commands) {
     commands.spawn((
         Text::new(""),
         TextFont {
@@ -598,14 +659,18 @@ fn spawn_world(
         },
         Stat,
     ));
-    spawn_camera(&mut commands, &world, &args, eye, look);
-    commands.insert_resource(Eye(WorldPos(eye)));
-    commands.insert_resource(Ground(Arc::new(world)));
 }
 
 /// The camera, flying from `eye` toward `look`, or on foot at the spot
 /// under `eye` facing `look`.
-fn spawn_camera(commands: &mut Commands, world: &World, args: &Args, eye: DVec3, look: DVec3) {
+fn spawn_camera(
+    commands: &mut Commands,
+    world: &World,
+    args: &Args,
+    eye: DVec3,
+    look: DVec3,
+    env: Handle<Image>,
+) {
     let d = (look - eye).normalize_or(DVec3::NEG_Z);
     let fly = Fly {
         yaw: (-d.x as f32).atan2(-d.z as f32),
@@ -623,6 +688,14 @@ fn spawn_camera(commands: &mut Commands, world: &World, args: &Args, eye: DVec3,
         },
         DepthPrepass,
         Exposure { ev100: 10.5 },
+        // The sky lights the world: what fills a shadow is the air over
+        // it, off the same march the dome is drawn by, which is why a
+        // face turned away from the sun is sky blue and not black.
+        bevy::light::GeneratedEnvironmentMapLight {
+            environment_map: env,
+            intensity: 1.0,
+            ..default()
+        },
         fly,
     ));
 }
@@ -749,6 +822,30 @@ fn toggle_wireframe(keys: Res<ButtonInput<KeyCode>>, mut config: ResMut<Wirefram
     if keys.just_pressed(KeyCode::Tab) {
         config.global = !config.global;
     }
+}
+
+/// Hold the loop to `--fps`. It is a DEADLINE rather than a fixed sleep,
+/// so the cap does not drift, and a frame that has already overrun
+/// resyncs the deadline to now rather than chasing it: catching up means
+/// running the next few flat out, which is the thing a cap exists to
+/// prevent. `sleep` and not a spin, because a spin paces better and burns
+/// a core doing it, and burning a core is the problem. swarm-demo's, and
+/// it is off under `--shot`, where a headless run wants every frame it
+/// can get.
+fn hold_frame(args: Res<Args>, mut due: Local<Option<Instant>>) {
+    if args.fps <= 0.0 || args.shot.is_some() {
+        return;
+    }
+    let frame = std::time::Duration::from_secs_f64(1.0 / args.fps);
+    let now = Instant::now();
+    let next = match *due {
+        Some(at) if at > now => {
+            std::thread::sleep(at - now);
+            at + frame
+        }
+        _ => now + frame,
+    };
+    *due = Some(next);
 }
 
 /// With `--shot`, save the frame the arguments asked for once the streamer

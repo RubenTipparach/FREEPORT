@@ -53,6 +53,18 @@ pub struct Terrain {
     /// that frame's heading.
     #[uniform(100)]
     pub frames: [Vec4; FRAMES * 3],
+    /// The sky at the horizon, and how much of it is in the way per metre
+    /// of view distance: `sky::drift_sky` hands it down off the core's own
+    /// march, so the ground fades into the sky it stands under.
+    #[uniform(100)]
+    pub fog: Vec4,
+    /// The ground fog's shape: x how many metres its density falls off
+    /// over, y how much thicker it is at the sea than the plain haze, z
+    /// the radius it is measured from. Air pools in the LOW ground, so a
+    /// valley is hazier than the ridge over it and a mountain stands out
+    /// of its own weather.
+    #[uniform(100)]
+    pub haze: Vec4,
     #[texture(101, dimension = "2d_array")]
     #[sampler(102)]
     pub albedo: Handle<Image>,
@@ -268,6 +280,8 @@ pub fn terrain_material(
             params: Vec4::new(GROUND_TILE, CONCRETE_TILE, count, sea),
             centre: Vec4::ZERO,
             frames: lanes,
+            fog: Vec4::ZERO,
+            haze: Vec4::ZERO,
             albedo,
             normal,
             orm,
