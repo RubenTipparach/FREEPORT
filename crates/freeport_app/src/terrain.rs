@@ -227,6 +227,24 @@ fn frame_lanes(frames: &[Frame]) -> ([Vec4; FRAMES * 3], f32) {
 }
 
 /// The ground's material, with the sets loaded and the towns' frames set.
+/// The three array textures the sets are stacked into, in the order the
+/// shader binds them. The dual contoured ground and both hex tiers wear
+/// the same three, which is why this is a function and not a line inside
+/// one material's constructor.
+pub fn terrain_maps(images: &mut Assets<Image>) -> [Handle<Image>; 3] {
+    let dir = textures_dir();
+    [
+        images.add(stack(dir.as_ref(), "albedo", true)),
+        images.add(stack(dir.as_ref(), "normal", false)),
+        images.add(stack(dir.as_ref(), "orm", false)),
+    ]
+}
+
+/// Metres a tile, for anything that wears the sets.
+pub fn tiles() -> (f32, f32) {
+    (GROUND_TILE, CONCRETE_TILE)
+}
+
 pub fn terrain_material(
     images: &mut Assets<Image>,
     materials: &mut Assets<TerrainMaterial>,
@@ -239,9 +257,7 @@ pub fn terrain_material(
         None => warn!("no baked sets found: flat colours"),
     }
     let (lanes, count) = frame_lanes(frames);
-    let albedo = images.add(stack(dir.as_ref(), "albedo", true));
-    let normal = images.add(stack(dir.as_ref(), "normal", false));
-    let orm = images.add(stack(dir.as_ref(), "orm", false));
+    let [albedo, normal, orm] = terrain_maps(images);
     materials.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE,

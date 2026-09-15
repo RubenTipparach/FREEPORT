@@ -23,6 +23,7 @@ mod edit;
 mod lamps;
 mod stream;
 mod terrain;
+mod tiers;
 mod walk;
 mod water;
 
@@ -69,6 +70,19 @@ const FINE: f64 = 0.25;
 /// across, 32 km at eleven, which holds the whole planet from any eye on
 /// it.
 const LEVELS: u8 = 11;
+/// The hex tier: metres a tile, how many tiles the disc reaches, and how
+/// deep a column's skirt hangs. The skirt has to cover the step between
+/// two columns and the step from the rim column to the level of detail
+/// tier under it, and the relief's steepest is well under a metre a tile.
+const HEX_TILE: f64 = 1.0;
+const HEX_SPAN: u32 = 48;
+const HEX_SKIRT: f64 = 3.0;
+/// The far tier: Planet-LOD's quality knob, and how many pieces a leaf's
+/// edge is cut into on the way past. The detail on the ground is the
+/// product, so this is ratio 24 for the cost of selecting at 6.
+const LOD_RATIO: f64 = 6.0;
+const LOD_SUB: u32 = 4;
+
 /// Radians of look per pixel of mouse.
 pub(crate) const LOOK: f32 = 0.0022;
 /// Flying: metres a second, and the factor Shift puts on it.
@@ -89,6 +103,10 @@ pub(crate) struct Args {
     /// settled, so a headless run can photograph an edit and the chunks it
     /// remade.
     sculpt: Option<String>,
+    /// Draw the hex tiers rather than the dual contoured chunks: a disc of
+    /// Goldberg columns round the eye and Planet-LOD past it, both made in
+    /// the vertex stage.
+    tiers: bool,
 }
 
 fn parse_args() -> Args {
@@ -101,6 +119,7 @@ fn parse_args() -> Args {
         shot: None,
         frames: 30,
         sculpt: None,
+        tiers: false,
     };
     let mut it = std::env::args().skip(1);
     let vec3 = |s: &str| -> Option<DVec3> {
@@ -123,6 +142,13 @@ fn parse_args() -> Args {
             "--shot" => args.shot = it.next(),
             "--frames" => args.frames = it.next().and_then(|v| v.parse().ok()).unwrap_or(30),
             "--sculpt" => args.sculpt = it.next(),
+            // The tiers are flown over: the walker stands on the dual
+            // contoured field, and a hex column's ground is a question
+            // `freeport_core::walker` has not been asked yet.
+            "--tiers" => {
+                args.tiers = true;
+                args.fly = true;
+            }
             other => warn!("unknown argument {other}"),
         }
     }
@@ -133,7 +159,12 @@ fn main() {
     let args = parse_args();
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins((WireframePlugin::default(), TerrainPlugin, WaterPlugin))
+        .add_plugins((
+            WireframePlugin::default(),
+            TerrainPlugin,
+            WaterPlugin,
+            tiers::TiersPlugin,
+        ))
         .insert_resource(WireframeConfig {
             global: args.wire,
             default_color: Color::srgb(0.1, 0.1, 0.12),
@@ -144,7 +175,10 @@ fn main() {
         .init_resource::<Frame>()
         .init_resource::<Status>()
         .init_resource::<Builder>()
-        .add_systems(Startup, spawn_world)
+        .add_systems(
+            Startup,
+            (spawn_world, tiers::spawn_world.run_if(on_tiers)).chain(),
+        )
         .add_systems(
             Update,
             (
@@ -152,10 +186,11 @@ fn main() {
                 toggle_walk,
                 walk,
                 fly,
-                build,
+                build.run_if(not(on_tiers)),
                 rebase_origin,
-                stream,
-                light_lamps,
+                stream.run_if(not(on_tiers)),
+                tiers::feed_tiers.run_if(on_tiers),
+                light_lamps.run_if(not(on_tiers)),
                 place_eye,
                 show_status,
                 toggle_wireframe,
@@ -164,6 +199,13 @@ fn main() {
                 .chain(),
         )
         .run();
+}
+
+/// Whether the harness draws the hex tiers rather than the dual contoured
+/// chunks: the run condition on every system that belongs to one or the
+/// other.
+fn on_tiers(args: Res<Args>) -> bool {
+    args.tiers
 }
 
 /// What a frame of input is read from: the clock, the keys, the mouse's
@@ -330,8 +372,11 @@ fn recipes() -> HashMap<String, Recipe> {
     out
 }
 
-/// The planet, its towns and everything built in them.
-fn world() -> World {
+/// The planet, its towns and everything built in them. `towns` is nought
+/// for the hex tiers, which draw the relief alone: `field.wgsl` has no
+/// sites in it yet, so a town's levelled plateau would be in the walker's
+/// field and not in the picture.
+fn world(towns: usize) -> World {
     let t0 = Instant::now();
     let mut planet = Planet {
         radius: RADIUS,
@@ -343,7 +388,7 @@ fn world() -> World {
         seed: SEED,
         sites: vec![],
     };
-    let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
+    let towns = town::plan(&planet, SEA, TOWN_RADIUS, towns, SEED);
     planet.sites = towns.iter().map(town::site_of).collect();
     let planned = t0.elapsed();
     let recipes = recipes();
@@ -465,7 +510,7 @@ fn spawn_world(
     mut waters: ResMut<Assets<WaterMaterial>>,
     args: Res<Args>,
 ) {
-    let world = world();
+    let world = world(if args.tiers { 0 } else { TOWNS });
     let (start_eye, start_look) = start(&world);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
@@ -495,7 +540,23 @@ fn spawn_world(
         shore(&world, eye).map_or(f64::NAN, |s| (s - eye).length()),
         shore(&world, eye).unwrap_or(DVec3::NAN)
     );
-    commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));
+    if args.tiers {
+        commands.insert_resource(tiers::Tiers {
+            radius: RADIUS,
+            sea: SEA,
+            relief: 160.0,
+            lumps: 10.0,
+            octaves: 10,
+            seed: SEED,
+            tile: HEX_TILE,
+            span: HEX_SPAN,
+            skirt: HEX_SKIRT,
+            ratio: LOD_RATIO,
+            sub: LOD_SUB,
+        });
+    } else {
+        commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 8_000.0,
@@ -648,9 +709,21 @@ fn place_eye(
 
 fn show_status(
     status: Res<Status>,
-    streamer: Res<Streamer>,
+    streamer: Option<Res<Streamer>>,
+    tiers: Option<Res<tiers::Tiers>>,
     mut text: Query<&mut Text, With<Stat>>,
 ) {
+    let what = match (&streamer, &tiers) {
+        (Some(s), _) => s.status(),
+        (_, Some(t)) => format!(
+            "hex {:.2} m tiles in a disc of {:.0} m, Planet-LOD at ratio {} cut {} ways",
+            t.grid().spacing(t.radius),
+            t.disc() * t.radius,
+            t.ratio,
+            t.sub
+        ),
+        _ => String::new(),
+    };
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
             "{}   |   {}{}   |   F fly, B build, Tab wire, Esc mouse",
@@ -660,7 +733,7 @@ fn show_status(
             } else {
                 format!("{}   |   ", status.build)
             },
-            streamer.status()
+            what
         );
     }
 }
@@ -677,7 +750,7 @@ fn toggle_wireframe(keys: Res<ButtonInput<KeyCode>>, mut config: ResMut<Wirefram
 fn take_shot(
     mut commands: Commands,
     args: Res<Args>,
-    streamer: Res<Streamer>,
+    streamer: Option<Res<Streamer>>,
     mut frame: Local<u32>,
     mut taken: Local<Option<u32>>,
     mut exit: MessageWriter<AppExit>,
@@ -687,9 +760,16 @@ fn take_shot(
     };
     *frame += 1;
     // A scripted edit is placed the frame after the first load settles, so
-    // the picture waits for it and for the chunks it remade.
-    let edited = args.sculpt.is_none() || streamer.edits() > 0;
-    let ready = (streamer.idle() && edited) || *frame >= args.frames * 10;
+    // the picture waits for it and for the chunks it remade. The tiers
+    // have nothing to settle: what they draw is a function of where the
+    // eye is on the frame it is drawn.
+    let ready = match &streamer {
+        Some(s) => {
+            let edited = args.sculpt.is_none() || s.edits() > 0;
+            (s.idle() && edited) || *frame >= args.frames * 10
+        }
+        None => true,
+    };
     if taken.is_none() && *frame >= args.frames && ready {
         commands
             .spawn(Screenshot::primary_window())

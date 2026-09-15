@@ -435,9 +435,11 @@ impl Block {
     }
 }
 
-/// A lattice hash in 0..1, bit exact on every machine: what the noise is
-/// built on, and what a plan draws its dice from.
-pub fn hash3(x: i64, y: i64, z: i64, seed: u32) -> f64 {
+/// The lattice's mixing, in whole numbers: nothing but multiply, exclusive
+/// or and shift, so it is bit exact on every machine and in every language.
+/// `hash3` is this over its own range and `field.wgsl` computes exactly
+/// this in WGSL.
+pub fn mix3(x: i64, y: i64, z: i64, seed: u32) -> u32 {
     let mut h = (x as u32).wrapping_mul(0x8DA6_B343)
         ^ (y as u32).wrapping_mul(0xD816_3841)
         ^ (z as u32).wrapping_mul(0xCB1A_B31F)
@@ -447,7 +449,21 @@ pub fn hash3(x: i64, y: i64, z: i64, seed: u32) -> f64 {
     h ^= h >> 12;
     h = h.wrapping_mul(0x297A_2D39);
     h ^= h >> 15;
-    h as f64 / 4_294_967_296.0
+    h
+}
+
+/// A lattice hash in 0..1, bit exact on every machine: what the noise is
+/// built on, and what a plan draws its dice from.
+pub fn hash3(x: i64, y: i64, z: i64, seed: u32) -> f64 {
+    mix3(x, y, z, seed) as f64 / 4_294_967_296.0
+}
+
+/// The same hash as a float, which is all a GPU can hold: `f32` carries
+/// twenty four bits of a thirty two bit number, so this is where the
+/// transcription in `field.wgsl` parts company with the core, and
+/// `a_float_hash_is_the_cores_to_a_hundred_millionth` is the bound.
+pub fn hash3_f32(x: i64, y: i64, z: i64, seed: u32) -> f32 {
+    mix3(x, y, z, seed) as f32 / 4_294_967_296.0
 }
 
 fn smooth(t: f64) -> f64 {
@@ -564,6 +580,28 @@ mod tests {
             noise3(DVec3::new(0.5, 0.5, 0.5), 1),
             noise3(DVec3::new(0.5, 0.5, 0.5), 2)
         );
+    }
+
+    #[test]
+    fn a_float_hash_is_the_cores_to_a_hundred_millionth() {
+        // A GPU has no f64, so `field.wgsl` computes `mix3` exactly and then
+        // rounds it into a float's twenty four bits. That rounding is the
+        // whole of the divergence between the ground a shader draws and the
+        // ground the walker stands on, so it is measured rather than
+        // assumed: the bound in metres is this share of the relief.
+        let mut worst: f64 = 0.0;
+        for i in 0..40i64 {
+            for j in 0..40i64 {
+                for k in 0..40i64 {
+                    let a = hash3(i * 7 - 91, j * 13 - 17, k * 3 + 5, 11);
+                    let b = hash3_f32(i * 7 - 91, j * 13 - 17, k * 3 + 5, 11) as f64;
+                    worst = worst.max((a - b).abs());
+                }
+            }
+        }
+        // One part in 2^24, and a float cannot do better than half of that.
+        assert!(worst < 6.0e-8, "the float hash is {worst} off");
+        assert!(worst > 0.0, "a float held all thirty two bits?");
     }
 
     #[test]

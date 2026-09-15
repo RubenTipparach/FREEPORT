@@ -307,6 +307,29 @@ impl Grid {
         out
     }
 
+    /// A tile's middle and the two steps of the lattice there, which is
+    /// the whole of what a shader needs to draw a window of tiles round it
+    /// (`tiers.wgsl`, `tile_dir`): the tile `(u, v)` steps away is
+    /// `normalize(mid + u * e1 + v * e2)`, with no face table, no
+    /// canonical address and no unfolding.
+    ///
+    /// The three are the face's OWN plane rather than the sphere's, so on
+    /// the anchor's face the window is not an approximation at all: a
+    /// lattice point is linear in the face's corners and only the
+    /// normalise is not, so stepping before the normalise is exactly
+    /// `point`. What it cannot do is leave the face, because the next face
+    /// is a different plane, and it cannot do a corner at all, where five
+    /// faces meet and a window is six ways round.
+    /// `a_window_of_steps_is_the_grids_own_tiles` measures all three.
+    pub fn basis(&self, tile: Tile) -> (DVec3, DVec3, DVec3) {
+        let (v, faces) = icosahedron();
+        let f = faces[tile.face as usize];
+        let n = self.n as f64;
+        let (i, j) = (tile.i as f64, tile.j as f64);
+        let base = (v[f[0]] * (n - i - j) + v[f[1]] * i + v[f[2]] * j) / n;
+        (base, (v[f[1]] - v[f[0]]) / n, (v[f[2]] - v[f[0]]) / n)
+    }
+
     /// Every tile whose middle is within `angle` radians of a direction,
     /// found by walking out from the tile under it. A disc of tiles is what
     /// the near tier draws, and it is bounded by the angle and never by the
@@ -487,6 +510,85 @@ mod tests {
                 (total - std::f64::consts::TAU).abs() < 1e-9,
                 "the corners went round {total} rather than a turn"
             );
+        }
+    }
+
+    /// The steps of a window off `basis`, and the tile each lands in.
+    fn window(grid: Grid, centre: DVec3, span: i64) -> (Vec<DVec3>, Vec<Tile>) {
+        let anchor = grid.at(centre);
+        let (mid, e1, e2) = grid.basis(anchor);
+        let (mut steps, mut tiles) = (Vec::new(), Vec::new());
+        for u in -span..=span {
+            for v in -span..=span {
+                if u * u + u * v + v * v > span * span {
+                    continue;
+                }
+                let step = (mid + e1 * u as f64 + e2 * v as f64).normalize();
+                tiles.push(grid.at(step));
+                steps.push(step);
+            }
+        }
+        (steps, tiles)
+    }
+
+    /// How far the window's steps are from the middles of the tiles they
+    /// land in, worst case metres, and how many tiles two steps had to
+    /// share. A step that shares a tile is a tile drawn twice and a tile
+    /// of the disc drawn not at all.
+    fn window_error(grid: Grid, radius: f64, centre: DVec3, span: i64) -> (f64, usize) {
+        let (steps, tiles) = window(grid, centre, span);
+        let mut worst: f64 = 0.0;
+        for (step, tile) in steps.iter().zip(tiles.iter()) {
+            worst = worst.max((grid.dir(*tile) - *step).length() * radius);
+        }
+        let mut sorted = tiles.clone();
+        sorted.sort();
+        sorted.dedup();
+        (worst, tiles.len() - sorted.len())
+    }
+
+    #[test]
+    fn a_window_of_steps_is_the_grids_own_tiles() {
+        // What `tiers.wgsl` draws, against what the grid says: exact on the
+        // anchor's own face, off centre once the window crosses onto the
+        // next one, and short of tiles at an icosahedron corner, where five
+        // faces meet and a square window is six ways round. The numbers are
+        // what the commit message carries.
+        let radius = 5_000.0;
+        let grid = Grid::for_tile(radius, 1.0);
+        let spacing = grid.spacing(radius);
+        let (v, faces) = icosahedron();
+        let f = faces[0];
+        let span = 24;
+        for (what, centre) in [
+            ("inside a face", (v[f[0]] + v[f[1]] + v[f[2]]).normalize()),
+            ("across an edge", (v[f[0]] + v[f[1]]).normalize()),
+            ("at a corner", v[f[0]]),
+        ] {
+            let (off, shared) = window_error(grid, radius, centre, span);
+            println!("a window of {span} tiles of {spacing:.3} m, {what}: {off:.6} m off the middles, {shared} tiles shared");
+            match what {
+                // A lattice point is linear in its face's corners and only
+                // the normalise is not, so stepping before the normalise IS
+                // `point`, and what is left is the float's own rounding.
+                "inside a face" => {
+                    assert!(off < 1.0e-6, "{what}: {off} m");
+                    assert_eq!(shared, 0, "{what}");
+                }
+                // The next face is a different plane, so the steps land off
+                // the middles; they still land one to a tile.
+                "across an edge" => {
+                    assert!(
+                        off > spacing * 0.05 && off < spacing * 0.6,
+                        "{what}: {off} m"
+                    );
+                    assert_eq!(shared, 0, "{what}");
+                }
+                // And a corner is the one place the window is not the
+                // lattice: it is drawn here and it is wrong here, and that
+                // is written down rather than hidden.
+                _ => assert!(shared > 0, "{what} lost nothing?"),
+            }
         }
     }
 
