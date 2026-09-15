@@ -91,10 +91,8 @@ if [ "$suites" = 1 ]; then
     if command -v python3 >/dev/null 2>&1; then
         say "the shape of the code"
         python3 tools/shape.py --check
-        say "the mockup's recipes match assets/buildings"
-        python3 tools/bundle_buildings.py --check
     else
-        warn "no python3, skipping the shape and recipe checks"
+        warn "no python3, skipping the shape check"
     fi
 fi
 

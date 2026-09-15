@@ -116,7 +116,7 @@ figcaption { font-family: var(--mono); font-size: 12.5px; color: var(--dim); mar
     <h1>Free<span>port</span></h1>
     <p class="brief">An open world space game about <b>working</b> in a space economy: a few thousand stars, tens of thousands of planets you can land on and walk out onto, hauled, mined and traded between, in a ship you climb out of. This page is what is being built, the stack it is built on, and the tooling that keeps it buildable.</p>
   </div>
-  <div class="stamp"><b>Design bible, revision 3</b>Bevy 0.18 / avian 0.6 / Rust 1.94<br>branch claude/hex-tiers<br>rules: CLAUDE.md</div>
+  <div class="stamp"><b>Design bible, revision 4</b>Bevy 0.18 / avian 0.6 / Rust 1.94<br>branch cube-march<br>rules: CLAUDE.md</div>
 </header>
 
 <div class="body">
@@ -129,8 +129,8 @@ figcaption { font-family: var(--mono); font-size: 12.5px; color: var(--dim); mar
   <a href="#towns">Towns</a>
   <a href="#field">Buildings</a>
   <a href="#levels">In the core</a>
-  <a href="#planet">The planet</a>
-  <a href="#tiers">Two tiers</a>
+  <a href="#planet">The world</a>
+  <a href="#tiers">Set aside</a>
   <a href="#air">The air</a>
   <a href="#stack">The stack</a>
   <a href="#materials">Materials</a>
@@ -386,7 +386,11 @@ figcaption { font-family: var(--mono); font-size: 12.5px; color: var(--dim); mar
   <p class="lede">The whole of what the binary opens on: one density field, dual contoured a chunk at a time at whatever detail the eye is near enough to see, in rings round the eye on worker threads. There is a sea, eight towns whose buildings and streets are <b>parametric models</b> standing on ground the field levels for them, lamps that become lights near the eye, and the walker on the port's main street stopped by the same boxes the walls were drawn from. Everything in it is a rule in <code>freeport_core</code> with a test, and every picture here was taken headless on a software rasteriser before anybody walked round it. Past the coarsest ring there is nothing drawn, which is the impostor tier coming due and the biggest hole in the world as it stands.</p>
   <div class="pair wide">
     <div class="shot"><img src="img/city-street.jpg" alt="On foot on a street of the port: paved street between concrete towers with lit and dark window panes, a glowing lamp on the right, grass beyond the paving"><div class="cap"><b>A street of the port</b>where the walker starts, on the thousand kilometre planet: the buildings are models welded into one mesh a town, the paving is one quad a piece five centimetres over levelled ground, and the concrete is mapped in the town's frame so the panels are level and plumb</div></div>
+    <div class="shot"><img src="img/city-air.jpg" alt="The port from fifty metres up: a grid of concrete towers with parapets and lit windows, gabled roofs among them, streets between, grass and a beach and the sea beyond"><div class="cap"><b>The same town from 55 m</b>699 buildings and 7,744 pieces of street over eight towns, modelled in 30 ms at startup and untouched after it: towers with parapets and plate pillars in the middle, gables at the edge, the levelled site under all of it and the shore past the skirt</div></div>
+  </div>
+  <div class="pair wide">
     <div class="shot"><img src="img/planet-shore.jpg" alt="The shore near the port: grass down to the sea, the sheet rippled and lit by the sky"><div class="cap"><b>The shore</b>the sea's surface is the sphere at its level, contoured in the same chunks as the ground and clipped per triangle by what is under it; tenebris's swell, ripples, fresnel and foam on Bevy's own transmission</div></div>
+    <div class="shot"><img src="img/dc-textured.jpg" alt="The dual contoured ground on the sets: rock on the steep, grass on the flat"><div class="cap"><b>The ground itself</b>one lattice at every level, rock on the steep and grass on the flat by the same smoothstep, sand in a band over the sea; the towns are the only thing that touches the field, and they level it</div></div>
   </div>
   <h3>Rings of chunks round the eye</h3>
   <p>A cell at level L is 2<sup>L</sup> fine cells a side and a chunk is sixteen of them, and the chunks round the eye are a box of eight at every level, each inside the next coarser's and kept a whole coarser chunk inside it, so no two chunks that touch differ by more than one level and the seam is the polygon rule above. Every frame the rings follow the eye; when a box moves the wanted set is recomputed, every chunk the field cannot rule wholly rock or air with a signature of its twenty six neighbours' levels, and what is wanted and not loaded with that signature is contoured on a worker, nearest first, and drawn when it comes back if it is still wanted as it was. A chunk nobody wants stays until whatever covers its ground has arrived, three seconds at most. Meshes are chunk local, placed through the origin, and one system moves everything when the origin moves. The first cut drained a dozen meshes a frame and throttled the first load to the frame rate; it drains by time now.</p>
@@ -475,7 +479,7 @@ figcaption { font-family: var(--mono); font-size: 12.5px; color: var(--dim); mar
   <ul>
     <li><b>The shape of the code.</b> <code>tools/shape.py --check</code>: no file over 900 lines, no function over 100. The list it prints is work, never a reason to raise the limit.</li>
     <li><b>rustfmt and clippy.</b> The core is clean at <code>-D warnings</code>; the app's count never rises; a formatting commit carries nothing else and is read through by <code>git blame</code>.</li>
-    <li><b>Every pub fn in the core has a doc comment and a test</b>, and a constant lives beside the one system that reads it with its unit in the comment. Fifty seven tests today, in about four seconds.</li>
+    <li><b>Every pub fn in the core has a doc comment and a test</b>, and a constant lives beside the one system that reads it with its unit in the comment. Sixty seven tests today, in about four seconds.</li>
     <li><b>Every asset has a committed source.</b> A PNG without a <code>.ptex</code>, a glTF without a <code>.blend</code> or a generator, a table without the script that wrote it, is a file nobody can regenerate and nobody can review a change to.</li>
     <li><b>Pictures prove refactors.</b> The same scene on the binary from before and after, <code>tools/pngdiff.py</code> on the pair, judged against that scene's own floor. A camera for a picture is solved, never hand aimed.</li>
     <li><b>Measure, then decide.</b> Numbers in the commit message, off a clock and not the engine's clamped delta, and never "faster" without a before and an after.</li>
