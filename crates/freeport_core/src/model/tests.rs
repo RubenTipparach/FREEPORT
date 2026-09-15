@@ -180,3 +180,95 @@ fn a_towns_fabric_is_one_mesh_in_its_own_frame() {
     // are what stands on it.
     assert!(!f.mesh.materials.contains(&TERRAIN));
 }
+
+/// A walker set down on a street of a town, walking `frames` sixtieths in
+/// its heading: where it ends up, and how far it came along the ground.
+fn walk_town(
+    planet: &Planet,
+    blocks: &[crate::field::Block],
+    at: DVec3,
+    heading: DVec3,
+    frames: usize,
+) -> (crate::walker::Walker, f64) {
+    let field = crate::field::Built {
+        ground: planet,
+        blocks: blocks.iter().collect(),
+    };
+    let (floor, roof) = planet.band();
+    let bounds = crate::walker::Bounds {
+        radius: planet.radius,
+        floor: floor - 2.0,
+        top: roof + 40.0,
+        sea: 0.0,
+    };
+    let mut w = crate::walker::Walker::enter(&field, &bounds, at, heading);
+    let from = w.dir;
+    let input = crate::walker::Input {
+        forward: 1.0,
+        ..Default::default()
+    };
+    for _ in 0..frames {
+        w.update(&field, &bounds, &input, 1.0 / 60.0);
+    }
+    let gone = from.angle_between(w.dir) * planet.radius;
+    (w, gone)
+}
+
+/// The town's models are what a body meets: a walker set down on a street
+/// walks along it, and one set down facing a lot's wall is stopped by it
+/// without being pushed through the ground or thrown off the planet.
+///
+/// A picture cannot tell a street that is walkable from one a walker is
+/// standing in, and a render of this world on a software rasteriser is
+/// seventeen minutes, so the walk is measured here where it costs nothing.
+#[test]
+fn a_walker_walks_a_street_and_is_stopped_by_a_wall() {
+    let mut planet = Planet {
+        radius: 4_000.0,
+        relief: 24.0,
+        lumps: 12.0,
+        octaves: 9,
+        overhang: 0.0,
+        ledge: 0.0,
+        seed: 11,
+        sites: vec![],
+    };
+    let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
+    let town = towns[0].clone();
+    planet.sites = towns.iter().map(town::site_of).collect();
+    let fab = fabric(&town, planet.radius, 11);
+    // Down the middle of the street west of the town's middle, which is
+    // where the harness sets its own walker down.
+    let x = -BLOCK / 2.0 - town::STREET / 2.0;
+    let frame = town::lot_frame(planet.radius, &town, x, -town.radius * 0.5);
+    let start = frame.world(DVec3::new(0.0, 0.0, 1.7));
+    let north = frame.world(DVec3::new(0.0, 10.0, 1.7)) - start;
+    let (w, gone) = walk_town(&planet, &fab.blocks, start, north, 150);
+    assert!(
+        (6.0..14.0).contains(&gone),
+        "two and a half seconds up the street went {gone:.2} m"
+    );
+    assert!(w.on_ground, "the walker is airborne on a street");
+    let over = w.foot - (planet.radius + town.h);
+    assert!(
+        (-0.2..0.6).contains(&over),
+        "the feet stand {over:.2} m off the town's own level"
+    );
+    // And a lot's wall stops a body: three metres east of a lot's own east
+    // face, walking west into it, the walker gets no further than the face
+    // less its own body. From the street it would walk between two lots,
+    // because a lot is ten metres on a pitch of fourteen and the gap
+    // between two is a way through.
+    let lot = &town.lots[town.lots.len() / 2];
+    let f = town::lot_frame(planet.radius, &town, lot.x, lot.z);
+    let out = BLOCK / 2.0 + 3.0;
+    let start = f.world(DVec3::new(out, 0.0, 1.7));
+    let west = f.world(DVec3::new(0.0, 0.0, 1.7)) - start;
+    let (w, gone) = walk_town(&planet, &fab.blocks, start, west, 150);
+    assert!(
+        (1.5..3.0).contains(&gone),
+        "walked {gone:.2} m at a {} whose wall is 3.0 m away, less a body of 0.35",
+        lot.kind.name()
+    );
+    assert!(w.on_ground, "the walker is airborne against a wall");
+}

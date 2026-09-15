@@ -769,6 +769,18 @@ What is MISSING is floors and stairs: a building is one room to the roof,
 and that is named here rather than hidden, because on a field they were
 brushes and here they are geometry nobody has written yet.
 
+**A walk is what proves a town, and a picture cannot.**
+`a_walker_walks_a_street_and_is_stopped_by_a_wall` sets a walker down on a
+street of a planned town, walks it two and a half seconds up the street and
+holds it on the ground within a few decimetres of the town's own level,
+then sets it three metres east of a lot's east face and holds it short of
+the wall by its own body. It found its own first defect: aimed east from
+the street it walked eleven metres, because a lot is ten metres on a pitch
+of fourteen and the gap between two lots is a way through, which is the
+town's plan being right and the test being wrong. A render of this world on
+a software rasteriser is seventeen minutes, so the walk is measured where
+it costs nothing.
+
 **A street is one quad and it stops nothing.** The site under a town is
 levelled, so the ground there is a plane, and dual contouring holds a
 plane to two millimetres (the audit's own number): paving laid five
@@ -1138,7 +1150,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 66, the core, about 2.5 s
+cargo test -p freeport_core                       # 67, the core, about 4 s
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -1185,7 +1197,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 66 tests in about 2.5 s. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 67 tests in about 4 s. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across, with
