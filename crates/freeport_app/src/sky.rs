@@ -10,7 +10,6 @@
 //! every frame for exactly this reason, and says so.
 
 use crate::terrain::TerrainMaterial;
-use crate::tiers::{SeaMaterial, TierMaterial};
 use crate::water::WaterMaterial;
 use bevy::asset::embedded_asset;
 use bevy::camera::visibility::NoFrustumCulling;
@@ -183,16 +182,13 @@ pub fn spawn_dome(
     );
 }
 
-/// The materials the fog is painted onto: the dual contoured ground and
-/// sea, and the hex world's two tiers and its sheet. One system hands all
-/// of them the same colour and the same density, because they all stand
-/// under one sky.
+/// The materials the fog is painted onto: the ground and the sea. One
+/// system hands both the same colour and the same density, because they
+/// stand under one sky.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Painted<'w> {
     pub ground: ResMut<'w, Assets<TerrainMaterial>>,
-    pub tiers: ResMut<'w, Assets<TierMaterial>>,
     pub water: ResMut<'w, Assets<WaterMaterial>>,
-    pub seas: ResMut<'w, Assets<SeaMaterial>>,
 }
 
 /// Every frame: the dome onto the eye, the planet's centre and the sun
@@ -243,23 +239,9 @@ pub fn drift_sky(
             m.extension.haze = haze;
         }
     }
-    let ids: Vec<_> = painted.tiers.ids().collect();
-    for id in ids {
-        if let Some(m) = painted.tiers.get_mut(id) {
-            m.extension.fog = fog;
-            m.extension.haze = haze;
-        }
-    }
     let ids: Vec<_> = painted.water.ids().collect();
     for id in ids {
         if let Some(m) = painted.water.get_mut(id) {
-            m.extension.fog = fog;
-            m.extension.haze = haze;
-        }
-    }
-    let ids: Vec<_> = painted.seas.ids().collect();
-    for id in ids {
-        if let Some(m) = painted.seas.get_mut(id) {
             m.extension.fog = fog;
             m.extension.haze = haze;
         }

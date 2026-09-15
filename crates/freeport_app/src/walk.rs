@@ -5,13 +5,10 @@
 //! the eye is for the camera, a line of text saying where it stands, and a
 //! key that swaps between walking and flying. The field the walker walks
 //! is the one the world is DRAWN from, so the picture is the collider:
-//! `World::underfoot` hands over the dual contoured field where that is
-//! what is drawn and `freeport_core::columns::Columns` where the hex tiers
-//! are, and nothing here knows which it got.
+//! `World::underfoot` hands over the same field the mesher contoured.
 
 use crate::{Args, Controls, Eye, Fly, Ground, Status};
 use bevy::prelude::*;
-use freeport_core::columns::Columns;
 use freeport_core::field::{Density, CONCRETE};
 use freeport_core::pos::WorldPos;
 use freeport_core::walker::{Bounds, Input, Walker};
@@ -21,13 +18,12 @@ use freeport_core::walker::{Bounds, Input, Walker};
 pub struct OnFoot(pub Walker);
 
 /// What a scripted walk has done so far: frames left, where it started,
-/// and how far the feet ever stood off the ground under them.
+/// and the worst a frame of it cost.
 #[derive(Default)]
 pub struct Scripted {
     left: u32,
     done: u32,
     from: Option<freeport_core::walker::Walker>,
-    worst: f64,
     cost: f64,
 }
 
@@ -110,34 +106,23 @@ pub fn walk(
     );
 }
 
-/// What a scripted walk has done: how far it has come along the ground,
-/// how far the feet ever stood off the top of the TILE they are over, and
-/// what a frame of the walker costs. Said once a second.
-///
-/// The gap is measured against the column's own top and never against the
-/// walker's own `ground`, which the walker has just set the feet to: that
-/// would be asking a thing whether it agrees with itself. The tile's top
-/// is what the SHADER lifts the column by, so this is the picture and the
-/// collider compared, which is the whole of what "snap to the hex surface"
-/// asks for.
+/// What a scripted walk has done: how far it has come along the ground
+/// and what a frame of the walker costs, said once a second. A headless
+/// run has nobody to press W, and a walker's feel is a number a second
+/// person can check rather than a thing to take on trust.
 fn say_walk(script: &mut Scripted, w: &Walker, ground: &Ground, cost: f64) {
     let Some(from) = &script.from else {
         return;
     };
     script.cost = script.cost.max(cost);
-    if let Some(grid) = ground.0.tiles {
-        let top = Columns::new(grid, &ground.0.planet, &ground.0.stacks).top(grid.at(w.dir));
-        script.worst = script.worst.max((w.foot - top).abs());
-    }
     if !script.done.is_multiple_of(60) || script.done == 0 {
         return;
     }
     let gone = from.dir.angle_between(w.dir) * ground.0.planet.radius;
     info!(
-        "walked {gone:.1} m in {:.0} s, {:.2} m over the mean radius, the feet {:.4} m off the column's own top at worst, {:.2} ms a frame at worst{}",
+        "walked {gone:.1} m in {:.0} s, {:.2} m over the mean radius, {:.2} ms a frame at worst{}",
         script.done as f64 / 60.0,
         w.foot - ground.0.planet.radius,
-        script.worst,
         script.cost * 1e3,
         if w.on_ground { "" } else { ", airborne" },
     );

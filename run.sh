@@ -7,11 +7,11 @@
 #   ./run.sh --build-only                        build, do not run
 #   ./run.sh --test                              the suites, then build and run
 #   ./run.sh --shot out.png                      no display needed: a picture under Xvfb and lavapipe, then exit
-#   ./run.sh -- --chunks --wire
-#   ./run.sh --shot out.png -- --span 20 --octaves 14 --eye 0,1030000,0 --look 0,1000000,120000
+#   ./run.sh -- --fly --wire
+#   ./run.sh --shot out.png -- --octaves 14 --eye 0,1030000,0 --look 0,1000000,120000
 #
-# Everything after -- goes to freeport_app itself: --chunks, --levels, --wire,
-# --fly, --eye, --look, --shot, --frames, --sculpt, --fps, --span, --octaves.
+# Everything after -- goes to freeport_app itself: --levels, --wire, --fly,
+# --eye, --look, --shot, --frames, --fps, --octaves, --walk.
 # The first token this script does not know starts the passthrough too.
 
 set -euo pipefail

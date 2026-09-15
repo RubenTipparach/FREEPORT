@@ -169,38 +169,24 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let n = normalize(in.world_normal);
     let rel = in.world_position.xyz - terrain.centre.xyz;
     let up = normalize(rel);
-    // What this triangle is made of. A dual contoured chunk carries it in
-    // the vertex colour's red, every corner the same so no driver's choice
-    // of provoking vertex can change it; a tier's mesh is a vertex COUNT
-    // and has no colours at all, so it rides the same varying its height
-    // over the sea does, and every vertex of one of its triangles carries
-    // the same number, which makes the interpolation a constant.
-#ifdef TIER_HEIGHT
-    let material = in.uv.x;
-#else
+    // What this triangle is made of: the vertex colour's red, every corner
+    // of the triangle the same so no driver's choice of provoking vertex
+    // can change it, which is the mockup's hatched walls not happening
+    // twice.
     var material = 0.0;
 #ifdef VERTEX_COLORS
     material = in.color.r;
-#endif
 #endif
     let ground = is(material, M_TERRAIN);
     let slope = 1.0 - clamp(dot(n, up), 0.0, 1.0);
     let steep = smoothstep(0.34, 0.6, slope);
     let w_rock = steep * ground;
     // Sand along the shore and under the shallows, grass above it: the
-    // mockup's band by height, measured off the sea's own radius.
-    //
-    // A tier hands the height DOWN as a varying (`TIER_HEIGHT`), because
-    // its triangles can be kilometres across and the fragment's own
-    // position is interpolated along a CHORD that sags under the sphere:
-    // `tiers.wgsl`'s `emit` says what that did to the continents. A dual
-    // contoured chunk is metres across and its position IS the surface,
-    // so there the length is the honest answer and costs no varying.
-#ifdef TIER_HEIGHT
-    let over_sea = in.uv.y;
-#else
+    // mockup's band by height, measured off the sea's own radius. A
+    // chunk's triangles are metres across and their position IS the
+    // surface, so the length is the honest answer here and costs no
+    // varying.
     let over_sea = length(rel) - terrain.params.w;
-#endif
     let sand = 1.0 - smoothstep(SAND_TO, GRASS_FROM, over_sea);
     let level = (1.0 - steep) * ground;
     let w_sand = level * sand;

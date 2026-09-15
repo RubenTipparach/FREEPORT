@@ -3,7 +3,7 @@
 //! The defaults are `main.rs`'s own constants, so a flag and the number it
 //! overrides are never written twice.
 
-use crate::{FPS, HEX_SPAN, LEVELS, OCTAVES};
+use crate::{FPS, LEVELS, OCTAVES};
 use bevy::math::DVec3;
 use bevy::prelude::{warn, Resource};
 
@@ -23,22 +23,15 @@ pub(crate) struct Args {
     pub(crate) sculpt: Option<String>,
     /// Frames a second the loop is held to. Nought lifts it.
     pub(crate) fps: f64,
-    /// How many tiles the hex disc reaches, and how many octaves of
-    /// relief the field carries: both are what a picture on a software
-    /// rasteriser is bought down with, since the field in the vertex
-    /// stage is nearly all of a frame there.
-    pub(crate) span: u32,
+    /// How many octaves of relief the field carries: what a picture on a
+    /// software rasteriser is bought down with, since the field is what a
+    /// chunk costs.
     pub(crate) octaves: u32,
     /// Drive the walker FORWARD for this many frames at a fixed sixtieth
     /// of a second. A headless run has nobody to press W, and a walker's
     /// feel is a number a second person can check rather than a thing to
     /// take on trust.
     pub(crate) walk: u32,
-    /// Draw the hex tiers: a disc of Goldberg columns round the eye and
-    /// Planet-LOD past it, both made in the vertex stage. It is the
-    /// DEFAULT, because the hex world is what this harness is; `--chunks`
-    /// is how the dual contoured one is asked for.
-    pub(crate) tiers: bool,
 }
 
 pub(crate) fn parse_args() -> Args {
@@ -51,9 +44,7 @@ pub(crate) fn parse_args() -> Args {
         shot: None,
         frames: 30,
         sculpt: None,
-        tiers: true,
         fps: FPS,
-        span: HEX_SPAN,
         octaves: OCTAVES,
         walk: 0,
     };
@@ -78,21 +69,7 @@ pub(crate) fn parse_args() -> Args {
             "--shot" => args.shot = it.next(),
             "--frames" => args.frames = it.next().and_then(|v| v.parse().ok()).unwrap_or(30),
             "--sculpt" => args.sculpt = it.next(),
-            // The hex world, which is the default: this is only here so a
-            // command line that says so reads the same as one that does
-            // not.
-            "--tiers" => args.tiers = true,
-            // The dual contoured world: chunks, a sea of its own, the
-            // towns and the builder, and the walker on foot in them.
-            "--chunks" => args.tiers = false,
             "--fps" => args.fps = it.next().and_then(|v| v.parse().ok()).unwrap_or(FPS),
-            "--span" => {
-                args.span = it
-                    .next()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(HEX_SPAN)
-                    .clamp(1, 512)
-            }
             "--octaves" => {
                 args.octaves = it
                     .next()

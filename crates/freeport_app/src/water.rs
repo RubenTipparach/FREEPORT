@@ -92,9 +92,8 @@ impl Plugin for WaterPlugin {
 #[derive(Component)]
 pub struct Sheet;
 
-/// The sheet's numbers, tenebris's `water.yaml`, in one place: the dual
-/// contoured sea and the hex world's both wear these, and neither spells
-/// them itself.
+/// The sheet's numbers, tenebris's `water.yaml`, in one place, so nothing
+/// that draws the sea spells them itself.
 pub fn sheet_ext(sea: f64) -> WaterExt {
     let nits = freeport_core::atmos::NITS as f32;
     WaterExt {

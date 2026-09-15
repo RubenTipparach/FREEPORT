@@ -3,19 +3,15 @@
 //!
 //! One `World`, built once at startup and shared behind an `Arc` so a
 //! worker mid job keeps the world it had. `field_in` is what the mesher
-//! asks, `underfoot` is what the walker asks, and the difference between
-//! them is the whole of what the two ways of drawing this planet share.
+//! asks and `underfoot` is what the walker asks, and they are the same
+//! field, which is what makes the picture the collider.
 
 use crate::terrain;
-use crate::{Args, FINE, HEX_TILE, LUMPS, RADIUS, RELIEF, SEA, SEED, TOWNS, TOWN_RADIUS};
+use crate::{Args, FINE, LUMPS, RADIUS, RELIEF, SEA, SEED, TOWNS, TOWN_RADIUS};
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use freeport_core::columns::Columns;
 use freeport_core::field::{Block, Built, Density, Planet, Structure, STREET};
-use freeport_core::grow;
-use freeport_core::hex;
 use freeport_core::recipe::{Building, Recipe};
-use freeport_core::stack::Stacks;
 use freeport_core::town::{self, lot_frame, Town};
 use freeport_core::walker::Bounds;
 use freeport_core::water::{Sea, Water};
@@ -52,48 +48,13 @@ pub(crate) struct World {
     pub sea: Sea,
     /// Cuts made in the dry, which the sea never enters.
     pub dry: Vec<Block>,
-    /// The hex world's grid, where the hex world is what is drawn: what
-    /// the walker stands on is a column per tile and not the smooth field
-    /// the columns are displaced by.
-    pub tiles: Option<hex::Grid>,
-    /// What has been built on those tiles, which the walker walks and the
-    /// shader draws off one store.
-    pub stacks: Stacks,
-}
-
-/// The field under the feet: the dual contoured world's, or the hex
-/// world's columns. ONE type, so the walker is called from one place and
-/// the two worlds cannot grow two collision rules between them.
-pub(crate) enum Underfoot<'a> {
-    Chunks(Built<'a>),
-    Columns(Columns<'a>),
-}
-
-impl Density for Underfoot<'_> {
-    fn at(&self, p: DVec3) -> f64 {
-        match self {
-            Underfoot::Chunks(f) => f.at(p),
-            Underfoot::Columns(f) => f.at(p),
-        }
-    }
-
-    fn material(&self, p: DVec3) -> u8 {
-        match self {
-            Underfoot::Chunks(f) => f.material(p),
-            Underfoot::Columns(f) => f.material(p),
-        }
-    }
 }
 
 impl World {
-    /// What a walker within `reach` of `p` stands on, which is the hex
-    /// world's columns where the hex world is drawn and the dual contoured
-    /// field where it is not.
-    pub fn underfoot(&self, p: DVec3, reach: f64) -> Underfoot<'_> {
-        match self.tiles {
-            Some(grid) => Underfoot::Columns(Columns::new(grid, &self.planet, &self.stacks)),
-            None => Underfoot::Chunks(self.field_near(p, reach)),
-        }
+    /// What a walker within `reach` of `p` stands on: the same field the
+    /// mesher contoured, which is what makes the picture the collider.
+    pub fn underfoot(&self, p: DVec3, reach: f64) -> Built<'_> {
+        self.field_near(p, reach)
     }
 
     /// The field inside a box, contoured on `cell`: the ground and every
@@ -165,12 +126,7 @@ fn recipes() -> HashMap<String, Recipe> {
     out
 }
 
-/// Build it: the planet, its towns and everything in them. Both worlds are
-/// planned alike now: `field.wgsl` carries the sites, so a town's levelled
-/// plateau is in the picture and in the walker's field at once. What the
-/// hex world does NOT have is the buildings, which are brushes in a field
-/// that the vertex stage does not evaluate; on tiles a building is a
-/// column raised and tagged, which is the next thing.
+/// Build it: the planet, its towns and everything in them.
 pub(crate) fn build(args: &Args) -> World {
     let t0 = Instant::now();
     let mut planet = Planet {
@@ -186,19 +142,11 @@ pub(crate) fn build(args: &Args) -> World {
     let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
     planet.sites = towns.iter().map(town::site_of).collect();
     let planned = t0.elapsed();
-    // The hex world evaluates no structures: its vertex stage draws the
-    // relief and the sites, and a building there is a column raised and
-    // tagged rather than a brush in a field. So it builds none, where the
-    // first cut built 7,744 pieces of street nothing would ever ask about.
-    let recipes = if args.tiers {
-        HashMap::new()
-    } else {
-        recipes()
-    };
+    let recipes = recipes();
     let mut structures: Vec<Structure> = Vec::new();
     let mut groups = Vec::new();
     let mut buildings = 0;
-    for t in towns.iter().filter(|_| !args.tiers) {
+    for t in &towns {
         let start = structures.len();
         for lot in &t.lots {
             let Some(recipe) = recipes.get(lot.recipe).or_else(|| recipes.get("house")) else {
@@ -246,8 +194,6 @@ pub(crate) fn build(args: &Args) -> World {
         top: roof + 40.0,
         sea: 0.0,
     };
-    let tiles = args.tiers.then(|| hex::Grid::for_tile(RADIUS, HEX_TILE));
-    let stacks = grown(tiles, &towns);
     World {
         planet,
         blocks: Vec::new(),
@@ -258,30 +204,7 @@ pub(crate) fn build(args: &Args) -> World {
         bounds,
         sea: Sea { radius: SEA },
         dry: Vec::new(),
-        tiles,
-        stacks,
     }
-}
-
-/// The towns GROWN on the tiles, which is what a building is on a column
-/// world: the lots' rings raised and tagged concrete, the streets tagged
-/// and not raised at all. The dual contoured world's buildings are brushes
-/// in its field and it grows none of these.
-fn grown(tiles: Option<hex::Grid>, towns: &[Town]) -> Stacks {
-    let mut stacks = Stacks::new();
-    let Some(grid) = tiles else {
-        return stacks;
-    };
-    let t = Instant::now();
-    for town in towns {
-        grow::grow(grid, RADIUS, town, &mut stacks);
-    }
-    info!(
-        "{} tiles built on in {:.0} ms: the towns' walls, floors and streets",
-        stacks.len(),
-        t.elapsed().as_secs_f64() * 1000.0,
-    );
-    stacks
 }
 
 /// Where the port is, so a picture can be aimed at it: its middle, its

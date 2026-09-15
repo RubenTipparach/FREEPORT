@@ -50,14 +50,8 @@ struct Water {
 const RIPPLE_NEAR: f32 = 30.0;
 const RIPPLE_FAR: f32 = 160.0;
 
-// The sheet over the dual contoured chunks, whose vertices ARE a mesh.
-// Guarded, because the hex world's sheet has no mesh to read: its vertex
-// stage is `tiers.wgsl`'s `sea` entry point and its counting mesh carries
-// a position and nothing else, so `Vertex` here would have no `normal` to
-// name. A module is compiled whole, entry points it will never run
-// included, so an entry point that cannot type check under a caller's
-// shader defs has to be absent under them.
-#ifdef VERTEX_NORMALS
+// The sheet over the chunks, whose vertices ARE a mesh: the swell raises
+// each along its own radial, which is tenebris's `water.vs.glsl`.
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
@@ -74,7 +68,6 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #endif
     return out;
 }
-#endif
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -114,26 +107,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         return out;
     }
 
-    // How much water the view ray crosses before the ground behind.
-#ifdef WATER_COLUMN
-    // The hex world hands the water's own COLUMN under this vertex down in
-    // `uv.x` (`tiers.wgsl`, the `sea` entry point), because the field
-    // knows exactly how deep the sea is there. It is the better answer:
-    // the depth buffer measures to whatever is behind, which at a shore is
-    // the beach BESIDE the water rather than the floor under it, and the
-    // tiers are not in the depth prepass at all. The path through the
-    // water is that column over how steeply the view leaves the surface,
-    // and the view is clamped off the grazing angle where that diverges.
-    let to_eye = normalize(view.world_position - in.world_position.xyz);
-    let thickness = max(in.uv.x / max(dot(to_eye, radial), 0.2), 0.02);
-#else
+    // How much water the view ray crosses before the ground behind, off
+    // the depth prepass: the sheet opts out of that pass itself, so what
+    // it reads is the sea floor rather than its own depth.
 #ifdef DEPTH_PREPASS
     let scene_z = depth_ndc_to_view_z(prepass_depth(in.position, 0u));
     let here_z = depth_ndc_to_view_z(in.position.z);
     let thickness = max(here_z - scene_z, 0.02);
 #else
     let thickness = 2.0;
-#endif
 #endif
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);

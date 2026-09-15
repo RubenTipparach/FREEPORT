@@ -240,7 +240,7 @@ pub(crate) fn frame_lanes(frames: &[Frame]) -> ([Vec4; FRAMES * 3], f32) {
 
 /// The ground's material, with the sets loaded and the towns' frames set.
 /// The three array textures the sets are stacked into, in the order the
-/// shader binds them. The dual contoured ground and both hex tiers wear
+/// shader binds them. The ground and everything built on it wear
 /// the same three, which is why this is a function and not a line inside
 /// one material's constructor.
 pub fn terrain_maps(images: &mut Assets<Image>) -> [Handle<Image>; 3] {
@@ -250,11 +250,6 @@ pub fn terrain_maps(images: &mut Assets<Image>) -> [Handle<Image>; 3] {
         images.add(stack(dir.as_ref(), "normal", false)),
         images.add(stack(dir.as_ref(), "orm", false)),
     ]
-}
-
-/// Metres a tile, for anything that wears the sets.
-pub fn tiles() -> (f32, f32) {
-    (GROUND_TILE, CONCRETE_TILE)
 }
 
 pub fn terrain_material(

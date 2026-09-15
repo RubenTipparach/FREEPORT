@@ -1,40 +1,35 @@
 //! freeport_app: the Bevy harness. It draws what `freeport_core` says.
 //!
-//! A planet two thousand kilometres across, drawn two ways off one field.
-//! The DEFAULT is the hex world (`tiers.rs`): a disc of Goldberg columns
-//! round the eye and sp4cerat's Planet-LOD past it, both made in the
-//! vertex stage. `--chunks` is the dual contoured world instead, at eleven
-//! levels of rings round the eye streamed on worker threads (`stream.rs`),
-//! with the towns and the builder in them. The walker is on BOTH: what it
-//! stands on is whatever is drawn (`World::underfoot`), which on the hex
-//! world is a column per tile. Both wear
-//! the baked sets (`terrain.rs`) and stand under one sky (`sky.rs`), and
-//! there is a fly camera, a wireframe toggle, a frame cap and a screenshot
-//! flag so a picture can be taken headless under Xvfb and lavapipe. The
-//! eye is a world position in `f64` and the camera is placed from it
-//! through the floating origin.
+//! A planet two thousand kilometres across, drawn ONE way: a density field
+//! dual contoured a chunk at a time (`freeport_core::dc`) on one lattice at
+//! every level, in rings round the eye streamed on worker threads
+//! (`stream.rs`). The walker stands on that same field, so the picture is
+//! the collider. The ground wears the baked sets (`terrain.rs`), the sea is
+//! that mesher's own surface under tenebris's water shader (`water.rs`),
+//! the towns on it are parametric models (`freeport_core::model`), and all
+//! of it stands under one sky (`sky.rs`) whose march is the core's. There
+//! is a fly camera, a wireframe toggle, a frame cap and a screenshot flag
+//! so a picture can be taken headless under Xvfb and lavapipe. The eye is a
+//! world position in `f64` and the camera is placed from it through the
+//! floating origin.
 //!
 //! ```text
-//! freeport_app [--chunks] [--wire] [--fly] [--eye x,y,z] [--look x,y,z]
-//!              [--levels N] [--fps N] [--span N] [--octaves N]
-//!              [--shot out.png] [--frames N] [--sculpt block|slab|pillar|ball|ramp|pad|room|door|window]
+//! freeport_app [--wire] [--fly] [--eye x,y,z] [--look x,y,z] [--levels N]
+//!              [--fps N] [--octaves N] [--walk N] [--shot out.png]
+//!              [--frames N]
 //! ```
 //!
 //! Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
 //! runs, Space jumps. Flying: WASD and Q E, Shift is faster. F swaps the
 //! two, Tab toggles the wireframe. `--eye` is where to start, metres from
 //! the planet's centre (on foot, the spot under it) and `--look` what to
-//! face; both default to the site.
-
+//! face; both default to the port.
 mod args;
 mod edit;
-mod feed;
 mod lamps;
-mod raise;
 mod sky;
 mod stream;
 mod terrain;
-mod tiers;
 mod walk;
 mod water;
 mod world;
@@ -67,13 +62,11 @@ pub(crate) use world::{Ground, World};
 
 /// The planet: a thousand kilometres of radius, so two thousand across,
 /// which is a small terrestrial world and the scale `CLAUDE.md`'s table
-/// asks for. Nothing about either tier costs more for it: a hex disc is a
-/// fixed count of tiles round the eye and Planet-LOD's leaf count is an
-/// ANGLE's, so the far tier goes from 4,147 leaves to 8,396 and its walk
-/// from 0.65 ms to 0.71 (`lod::sizes::the_cost_of_a_bigger_planet`).
-/// What it costs is PRECISION, which is why every vertex is an offset
-/// from an anchor, and octaves, because the same detail on the ground is
-/// further down a fractal.
+/// asks for. What it costs the streamer is nothing, because the rings are
+/// a fixed count of chunks round the eye however big the ball under them
+/// is; what it costs is OCTAVES, because the same detail on the ground is
+/// further down a fractal, and PRECISION, which is why a chunk's mesh is
+/// metres from its own `f64` corner.
 const RADIUS: f64 = 1_000_000.0;
 /// Peak to trough of the relief, metres: eight tenths of a percent of the
 /// radius, which is about what a terrestrial world carries.
@@ -132,19 +125,6 @@ fn sun_over(dir: DVec3) -> DVec3 {
         .normalize_or(DVec3::Y)
 }
 
-/// The hex tier: metres a tile, how many tiles the disc reaches, and how
-/// deep a column's skirt hangs. The skirt has to cover the step between
-/// two columns and the step from the rim column to the level of detail
-/// tier under it, and the relief's steepest is well under a metre a tile.
-const HEX_TILE: f64 = 1.0;
-const HEX_SPAN: u32 = 48;
-const HEX_SKIRT: f64 = 3.0;
-/// The far tier: Planet-LOD's quality knob, and how many pieces a leaf's
-/// edge is cut into on the way past. The detail on the ground is the
-/// product, so this is ratio 24 for the cost of selecting at 6.
-const LOD_RATIO: f64 = 6.0;
-const LOD_SUB: u32 = 4;
-
 /// Radians of look per pixel of mouse.
 pub(crate) const LOOK: f32 = 0.0022;
 /// Flying: metres a second, and the factor Shift puts on it.
@@ -159,7 +139,6 @@ fn main() {
             WireframePlugin::default(),
             TerrainPlugin,
             WaterPlugin,
-            tiers::TiersPlugin,
             sky::SkyPlugin,
         ))
         .insert_resource(WireframeConfig {
@@ -175,11 +154,7 @@ fn main() {
         .init_resource::<Frame>()
         .init_resource::<Status>()
         .init_resource::<Builder>()
-        .init_resource::<raise::Raising>()
-        .add_systems(
-            Startup,
-            (spawn_world, tiers::spawn_world.run_if(on_tiers)).chain(),
-        )
+        .add_systems(Startup, spawn_world)
         .add_systems(
             Update,
             (
@@ -187,12 +162,10 @@ fn main() {
                 toggle_walk,
                 walk,
                 fly,
-                build.run_if(not(on_tiers)),
-                raise::raise.run_if(on_tiers),
+                build,
                 rebase_origin,
-                stream.run_if(not(on_tiers)),
-                feed::feed_tiers.run_if(on_tiers),
-                light_lamps.run_if(not(on_tiers)),
+                stream,
+                light_lamps,
                 place_eye,
                 sky::drift_sky,
                 show_status,
@@ -203,13 +176,6 @@ fn main() {
                 .chain(),
         )
         .run();
-}
-
-/// Whether the harness draws the hex tiers rather than the dual contoured
-/// chunks: the run condition on every system that belongs to one or the
-/// other.
-fn on_tiers(args: Res<Args>) -> bool {
-    args.tiers
 }
 
 /// What a frame of input is read from: the clock, the keys, the mouse's
@@ -303,17 +269,12 @@ fn spawn_world(
         .collect();
     let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
     let sheet = water_material(&mut waters, SEA);
-    // The shore is only there to aim a picture at the dual contoured sea,
-    // so the hex world does not pay the half million field samples the
-    // hunt costs, and a hunt that finds nothing says so rather than
-    // printing a NaN somebody has to work out the meaning of.
-    let says = if args.tiers {
-        String::new()
-    } else {
-        match shore(&world, eye) {
-            Some(s) => format!(", the shore {:.0} m off at {s:.0}", (s - eye).length()),
-            None => ", no shore within a quarter turn".to_string(),
-        }
+    // Where the sea is, so a picture can be aimed at it. A hunt that finds
+    // nothing says so rather than printing a NaN somebody has to work out
+    // the meaning of.
+    let says = match shore(&world, eye) {
+        Some(s) => format!(", the shore {:.0} m off at {s:.0}", (s - eye).length()),
+        None => ", no shore within a quarter turn".to_string(),
     };
     info!(
         "planet of {} m, the sea at {} m, {} levels of {} m to {} m cells, the eye at {:.0}{}",
@@ -325,27 +286,7 @@ fn spawn_world(
         eye,
         says,
     );
-    if args.tiers {
-        commands.insert_resource(tiers::Tiers {
-            radius: RADIUS,
-            sea: SEA,
-            relief: RELIEF,
-            lumps: LUMPS,
-            octaves: args.octaves,
-            seed: SEED,
-            tile: HEX_TILE,
-            span: args.span,
-            skirt: HEX_SKIRT,
-            ratio: LOD_RATIO,
-            sub: LOD_SUB,
-            towns: {
-                let (lanes, count) = terrain::frame_lanes(&frames);
-                tiers::TownLanes { lanes, count }
-            },
-        });
-    } else {
-        commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));
-    }
+    commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));
     // The sun, and everything that reads it: the WORLD's own start decides
     // which way it points and never `--eye`, so two pictures taken from
     // two places are lit the same and only the camera moved. The light,
@@ -574,20 +515,9 @@ fn place_eye(
 fn show_status(
     status: Res<Status>,
     streamer: Option<Res<Streamer>>,
-    tiers: Option<Res<tiers::Tiers>>,
     mut text: Query<&mut Text, With<Stat>>,
 ) {
-    let what = match (&streamer, &tiers) {
-        (Some(s), _) => s.status(),
-        (_, Some(t)) => format!(
-            "hex {:.2} m tiles in a disc of {:.0} m, Planet-LOD at ratio {} cut {} ways",
-            t.grid().spacing(t.radius),
-            t.disc() * t.radius,
-            t.ratio,
-            t.sub
-        ),
-        _ => String::new(),
-    };
+    let what = streamer.map(|s| s.status()).unwrap_or_default();
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
             "{}   |   {}{}   |   F fly, B build, Tab wire, Esc mouse",
@@ -648,9 +578,7 @@ fn take_shot(
     };
     *frame += 1;
     // A scripted edit is placed the frame after the first load settles, so
-    // the picture waits for it and for the chunks it remade. The tiers
-    // have nothing to settle: what they draw is a function of where the
-    // eye is on the frame it is drawn.
+    // the picture waits for it and for the chunks it remade.
     let ready = match &streamer {
         Some(s) => {
             let edited = args.sculpt.is_none() || s.edits() > 0;
