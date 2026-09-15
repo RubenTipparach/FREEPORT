@@ -15,6 +15,7 @@
 use crate::stream::{Anchored, Frame};
 use crate::terrain::{to_mesh, TerrainMaterial};
 use crate::world::TownMesh;
+use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::pos::WorldPos;
 
@@ -28,13 +29,22 @@ pub fn spawn_towns(
     meshes: &mut Assets<Mesh>,
     material: &Handle<TerrainMaterial>,
     frame: &Frame,
+    sea: f64,
     towns: Vec<TownMesh>,
 ) {
     for town in towns {
         if town.mesh.indices.is_empty() {
             continue;
         }
-        let at = WorldPos(town.frame.world(bevy::math::DVec3::ZERO));
+        let at = WorldPos(town.frame.world(DVec3::ZERO));
+        // A model's vertices are ALREADY in the frame the concrete is
+        // mapped in, east, north and up from the town's own middle, and
+        // they are metres, so the shader maps from them as they stand.
+        // That is the same rule the chunks keep, arrived at for free: the
+        // number a texture coordinate is made of is never a planet's
+        // radius held in an f32.
+        let world = town.frame;
+        let place = move |p: Vec3| (p, (world.world(p.as_dvec3()).length() - sea) as f32);
         // The mesh is written east, north and up in the town's frame, so
         // the entity carries that frame's own rotation and the origin
         // carries where it is.
@@ -44,7 +54,7 @@ pub fn spawn_towns(
             town.frame.dir.as_vec3(),
         );
         commands.spawn((
-            Mesh3d(meshes.add(to_mesh(&town.mesh))),
+            Mesh3d(meshes.add(to_mesh(&town.mesh, place))),
             MeshMaterial3d(material.clone()),
             Transform {
                 translation: frame.0.local(at),

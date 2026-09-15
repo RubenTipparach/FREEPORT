@@ -840,6 +840,48 @@ models wear the SAME material the ground does, so a wall and a hillside are
 one shader and one set of sets. The sea's two, `SURFACE` and `BURIED`, are
 the same channel on the other mesh.
 
+**A texture coordinate is a number the CPU works out, never one the
+fragment forms.** Every UV used to come from `rel = world_position -
+planet_centre`, a planet scale vector held in `f32`. At the port `|rel|`
+is 999,603 m, where one `f32` to the next is 6.25 cm, so the ground's own
+coordinate took EIGHT distinct values over two metres of walking: a two
+metre tile sampled in 32 steps. The concrete on a wall was worse in kind,
+because it went through `dot(up, east_t) * base` with `up` off that same
+quantised `rel`: 613 values over ten metres, treads of 1.5 to 4.5 cm, and
+a scale that drifted (3.00 m read as 2.98). What that does to a picture is
+not a shifted texture but a wrecked one, because a GPU picks its MIP LEVEL
+off the DERIVATIVE of the coordinate: a staircase has a derivative of
+nought along each tread and a spike at every riser, so the mip choice is
+noise and the wall comes out streaked and jagged. It is the rule this file
+keeps for meshes ("at a thousand kilometres that quantisation is six
+centimetres and the warning is the whole surface") arriving at the one
+place that still broke it, and it is why every earlier picture looked
+right: on a five kilometre planet the step is half a millimetre.
+
+Measured as a picture, the same frame before and after: 18.6% of pixels
+moved by more than 8 of 255. So `to_mesh` hands every vertex the position the shader maps FROM, worked
+out in `f64` where it is small and exact, and the fragment does no
+arithmetic on it at all. A chunk's is its planet relative place reduced
+MODULO the ground's own tile, which is what makes it small and keeps two
+chunks agreeing, since a triplanar tiling is periodic and congruence
+modulo the tile is all a seam needs; every chunk corner on this lattice
+has the same residue, so the whole planet shares one offset. A built
+thing's is the town frame position its model was already written in, ±90 m
+and exact, so `in_frame` computes only the frame's AXES now (unit vectors,
+which cost no precision) and never where the point is. The height over the
+sea rides the same vertex, because the sand band is a metre and a half
+wide and `length(rel) - sea` measured it in six centimetre steps.
+
+**The sea has the same disease and a harder cure.** `water.wgsl` takes its
+swell and its ripples from `q = world_position - centre` in `f32` too:
+over a metre of water the ripple coordinate takes four values, 8.3 cm
+steps on features about 0.67 m across. The terrain's fix does not port,
+because `fbm3` is NOT periodic, so there is no modulus to reduce by and an
+offset per chunk would put a seam in the sea wherever two offsets met. The
+honest cure is a noise that takes a lattice CELL and a fraction rather
+than one float per axis, which is how noise is evaluated on a big world,
+and it is named here rather than bodged.
+
 **The shader is the mockup's, transcribed.** `terrain.wgsl` is an extension
 on Bevy's standard material: `tri` and `triN` line for line (three planes
 weighted by the normal's fourth power, a normal map read on each and turned
@@ -1238,6 +1280,16 @@ Numbers in the commit message. What is measured so far:
 - The sets: five on the ground (basalt, dunes, grass, concrete and hull
   plate), at 1024 a side, three array textures of five layers, each layer
   with an eleven level mip chain built at load.
+- What a planet scale `f32` did to a texture coordinate, at the port, where
+  `|rel|` is 999,603 m and one float to the next is 6.25 cm: the ground's
+  own coordinate took 8 distinct values over two metres, so a 2 m tile was
+  sampled in 32 steps; the concrete's took 613 over ten metres, in treads
+  of 1.5 to 4.5 cm, with the scale drifting 0.7%; and the sea's ripples
+  take 4 values a metre on features 0.67 m across. The first two are fixed
+  by mapping from a position the CPU works out in f64 (18.6% of the
+  picture moved), and the sea's wants a noise that takes a cell and a
+  fraction. On a five kilometre planet the same step is half a millimetre,
+  which is why every earlier picture looked right.
 - The walker, headless in the core, on a 2 km ball: 8 to 10 m in two
   seconds walking and over 14 running, a jump to between 1.0 and 1.6 m
   landing inside 1.3 s, a 0.4 m kerb climbed, a 1.2 m wall stopping the

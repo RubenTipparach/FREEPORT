@@ -286,6 +286,7 @@ fn spawn_world(
         lat,
         eye,
         args.levels,
+        SEA,
         material.clone(),
         sheet,
     ));
@@ -295,6 +296,7 @@ fn spawn_world(
         &mut meshes,
         &material,
         &Frame::default(),
+        SEA,
         towns,
     );
     // The sun, and everything that reads it: the WORLD's own start decides

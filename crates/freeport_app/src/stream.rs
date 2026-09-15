@@ -18,7 +18,7 @@
 //! which follows the eye and moves every chunk with it when it does. The
 //! subtraction is the precise step and it happens once, in `f64`.
 
-use crate::terrain::{to_mesh, TerrainMaterial};
+use crate::terrain::{chunk_mapping, to_mesh, TerrainMaterial};
 use crate::water::{recentre, to_sheet, Sheet, WaterMaterial};
 use crate::{Eye, Ground, World};
 use bevy::math::DVec3;
@@ -105,6 +105,8 @@ pub struct Streamer {
     workers: usize,
     material: Handle<TerrainMaterial>,
     water: Handle<WaterMaterial>,
+    /// The sea's radius, which every vertex's height is measured from.
+    sea: f64,
     fresh: bool,
     pub stats: Stats,
     started: Instant,
@@ -118,6 +120,7 @@ impl Streamer {
         lat: Lattice,
         eye: DVec3,
         levels: u8,
+        sea: f64,
         material: Handle<TerrainMaterial>,
         water: Handle<WaterMaterial>,
     ) -> Self {
@@ -137,6 +140,7 @@ impl Streamer {
             workers,
             material,
             water,
+            sea,
             fresh: true,
             stats: Stats::default(),
             started: Instant::now(),
@@ -257,7 +261,9 @@ impl Streamer {
                 entities.push(
                     commands
                         .spawn((
-                            Mesh3d(meshes.add(to_mesh(&done.mesh))),
+                            Mesh3d(
+                                meshes.add(to_mesh(&done.mesh, chunk_mapping(corner.0, self.sea))),
+                            ),
                             MeshMaterial3d(self.material.clone()),
                             at,
                             chunk(),

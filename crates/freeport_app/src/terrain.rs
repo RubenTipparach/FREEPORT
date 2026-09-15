@@ -12,6 +12,7 @@
 
 use bevy::asset::{embedded_asset, RenderAssetUsages};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::math::DVec3;
 use bevy::mesh::PrimitiveTopology;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
@@ -295,13 +296,32 @@ const CREASE: f32 = 0.35;
 /// it takes the face's: a box face is shaded on its own plane and meets the
 /// next on an edge, the ground stays round, and where the ground meets a
 /// wall only the corner on the crease changes, so the shading on either
-/// side of it is continuous. The vertex colour carries the triangle's
-/// material in red and the vertex's level in green, flat, every corner the
-/// same, so no driver's choice of provoking vertex can change either.
-pub fn to_mesh(m: &DcMesh) -> Mesh {
+/// side of it is continuous.
+///
+/// Every vertex carries FOUR numbers besides its place: the triangle's
+/// material in the colour's red, flat, every corner the same so no
+/// driver's choice of provoking vertex can change it, and the position the
+/// SHADER MAPS FROM in the other three, which `place` answers along with
+/// how far over the sea the vertex stands (the `uv`).
+///
+/// That mapping position is the whole reason this signature has a closure
+/// in it. The shader used to work it out itself, from
+/// `world_position - planet_centre`, and at a thousand kilometres that
+/// vector's own `f32` steps in 6.25 cm: a two metre tile of grass came out
+/// sampled at 32 steps rather than continuously, and since a GPU picks its
+/// mip level off the DERIVATIVE of a texture coordinate, a coordinate that
+/// is a staircase has a derivative of nought along each tread and a spike
+/// at every riser, so the mip choice was noise. It is the rule this
+/// project already keeps for meshes, arriving at the one place that still
+/// broke it: nothing forms a planet scale number in `f32` and then
+/// measures centimetres inside it. The caller computes the position in
+/// `f64` where it is small and exact, and the fragment does no arithmetic
+/// on it at all.
+pub fn to_mesh(m: &DcMesh, place: impl Fn(Vec3) -> (Vec3, f32)) -> Mesh {
     let mut positions = Vec::with_capacity(m.indices.len());
     let mut normals = Vec::with_capacity(m.indices.len());
     let mut colours = Vec::with_capacity(m.indices.len());
+    let mut uvs = Vec::with_capacity(m.indices.len());
     for (t, material) in m.indices.chunks(3).zip(&m.materials) {
         let p: Vec<Vec3> = t
             .iter()
@@ -310,13 +330,15 @@ pub fn to_mesh(m: &DcMesh) -> Mesh {
         let face = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or(Vec3::Y);
         for (k, &i) in t.iter().enumerate() {
             let n = Vec3::from(m.normals[i as usize]);
+            let (map, over) = place(p[k]);
             positions.push(p[k].to_array());
             normals.push(if n.angle_between(face) > CREASE {
                 face.to_array()
             } else {
                 n.to_array()
             });
-            colours.push([*material as f32, m.levels[i as usize] as f32, 0.0, 1.0]);
+            colours.push([*material as f32, map.x, map.y, map.z]);
+            uvs.push([over, 0.0]);
         }
     }
     Mesh::new(
@@ -326,4 +348,28 @@ pub fn to_mesh(m: &DcMesh) -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colours)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+}
+
+/// Where a chunk's vertex is mapped from: its planet relative position
+/// reduced MODULO the ground's own tile, so the number the shader maps
+/// with is metres rather than a planet's radius, and two chunks that meet
+/// still agree, because a triplanar tiling is periodic and congruence
+/// modulo the tile is all a seam needs. The height over the sea rides
+/// along, measured in `f64` for the same reason: it is a band a metre and
+/// a half wide and it was quantised at six centimetres.
+pub fn chunk_mapping(corner: DVec3, sea: f64) -> impl Fn(Vec3) -> (Vec3, f32) {
+    let tile = GROUND_TILE as f64;
+    let anchor = DVec3::new(
+        corner.x.rem_euclid(tile),
+        corner.y.rem_euclid(tile),
+        corner.z.rem_euclid(tile),
+    );
+    move |p: Vec3| {
+        let local = p.as_dvec3();
+        (
+            (anchor + local).as_vec3(),
+            ((corner + local).length() - sea) as f32,
+        )
+    }
 }

@@ -130,34 +130,29 @@ fn nearest_frame(up: vec3<f32>) -> i32 {
     return best;
 }
 
-// Where a point is in a town's frame, and the frame's axes at the point:
-// east and north are measured on the sphere the town's ground is at, from
-// the town's centre (a point projected on its own tangent plane is nought
-// everywhere, the mockup's float noise), and the height is off that
-// sphere, so a building plumb on its own lot has its walls on constant
-// east or north and its floors on constant height, and a panel is level
-// and plumb whatever the planet's axes do. The core's `Frame::local` is
-// the same map from the lot's own anchor.
+// A town's AXES at a point, so a normal read on three planes can be
+// turned back into the world: east and north there, squared to the local
+// up, which are unit vectors and so cost no precision. WHERE the point is
+// in that frame is not worked out here at all; it rides the vertex (the
+// mapping position, `terrain.rs`'s `to_mesh`), because the number this
+// used to form, `dot(up, east_t) * base` with `up` off a planet scale
+// `rel`, stepped in centimetres at a thousand kilometres and made a
+// staircase of every texture coordinate on a wall.
 struct Local {
-    p: vec3<f32>,
     n: vec3<f32>,
     to_world: mat3x3<f32>,
 }
 
-fn in_frame(f: i32, rel: vec3<f32>, up: vec3<f32>, n: vec3<f32>) -> Local {
+fn in_frame(f: i32, up: vec3<f32>, n: vec3<f32>) -> Local {
     var l: Local;
-    l.p = rel;
     l.n = n;
     l.to_world = mat3x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
     if (f < 0) {
         return l;
     }
-    let base = terrain.frames[f * 3].w;
     let east_t = terrain.frames[f * 3 + 1].xyz;
-    let north_t = terrain.frames[f * 3 + 2].xyz;
     let east = normalize(east_t - up * dot(east_t, up));
     let north = cross(up, east);
-    l.p = vec3<f32>(dot(up, east_t) * base, dot(up, north_t) * base, length(rel) - base);
     l.n = vec3<f32>(dot(n, east), dot(n, north), dot(n, up));
     l.to_world = mat3x3<f32>(east, north, up);
     return l;
@@ -169,24 +164,31 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let n = normalize(in.world_normal);
     let rel = in.world_position.xyz - terrain.centre.xyz;
     let up = normalize(rel);
-    // What this triangle is made of: the vertex colour's red, every corner
-    // of the triangle the same so no driver's choice of provoking vertex
-    // can change it, which is the mockup's hatched walls not happening
-    // twice.
+    // What this triangle is made of, and WHERE it is mapped from: the
+    // vertex colour's red is the material, every corner of the triangle
+    // the same so no driver's choice of provoking vertex can change it,
+    // which is the mockup's hatched walls not happening twice, and its
+    // other three are the mapping position `to_mesh` worked out in f64.
+    // The ground's is its planet relative place modulo the tile and a
+    // built thing's is its own town frame's; neither is ever a planet's
+    // radius held in an f32, which is what made a two metre tile of grass
+    // sample in 32 steps and the mip level come out as noise.
     var material = 0.0;
+    var map = vec3<f32>(0.0);
 #ifdef VERTEX_COLORS
     material = in.color.r;
+    map = in.color.gba;
 #endif
     let ground = is(material, M_TERRAIN);
     let slope = 1.0 - clamp(dot(n, up), 0.0, 1.0);
     let steep = smoothstep(0.34, 0.6, slope);
     let w_rock = steep * ground;
     // Sand along the shore and under the shallows, grass above it: the
-    // mockup's band by height, measured off the sea's own radius. A
-    // chunk's triangles are metres across and their position IS the
-    // surface, so the length is the honest answer here and costs no
-    // varying.
-    let over_sea = length(rel) - terrain.params.w;
+    // mockup's band by height, measured off the sea's own radius. It rides
+    // the vertex too (`to_mesh` again), because `length(rel)` is the
+    // difference of two numbers near a million and a band a metre and a
+    // half wide cannot be drawn in six centimetre steps.
+    let over_sea = in.uv.x;
     let sand = 1.0 - smoothstep(SAND_TO, GRASS_FROM, over_sea);
     let level = (1.0 - steep) * ground;
     let w_sand = level * sand;
@@ -202,10 +204,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let flat = glass + lamp + lit;
     // The ground is mapped in the planet's frame, and concrete, plate and
     // a street in the nearest town's, where they are level and plumb.
-    let pg = rel / terrain.params.x;
+    let pg = map / terrain.params.x;
     let w = tri_weights(n);
-    let local = in_frame(nearest_frame(up), rel, up, n);
-    let pc = local.p / terrain.params.y;
+    let local = in_frame(nearest_frame(up), up, n);
+    let pc = map / terrain.params.y;
     let wc = tri_weights(local.n);
     let mapped = w_rock + w_sand + w_grass + w_conc + w_plate;
     var albedo = tri(albedo_maps, albedo_sampler, L_ROCK, pg, w).rgb * w_rock
@@ -253,7 +255,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // MIDDLE of the view ray rather than at either end: a valley seen
     // from a ridge is hazy and the ridge seen from the valley is not.
     let eye_up = length(view.world_position - terrain.centre.xyz) - terrain.haze.z;
-    let here_up = length(rel) - terrain.haze.z;
+    // The same height over the sea the sand band uses, off the vertex.
+    let here_up = over_sea;
     let mid_up = max((eye_up + here_up) * 0.5, 0.0);
     let pooled = 1.0 + (terrain.haze.y - 1.0) * exp(-mid_up / max(terrain.haze.x, 1.0));
     let in_the_way = 1.0 - exp(-away * terrain.fog.w * pooled);
