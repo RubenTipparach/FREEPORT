@@ -152,6 +152,11 @@ pub struct Tier {
     /// Planet-LOD's leaves, three corners a triangle, as directions.
     #[storage(111, read_only)]
     pub leaves: Handle<ShaderStorageBuffer>,
+    /// How much every tile of the hex window has been RAISED, metres, in
+    /// the window's own order, so a shader indexes it with the number it
+    /// already has worked out.
+    #[storage(112, read_only)]
+    pub raised: Handle<ShaderStorageBuffer>,
     /// Which tier: the key, and never read by a shader.
     pub which: Which,
 }
@@ -188,6 +193,11 @@ pub struct SeaTier {
     pub lanes: Lanes,
     #[storage(111, read_only)]
     pub leaves: Handle<ShaderStorageBuffer>,
+    /// How much every tile of the hex window has been RAISED, metres, in
+    /// the window's own order, so a shader indexes it with the number it
+    /// already has worked out.
+    #[storage(112, read_only)]
+    pub raised: Handle<ShaderStorageBuffer>,
     /// `Which::Sea` or `Which::HexSea`, and the key that picks the entry
     /// point.
     pub which: Which,
@@ -426,8 +436,15 @@ impl Tiers {
     /// Vertices the near tier's: a prism a tile over the whole square
     /// window, the disc cut out of it in the shader.
     pub fn hex_verts(&self) -> usize {
+        self.window() * PRISM_VERTS
+    }
+
+    /// Tiles in the near tier's square window, which is what the raised
+    /// buffer holds one of each: the shader's own `tile` number indexes
+    /// both.
+    pub fn window(&self) -> usize {
         let wide = (self.span * 2 + 1) as usize;
-        wide * wide * PRISM_VERTS
+        wide * wide
     }
 }
 
@@ -471,6 +488,11 @@ pub struct Drawn {
     /// The sea inside the hex disc, as columns.
     pub shallows: Handle<SeaMaterial>,
     pub leaves: Handle<ShaderStorageBuffer>,
+    /// The hex window's raised heights, and which anchor and which edit
+    /// they were filled for, so a frame that changed neither writes
+    /// nothing.
+    pub raised: Handle<ShaderStorageBuffer>,
+    pub filled: Option<(hex::Tile, u64)>,
 }
 
 /// The three entities and everything they need: the two ground tiers and
@@ -539,6 +561,7 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
         Vec4::ZERO;
         at.most_leaves() * 3
     ]));
+    let raised = buffers.add(ShaderStorageBuffer::from(vec![0.0f32; at.window()]));
     let sheet = crate::water::sheet_ext(at.sea);
     let lanes = Lanes {
         at: Vec4::ZERO,
@@ -567,6 +590,7 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
         orm: maps[2].clone(),
         lanes,
         leaves: leaves.clone(),
+        raised: raised.clone(),
         which,
     };
     // Neither tier is culled by its winding: which way round a hexagon's
@@ -598,24 +622,36 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
     // The columns win the depth test where the two seas overlap, for the
     // reason the ground tiers' own overlap has: the overlap exists so the
     // near tier covers the far one and never the other way about.
-    let sea = sea_material(seas, &sheet, lanes, &leaves, Which::Sea, 0.0);
-    let shallows = sea_material(seas, &sheet, lanes, &leaves, Which::HexSea, HEX_BIAS);
+    let sea = sea_material(seas, &sheet, lanes, &leaves, &raised, Which::Sea, 0.0);
+    let shallows = sea_material(
+        seas,
+        &sheet,
+        lanes,
+        &leaves,
+        &raised,
+        Which::HexSea,
+        HEX_BIAS,
+    );
     Drawn {
         near,
         far,
         sea,
         shallows,
         leaves,
+        raised,
+        filled: None,
     }
 }
 
 /// One of the two seas: the same sheet wearing the same shader, differing
 /// in which entry point makes its vertices and which wins the depth test.
+#[allow(clippy::too_many_arguments)]
 fn sea_material(
     seas: &mut Assets<SeaMaterial>,
     sheet: &crate::water::WaterExt,
     lanes: Lanes,
     leaves: &Handle<ShaderStorageBuffer>,
+    raised: &Handle<ShaderStorageBuffer>,
     which: Which,
     bias: f32,
 ) -> Handle<SeaMaterial> {
@@ -636,6 +672,7 @@ fn sea_material(
             haze: sheet.haze,
             lanes,
             leaves: leaves.clone(),
+            raised: raised.clone(),
             which,
         },
     })
@@ -668,6 +705,62 @@ fn send_leaves(
     live
 }
 
+/// What has been BUILT on the tiles of the hex window, into the buffer the
+/// two hex entry points read: one number a tile, in the window's own
+/// order, so the shader indexes it with the `tile` it has already worked
+/// out and never looks an address up.
+///
+/// It is filled from the STACKS rather than by walking the window, because
+/// a window is nine thousand tiles and what is built is a handful:
+/// `hex::Grid::steps` is `basis` inverted, so a built tile is asked where
+/// it sits in the window and written there if it sits in it at all. And it
+/// is only filled when the anchor MOVES or an edit lands, which is once
+/// every tile the walker crosses rather than once a frame.
+fn send_raised(
+    at: &Tiers,
+    drawn: &mut Drawn,
+    buffers: &mut Assets<ShaderStorageBuffer>,
+    ground: &crate::Ground,
+    anchor: hex::Tile,
+) {
+    let Some(grid) = ground.0.tiles else {
+        return;
+    };
+    let built = ground.0.stacks.len() as u64;
+    if drawn.filled == Some((anchor, built)) {
+        return;
+    }
+    drawn.filled = Some((anchor, built));
+    let Some(buffer) = buffers.get_mut(&drawn.raised) else {
+        return;
+    };
+    let span = at.span as i64;
+    let wide = span * 2 + 1;
+    let mut data = vec![0.0f32; at.window()];
+    let mut inside = 0usize;
+    for (key, metres) in ground.0.stacks.each() {
+        let Some(tile) = freeport_core::stack::tile(grid, key) else {
+            continue;
+        };
+        let (u, v) = grid.steps(anchor, grid.dir(tile));
+        let (u, v) = (u.round() as i64, v.round() as i64);
+        if u.abs() > span || v.abs() > span {
+            continue;
+        }
+        inside += 1;
+        data[((v + span) * wide + u + span) as usize] = metres as f32;
+    }
+    if inside != built as usize {
+        // A tile built and then walked away from falls out of the window
+        // and is not drawn, which is right. One built HERE that missed it
+        // would be an edit the walker stands on and the picture has not
+        // got, so the count says so rather than leaving it to be found in
+        // a screenshot.
+        info!("raised: {built} tiles built, {inside} of them in the hex window");
+    }
+    buffer.set_data(data.as_slice());
+}
+
 /// Every frame: where the eye is, which tile it stands on, and which
 /// leaves Planet-LOD picks from there. This is the whole of what the CPU
 /// does for either tier.
@@ -675,7 +768,8 @@ pub fn feed_tiers(
     eye: Res<crate::Eye>,
     frame: Res<crate::stream::Frame>,
     at: Res<Tiers>,
-    drawn: Res<Drawn>,
+    ground: Res<crate::Ground>,
+    mut drawn: ResMut<Drawn>,
     mut assets: Store,
     mut said: Local<usize>,
 ) {
@@ -724,6 +818,7 @@ pub fn feed_tiers(
         dir,
     );
     let live = send_leaves(&at, &drawn, &mut assets.buffers, anchor, &picked);
+    send_raised(&at, &mut drawn, &mut assets.buffers, &ground, grid.at(dir));
     // What the CPU costs, said when it moves by a fifth: the whole of the
     // far tier's work is this one `select`, and the vertex stage makes
     // `sub * sub` triangles out of every leaf it picks.

@@ -35,10 +35,10 @@ use std::sync::Arc;
 /// Metres from a site's origin that build in its frame.
 const SITE_REACH: f64 = 8.0;
 /// What is built snaps to this, metres.
-const SNAP: f64 = 0.5;
+pub(crate) const SNAP: f64 = 0.5;
 /// How far the crosshair reaches, metres, and its march's step.
-const REACH: f64 = 7.0;
-const STRIDE: f64 = 0.08;
+pub(crate) const REACH: f64 = 7.0;
+pub(crate) const STRIDE: f64 = 0.08;
 /// A cut touching water within this of its box is wet.
 const WET_REACH: f64 = 0.5;
 
@@ -216,8 +216,9 @@ struct Proposal {
 pub struct Ghost;
 
 /// Where the crosshair meets the field: a march along the look ray, then
-/// the field's gradient there for the face.
-fn aim(field: &dyn Density, eye: DVec3, look: DVec3) -> Option<(DVec3, DVec3)> {
+/// the field's gradient there for the face. The tile builder aims the same
+/// way (`raise.rs`), because where a crosshair lands is one question.
+pub(crate) fn aim(field: &dyn Density, eye: DVec3, look: DVec3) -> Option<(DVec3, DVec3)> {
     let mut prev = 0.3;
     let mut t = 0.4;
     while t < REACH {

@@ -1289,10 +1289,72 @@ is steeper. `--walk N` drives the walker forward N frames at a fixed
 sixtieth and says how far it has come and how far the feet ever stood off
 the ground, because a headless run has nobody to press W.
 
+**Building on the hex world is raising a COLUMN, and there is nothing to
+remesh.** The dual contoured builder cuts shapes out of a field; a hex
+world has no shape to cut, because what a column stands at IS the ground.
+So `stack.rs` in the core is the whole of what is built: how much higher
+than the relief a tile's column stands, a tile at a time, as sorted pairs
+of a key and a height with a binary search over them, which is this
+project's rule for anything replayed rather than a `HashMap`. A key is
+`face * (n+1)^2 + i * (n+1) + j`, which at one metre tiles on a thousand
+kilometre planet is under 3 * 10^13 and well inside a `u64`, and a tile
+back at nought is REMOVED, so an edit taken back leaves the store as it
+was found and two worlds built to the same shape are the same list.
+
+**One store, read by the walker and by the shader.** `columns::Columns::top`
+adds it to the relief, so the walker stands on what was built the frame it
+lands; `tiers::send_raised` fills the window at binding 112 that the `hex`
+and `hexsea` entry points index with the tile number they have already
+worked out, so the picture is the same number. Nothing is remeshed and
+nothing is streamed, which is the one thing a hex world is plainly better
+at than a field: a dual contoured edit dirties eight chunks and costs 30 to
+39 ms of contouring, and this costs a write of one `f32`. The window is
+filled from the STACKS rather than by walking it, because a window is a few
+thousand tiles and what is built is a handful: `hex::Grid::steps` is
+`basis` INVERTED, so a built tile is asked where it sits in the window and
+written there if it sits in it at all. It is refilled when the anchor moves
+or an edit lands and not once a frame, and a tile that is built and missed
+the window says so, because that would be an edit the walker stands on and
+the picture has not got.
+
+`raise.rs` is the harness: B arms it, the left button raises the tiles under
+the crosshair by `SNAP` (half a metre), the right lowers them, `[` and `]`
+pick the brush (a tile, seven, nineteen: rings walked off the grid and
+never a list of the planet), and Z takes the last patch back whole. The
+crosshair is the dual contoured builder's own `aim`, marching the field the
+walker walks, so the tile it picks is the tile the picture has.
+
+**A mesa re-aimed at grows TOWARD the eye, and that is what made the first
+picture a picture of nothing.** `--sculpt` re-aimed between each of its
+eight clicks, so the crosshair walked down its own new near face a tile a
+click: it raised 39 tiles where the brush covers 19, every one of them
+within two tiles of the anchor, the last click landed on the tile under the
+feet, the walker rode up on it, and the shot came back with the ground at
+eye level and no edit in it. The picture was the only thing that said so:
+the log said 39 tiles raised 4.0 m and the window said all 39 were in it,
+both true. It aims ONCE and raises that same patch now, which is what a
+player holding the crosshair on one tile does.
+
+**And a 1.5 m wall two metres from an eye 1.7 m up is a wall and not a
+picture.** At eight clicks the mesa's face filled the frame edge to edge;
+at three the eye sees over its top and the top is edge on, which is a thin
+strip. So `--sculpt` works from the fly camera too, where `--eye` and
+`--look` aim the crosshair and the picture is taken from wherever the patch
+reads. The walker is still what proves it: a patch of nineteen tiles raised
+1.5 m four metres ahead stops the walker 1.11 m along, which is its near
+face 1.5 m out less a body of 35 cm, and the walker never gets onto it
+because 1.5 m is well over a 0.6 m stride
+(`a_patch_raised_a_metre_and_a_half_ahead_is_a_wall_the_walker_stops_at`).
+A tile raised UNDER the feet carries the walker up with it in one frame
+(`a_tile_raised_under_the_feet_carries_the_walker_up_with_it`), which is
+the same claim from the other side: the store the shader reads is the field
+the walker walks.
+
 **What is still to build on the tiers, named so the gap is visible:** the
 towns (`field.wgsl` has no sites in it, so a levelled plateau would be in
-the walker's field and not in the picture), the builder on tiles, the
-shadow and prepass stages, and the twelve pentagons.
+the walker's field and not in the picture), an EXPORT of what was built
+(the dual contoured builder writes a recipe and this writes nothing yet),
+the shadow and prepass stages, and the twelve pentagons.
 
 Measured on the harness, which is the 1,000 km planet: one metre tiles
 (12,257,789,082,012 round it), a disc of 48 tiles and 48 m, 9,409 prisms
@@ -1511,7 +1573,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 95, the core, about 4 s
+cargo test -p freeport_core                       # 98, the core, about 4 s
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -1533,6 +1595,7 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 ./target/release/freeport_app --span 20 --octaves 14 --walk 600 --frames 620 --shot walked.png   # ten seconds of walking on the columns, the distance and the feet's own gap said every second
 ./target/release/freeport_app --chunks --octaves 14 --levels 9 --frames 20 --shot chunks.png   # the dual contoured world on the same planet, on the port's main street
 ./target/release/freeport_app --chunks --frames 50 --sculpt block --shot sculpt.png            # a block placed on the street once the ground has settled, and the chunks it remade
+./target/release/freeport_app --fly --span 20 --octaves 14 --sculpt tile --eye 0,999736,-8.5 --look 0,999731.3,-6 --frames 8 --shot tile-build.png   # a patch of nineteen tiles raised 1.5 m, from above: on foot the same patch is a wall two metres from the eye
 ```
 
 The mockups are `docs/mockups/marching-cubes.html` and
@@ -1558,7 +1621,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 95 tests in about 4 s. A 6 m sphere on a 32^3 lattice at
+- `freeport_core`: 98 tests in about 4 s. A 6 m sphere on a 32^3 lattice at
   half a metre marches to 5,288 triangles, a closed shell within 3% of the
   sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across, with
@@ -1595,6 +1658,17 @@ Numbers in the commit message. What is measured so far:
   microseconds (`columns::sizes::what_a_frame_of_the_walker_costs`), and
   setting a walker down costs 7 ms, which is the scan from the top of the
   band that `Walker::enter` does once.
+- The tile builder: a patch of nineteen tiles (two rings of the widest
+  brush) raised three clicks of half a metre, which is one write of an
+  `f32` a tile into the window at binding 112 and nothing remeshed, against
+  the dual contoured builder's eight dirty chunks and 30 to 39 ms of
+  contouring for one block. On foot that patch four metres ahead stops the
+  walker 1.11 m along, which is its near face 1.5 m out less a body of
+  35 cm, and it never climbs on, because 1.5 m is well over a 0.6 m stride;
+  a tile raised under the feet carries the walker up with it in one frame.
+  The first scripted edit re-aimed between its clicks and raised 39 tiles
+  where the brush covers 19, every one of them within two tiles of the
+  anchor, which is a mesa walking back to the eye.
 - The far tier's chord, at four radii up: 44 leaves over the planet, a sub
   triangle 75 km across, and a 75 km chord on a 1,000 km sphere sags 703 m
   under the sphere against a sea 400 m down, which is why a tier hands its

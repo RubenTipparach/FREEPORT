@@ -77,6 +77,11 @@ struct Tier {
 // in `tiers::feed_tiers` and buys one vertex shader for three materials.
 @group(#{MATERIAL_BIND_GROUP}) @binding(110) var<uniform> tier: Tier;
 @group(#{MATERIAL_BIND_GROUP}) @binding(111) var<storage, read> leaves: array<vec4<f32>>;
+// How much every tile of the hex window has been RAISED, metres, in the
+// window's own order: the same `tile` number the entry points already work
+// out from the vertex index is the index of this, so a built tile is never
+// looked up by address. `tiers.rs`'s `send_raised` fills it.
+@group(#{MATERIAL_BIND_GROUP}) @binding(112) var<storage, read> raised: array<f32>;
 
 // The only thing a tier's mesh carries is which vertex of the draw this
 // is, in `position.x`. See `tiers::counted_mesh` for why it is not
@@ -412,7 +417,10 @@ fn hex(vertex: Vertex) -> VertexOutput {
     let p = planet();
     let uv = vec2<f32>(f32(u), f32(v));
     let middle = tile_spot(uv);
-    let top = field::surface(p, middle.dir);
+    // The relief at the tile's middle plus what has been built there,
+    // which is `columns::Columns::top` asked on the GPU: the walker's
+    // ground and the picture are one number.
+    let top = field::surface(p, middle.dir) + raised[u32(tile)];
     let foot = top - tier.lat1.w;
     // The hexagon's corners: each is the middle of the three tiles round
     // it, which is the dual of the lattice and the one construction every
@@ -495,7 +503,7 @@ fn hexsea(vertex: Vertex) -> VertexOutput {
     // The sea's height over the mean radius, and how deep the water on
     // this tile is. A tile whose ground stands over the sea has none.
     let sea_up = p.sea - p.radius;
-    let column = sea_up - field::surface(p, middle.dir);
+    let column = sea_up - (field::surface(p, middle.dir) + raised[u32(tile)]);
     if (column <= 0.0) {
         return nowhere(vertex);
     }

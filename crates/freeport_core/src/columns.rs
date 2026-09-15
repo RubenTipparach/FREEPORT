@@ -318,6 +318,93 @@ mod tests {
             "the feet left the tile's own top by {worst:.3} m"
         );
     }
+
+    #[test]
+    fn a_tile_raised_under_the_feet_carries_the_walker_up_with_it() {
+        let (grid, planet) = gentle();
+        let bounds = bounds(&planet);
+        let dir = DVec3::new(0.1, 0.95, 0.3).normalize();
+        let bare = bare();
+        let walker = Walker::enter(&Columns::new(grid, &planet, &bare), &bounds, dir, DVec3::X);
+        let tile = grid.at(walker.dir);
+        let mut built = Stacks::new();
+        built.raise(grid, tile, 1.5);
+        let field = Columns::new(grid, &planet, &built);
+        assert!(
+            (field.top(tile) - (walker.foot + 1.5)).abs() < 0.01,
+            "the top went to {} and the feet were at {}",
+            field.top(tile),
+            walker.foot
+        );
+        // The same walker, one frame on the world as it is now: what is
+        // built is walked the frame it lands, because the store the shader
+        // reads IS the field the walker walks.
+        let mut walker = walker;
+        walker.update(&field, &bounds, &Input::default(), 1.0 / 60.0);
+        assert!(
+            (walker.foot - field.top(tile)).abs() < 0.02,
+            "the feet are at {} and the raised top is {}",
+            walker.foot,
+            field.top(tile)
+        );
+    }
+
+    #[test]
+    fn a_patch_raised_a_metre_and_a_half_ahead_is_a_wall_the_walker_stops_at() {
+        let (grid, planet) = gentle();
+        let bounds = bounds(&planet);
+        let dir = DVec3::new(0.1, 0.95, 0.3).normalize();
+        let bare = bare();
+        let mut walker = Walker::enter(&Columns::new(grid, &planet, &bare), &bounds, dir, DVec3::X);
+        // A patch of nineteen tiles, its middle four metres along the way
+        // the walker is facing, raised three clicks of the builder's own
+        // half metre: well over the 0.6 m stride, so it is a wall and not
+        // a step.
+        let ahead = (walker.dir * planet.radius + walker.fwd * 4.0).normalize();
+        let middle = grid.at(ahead);
+        let mut built = Stacks::new();
+        built.raise(grid, middle, 1.5);
+        let mut ring = vec![middle];
+        for _ in 0..2 {
+            for t in ring.clone() {
+                for nb in grid.round(t) {
+                    if !ring.contains(&nb) {
+                        ring.push(nb);
+                        built.raise(grid, nb, 1.5);
+                    }
+                }
+            }
+        }
+        assert_eq!(built.len(), 19, "the brush covered {} tiles", built.len());
+        let field = Columns::new(grid, &planet, &built);
+        let input = Input {
+            forward: 1.0,
+            ..Default::default()
+        };
+        let start = walker.dir;
+        for _ in 0..240 {
+            walker.update(&field, &bounds, &input, 1.0 / 60.0);
+        }
+        let went = start.angle_between(walker.dir) * planet.radius;
+        let over = walker.foot - field.top(grid.at(walker.dir));
+        // It is the patch's NEAR FACE that stops it and not its middle: a
+        // brush of two rings reaches two and a half tiles out, so the wall
+        // starts a metre and a half along and a body of 35 cm stops about
+        // 1.15 m from where it set off. Measured: 1.11 m.
+        assert!(
+            (0.8..1.5).contains(&went),
+            "the walker went {went:.2} m into a wall whose face is 1.5 m ahead"
+        );
+        assert_eq!(
+            built.at(grid, grid.at(walker.dir)),
+            0.0,
+            "the walker climbed onto the patch, which is 1.5 m over a 0.6 m stride"
+        );
+        assert!(
+            over.abs() < 0.05,
+            "the walker did not climb, but its feet are {over:.2} m off the ground"
+        );
+    }
 }
 
 #[cfg(test)]

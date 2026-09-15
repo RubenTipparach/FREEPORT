@@ -34,6 +34,20 @@ pub fn key(grid: Grid, tile: Tile) -> u64 {
     (tile.face as u64) * n * n + (tile.i as u64) * n + tile.j as u64
 }
 
+/// The tile a key names, which is `key` undone: what a window is filled
+/// from, since the store holds keys and a shader's window holds tiles.
+/// None where the key names no tile of this grid.
+pub fn tile(grid: Grid, key: u64) -> Option<Tile> {
+    let n = grid.n as u64 + 1;
+    let face = key / (n * n);
+    let rest = key - face * n * n;
+    let (i, j) = (rest / n, rest - (rest / n) * n);
+    if face >= 20 || i + j > grid.n as u64 {
+        return None;
+    }
+    grid.canonical(face as u8, i as i64, j as i64)
+}
+
 impl Stacks {
     /// Nothing built anywhere.
     pub fn new() -> Stacks {
@@ -126,6 +140,19 @@ mod tests {
         stacks.raise(grid, a, -1.5);
         assert!(stacks.is_empty(), "a tile back at nought was kept");
         assert_eq!(stacks.at(grid, a), 0.0);
+    }
+
+    #[test]
+    fn a_key_names_its_own_tile_and_nothing_else() {
+        let grid = grid();
+        let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+        for i in 0..300 {
+            let y = 1.0 - 2.0 * (i as f64 + 0.5) / 300.0;
+            let s = (1.0 - y * y).sqrt();
+            let a = golden * i as f64;
+            let t = grid.at(DVec3::new(s * a.cos(), y, s * a.sin()));
+            assert_eq!(tile(grid, key(grid, t)), Some(t), "{t:?} did not come back");
+        }
     }
 
     #[test]

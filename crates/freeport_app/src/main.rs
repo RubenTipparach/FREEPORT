@@ -29,6 +29,7 @@
 mod args;
 mod edit;
 mod lamps;
+mod raise;
 mod sky;
 mod stream;
 mod terrain;
@@ -173,6 +174,7 @@ fn main() {
         .init_resource::<Frame>()
         .init_resource::<Status>()
         .init_resource::<Builder>()
+        .init_resource::<raise::Raising>()
         .add_systems(
             Startup,
             (spawn_world, tiers::spawn_world.run_if(on_tiers)).chain(),
@@ -185,6 +187,7 @@ fn main() {
                 walk,
                 fly,
                 build.run_if(not(on_tiers)),
+                raise::raise.run_if(on_tiers),
                 rebase_origin,
                 stream.run_if(not(on_tiers)),
                 tiers::feed_tiers.run_if(on_tiers),
