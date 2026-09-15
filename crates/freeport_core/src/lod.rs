@@ -419,4 +419,43 @@ mod sizes {
             }
         }
     }
+
+    /// What a planet's SIZE costs the far tier: the leaf count and the
+    /// walk's own time at four radii, from a metre planetoid's worth to a
+    /// thousand kilometres. The answer the harness rests on is that the
+    /// count does not move, because the split test is an ANGLE and an
+    /// angle has no metres in it; what moves is how deep the recursion
+    /// goes to reach the same detail on the ground, and that is a
+    /// logarithm.
+    #[test]
+    #[ignore]
+    fn the_cost_of_a_bigger_planet() {
+        let dir = DVec3::new(0.3, 0.7, 0.64).normalize();
+        let lod = Lod {
+            ratio: 6.0,
+            detail: 0.0,
+            cull: true,
+        };
+        for radius in [5.0e3, 5.0e4, 2.0e5, 1.0e6] {
+            let eye = dir * (radius + 12.0);
+            let clock = std::time::Instant::now();
+            let leaves = select(eye, radius, &lod, 0.0, dir);
+            let took = clock.elapsed().as_secs_f64() * 1e3;
+            // How small the finest leaf came out, metres along an edge.
+            let finest = leaves
+                .iter()
+                .map(|t| (t[0] - t[1]).length() * radius)
+                .fold(f64::INFINITY, f64::min);
+            // An icosahedron edge halved until it is that small.
+            let depth = (1.107_148_7 * radius / finest).log2();
+            println!(
+                "radius {:>9.0} m: {} leaves in {:.2} ms, finest {:.2} m, {:.1} levels deep",
+                radius,
+                leaves.len(),
+                took,
+                finest,
+                depth
+            );
+        }
+    }
 }
