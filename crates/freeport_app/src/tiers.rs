@@ -57,12 +57,17 @@ pub enum Which {
     #[default]
     Lod,
     Hex,
-    /// The sheet, which is neither tier and both: one surface at the sea's
-    /// radius over the far tier's leaves, with no hole cut in it, so it
-    /// lies over the hex columns at a shore exactly as it lies over the
-    /// far tier's triangles. A sea is flat whatever the ground under it is
-    /// made of.
+    /// The sheet past the hex disc: one surface at the sea's radius over
+    /// the far tier's leaves, with the disc cut out of it exactly as the
+    /// far GROUND tier has it cut out.
     Sea,
+    /// The sea inside the disc, as COLUMNS: a prism of water on every tile
+    /// whose ground stands under the sea's level, flat on top at that
+    /// level and hanging a skirt below it, so a shore is a wall of water
+    /// down to the beach rather than a sheet fading into it. The owner's
+    /// ask, and tenebris's water: "hex based water, so we can have voxel
+    /// water".
+    HexSea,
 }
 
 /// The lanes every tier's VERTEX stage reads, as one uniform at binding
@@ -183,7 +188,8 @@ pub struct SeaTier {
     pub lanes: Lanes,
     #[storage(111, read_only)]
     pub leaves: Handle<ShaderStorageBuffer>,
-    /// Always `Which::Sea`, and the key that picks the entry point.
+    /// `Which::Sea` or `Which::HexSea`, and the key that picks the entry
+    /// point.
     pub which: Which,
 }
 
@@ -214,9 +220,15 @@ impl MaterialExtension for SeaTier {
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
-        _key: MaterialExtensionKey<SeaTier>,
+        key: MaterialExtensionKey<SeaTier>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        descriptor.vertex.entry_point = Some("sea".into());
+        descriptor.vertex.entry_point = Some(
+            match key.bind_group_data {
+                Which::HexSea => "hexsea",
+                _ => "sea",
+            }
+            .into(),
+        );
         // The sheet carries the water's own COLUMN under each vertex in
         // `uv.x` and `water.wgsl` reads it there, so both stages are told
         // the varying exists. The mesh has no such attribute and does not
@@ -267,11 +279,13 @@ impl MaterialExtension for Tier {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Tier>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        // A `Tier` is a GROUND tier and carries only the two: the sea's
+        // two are `SeaTier`'s, which picks its own entry point off the
+        // same key.
         descriptor.vertex.entry_point = Some(
             match key.bind_group_data {
-                Which::Lod => "lod",
                 Which::Hex => "hex",
-                Which::Sea => "sea",
+                _ => "lod",
             }
             .into(),
         );
@@ -454,6 +468,8 @@ pub struct Drawn {
     pub near: Handle<TierMaterial>,
     pub far: Handle<TierMaterial>,
     pub sea: Handle<SeaMaterial>,
+    /// The sea inside the hex disc, as columns.
+    pub shallows: Handle<SeaMaterial>,
     pub leaves: Handle<ShaderStorageBuffer>,
 }
 
@@ -481,6 +497,14 @@ pub fn spawn_tiers(
     commands.spawn((
         Mesh3d(meshes.add(counted_mesh(at.lod_verts()))),
         MeshMaterial3d(drawn.sea.clone()),
+        Transform::IDENTITY,
+        NoFrustumCulling,
+    ));
+    // And the sea inside the disc rides the hex tier's mesh, because a
+    // water column is the same prism a ground column is.
+    commands.spawn((
+        Mesh3d(meshes.add(counted_mesh(at.hex_verts()))),
+        MeshMaterial3d(drawn.shallows.clone()),
         Transform::IDENTITY,
         NoFrustumCulling,
     ));
@@ -571,8 +595,35 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
         base: base(HEX_BIAS),
         extension: make(Which::Hex),
     });
-    let sea = seas.add(ExtendedMaterial {
-        base: crate::water::sheet_base(),
+    // The columns win the depth test where the two seas overlap, for the
+    // reason the ground tiers' own overlap has: the overlap exists so the
+    // near tier covers the far one and never the other way about.
+    let sea = sea_material(seas, &sheet, lanes, &leaves, Which::Sea, 0.0);
+    let shallows = sea_material(seas, &sheet, lanes, &leaves, Which::HexSea, HEX_BIAS);
+    Drawn {
+        near,
+        far,
+        sea,
+        shallows,
+        leaves,
+    }
+}
+
+/// One of the two seas: the same sheet wearing the same shader, differing
+/// in which entry point makes its vertices and which wins the depth test.
+fn sea_material(
+    seas: &mut Assets<SeaMaterial>,
+    sheet: &crate::water::WaterExt,
+    lanes: Lanes,
+    leaves: &Handle<ShaderStorageBuffer>,
+    which: Which,
+    bias: f32,
+) -> Handle<SeaMaterial> {
+    seas.add(ExtendedMaterial {
+        base: StandardMaterial {
+            depth_bias: bias,
+            ..crate::water::sheet_base()
+        },
         extension: SeaTier {
             centre: sheet.centre,
             wave: sheet.wave,
@@ -585,15 +636,9 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
             haze: sheet.haze,
             lanes,
             leaves: leaves.clone(),
-            which: Which::Sea,
+            which,
         },
-    });
-    Drawn {
-        near,
-        far,
-        sea,
-        leaves,
-    }
+    })
 }
 
 /// The leaves Planet-LOD picked, into the buffer the far tier and the sea
@@ -717,9 +762,11 @@ pub fn feed_tiers(
             step(live, &mut m.extension.lanes);
         }
     }
-    if let Some(m) = assets.seas.get_mut(&drawn.sea) {
-        m.extension.centre = centre.extend(m.extension.centre.w);
-        step(live, &mut m.extension.lanes);
+    for handle in [&drawn.sea, &drawn.shallows] {
+        if let Some(m) = assets.seas.get_mut(handle) {
+            m.extension.centre = centre.extend(m.extension.centre.w);
+            step(live, &mut m.extension.lanes);
+        }
     }
 }
 

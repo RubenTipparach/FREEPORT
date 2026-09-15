@@ -29,6 +29,11 @@ pub(crate) struct Args {
     /// stage is nearly all of a frame there.
     pub(crate) span: u32,
     pub(crate) octaves: u32,
+    /// Drive the walker FORWARD for this many frames at a fixed sixtieth
+    /// of a second. A headless run has nobody to press W, and a walker's
+    /// feel is a number a second person can check rather than a thing to
+    /// take on trust.
+    pub(crate) walk: u32,
     /// Draw the hex tiers: a disc of Goldberg columns round the eye and
     /// Planet-LOD past it, both made in the vertex stage. It is the
     /// DEFAULT, because the hex world is what this harness is; `--chunks`
@@ -50,6 +55,7 @@ pub(crate) fn parse_args() -> Args {
         fps: FPS,
         span: HEX_SPAN,
         octaves: OCTAVES,
+        walk: 0,
     };
     let mut it = std::env::args().skip(1);
     let vec3 = |s: &str| -> Option<DVec3> {
@@ -72,9 +78,9 @@ pub(crate) fn parse_args() -> Args {
             "--shot" => args.shot = it.next(),
             "--frames" => args.frames = it.next().and_then(|v| v.parse().ok()).unwrap_or(30),
             "--sculpt" => args.sculpt = it.next(),
-            // The tiers are flown over: the walker stands on the dual
-            // contoured field, and a hex column's ground is a question
-            // `freeport_core::walker` has not been asked yet.
+            // The hex world, which is the default: this is only here so a
+            // command line that says so reads the same as one that does
+            // not.
             "--tiers" => args.tiers = true,
             // The dual contoured world: chunks, a sea of its own, the
             // towns and the builder, and the walker on foot in them.
@@ -94,14 +100,9 @@ pub(crate) fn parse_args() -> Args {
                     .unwrap_or(OCTAVES)
                     .clamp(1, 24)
             }
+            "--walk" => args.walk = it.next().and_then(|v| v.parse().ok()).unwrap_or(600),
             other => warn!("unknown argument {other}"),
         }
-    }
-    // The hex world is flown over: a hex column's ground is a question
-    // `freeport_core::walker` has not been asked yet, so there is nothing
-    // for the walker to stand on that agrees with the picture.
-    if args.tiers {
-        args.fly = true;
     }
     args
 }

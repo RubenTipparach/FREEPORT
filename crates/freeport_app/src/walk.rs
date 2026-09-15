@@ -4,10 +4,14 @@
 //! both, and this is only what a harness adds: which key is which, where
 //! the eye is for the camera, a line of text saying where it stands, and a
 //! key that swaps between walking and flying. The field the walker walks
-//! is the same one the mesher contoured, so the picture is the collider.
+//! is the one the world is DRAWN from, so the picture is the collider:
+//! `World::underfoot` hands over the dual contoured field where that is
+//! what is drawn and `freeport_core::columns::Columns` where the hex tiers
+//! are, and nothing here knows which it got.
 
-use crate::{Controls, Eye, Fly, Ground, Status};
+use crate::{Args, Controls, Eye, Fly, Ground, Status};
 use bevy::prelude::*;
+use freeport_core::columns::Columns;
 use freeport_core::field::{Density, CONCRETE};
 use freeport_core::pos::WorldPos;
 use freeport_core::walker::{Bounds, Input, Walker};
@@ -16,13 +20,26 @@ use freeport_core::walker::{Bounds, Input, Walker};
 #[derive(Resource)]
 pub struct OnFoot(pub Walker);
 
+/// What a scripted walk has done so far: frames left, where it started,
+/// and how far the feet ever stood off the ground under them.
+#[derive(Default)]
+pub struct Scripted {
+    left: u32,
+    done: u32,
+    from: Option<freeport_core::walker::Walker>,
+    worst: f64,
+    cost: f64,
+}
+
 /// One frame on foot.
 pub fn walk(
     mut controls: Controls,
     ground: Res<Ground>,
+    args: Res<Args>,
     walker: Option<ResMut<OnFoot>>,
     mut eye: ResMut<Eye>,
     mut status: ResMut<Status>,
+    mut script: Local<Scripted>,
 ) {
     let Some(mut walker) = walker else {
         return;
@@ -31,7 +48,7 @@ pub fn walk(
     let keys = &controls.keys;
     let axis =
         |neg: KeyCode, pos: KeyCode| (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f64;
-    let input = Input {
+    let mut input = Input {
         forward: axis(KeyCode::KeyS, KeyCode::KeyW),
         right: axis(KeyCode::KeyA, KeyCode::KeyD),
         run: keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight),
@@ -39,7 +56,24 @@ pub fn walk(
         turn: -look.x as f64,
         tilt: -look.y as f64,
     };
-    let field = ground.0.field_near(walker.0.eye(), 8.0);
+    // A scripted walk holds W down and steps a fixed sixtieth, because the
+    // frame's own delta on a software rasteriser is most of a second and a
+    // walker that moves five metres a frame measures nothing.
+    let mut dt = controls.time.delta_secs_f64();
+    if args.walk > 0 && script.left == 0 && script.from.is_none() {
+        script.left = args.walk;
+        script.from = Some(walker.0.clone());
+    }
+    if script.left > 0 {
+        input = Input {
+            forward: 1.0,
+            ..Default::default()
+        };
+        dt = 1.0 / 60.0;
+        script.left -= 1;
+        script.done += 1;
+    }
+    let field = ground.0.underfoot(walker.0.eye(), 8.0);
     // The sea holds the feet only where there is water: a dry pit under
     // the level is walked into.
     let water = ground.0.water(&field);
@@ -48,10 +82,17 @@ pub fn walk(
         sea: if wet { water.sea.radius } else { 0.0 },
         ..ground.0.bounds
     };
-    walker
-        .0
-        .update(&field, &bounds, &input, controls.time.delta_secs_f64());
+    // A clock and never the frame's own delta, which is the thing this is
+    // measuring against in the first place.
+    let clock = std::time::Instant::now();
+    walker.0.update(&field, &bounds, &input, dt);
     eye.0 = WorldPos(walker.0.eye());
+    say_walk(
+        &mut script,
+        &walker.0,
+        &ground,
+        clock.elapsed().as_secs_f64(),
+    );
     let w = &walker.0;
     let under = field.material(w.dir * (w.foot - 0.05));
     status.walker = format!(
@@ -66,6 +107,39 @@ pub fn walk(
         } else {
             "on the ground"
         }
+    );
+}
+
+/// What a scripted walk has done: how far it has come along the ground,
+/// how far the feet ever stood off the top of the TILE they are over, and
+/// what a frame of the walker costs. Said once a second.
+///
+/// The gap is measured against the column's own top and never against the
+/// walker's own `ground`, which the walker has just set the feet to: that
+/// would be asking a thing whether it agrees with itself. The tile's top
+/// is what the SHADER lifts the column by, so this is the picture and the
+/// collider compared, which is the whole of what "snap to the hex surface"
+/// asks for.
+fn say_walk(script: &mut Scripted, w: &Walker, ground: &Ground, cost: f64) {
+    let Some(from) = &script.from else {
+        return;
+    };
+    script.cost = script.cost.max(cost);
+    if let Some(grid) = ground.0.tiles {
+        let top = Columns::new(grid, &ground.0.planet, &ground.0.stacks).top(grid.at(w.dir));
+        script.worst = script.worst.max((w.foot - top).abs());
+    }
+    if !script.done.is_multiple_of(60) || script.done == 0 {
+        return;
+    }
+    let gone = from.dir.angle_between(w.dir) * ground.0.planet.radius;
+    info!(
+        "walked {gone:.1} m in {:.0} s, {:.2} m over the mean radius, the feet {:.4} m off the column's own top at worst, {:.2} ms a frame at worst{}",
+        script.done as f64 / 60.0,
+        w.foot - ground.0.planet.radius,
+        script.worst,
+        script.cost * 1e3,
+        if w.on_ground { "" } else { ", airborne" },
     );
 }
 
@@ -96,7 +170,7 @@ pub fn toggle_walk(
             status.walker = "flying".to_string();
         }
         None => {
-            let field = ground.0.field_near(fly.at, 8.0);
+            let field = ground.0.underfoot(fly.at, 8.0);
             let heading = fly.forward().as_dvec3();
             commands.insert_resource(OnFoot(Walker::enter(
                 &field,

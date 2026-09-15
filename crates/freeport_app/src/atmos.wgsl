@@ -140,7 +140,10 @@ fn gather(
     for (var i = 0; i < 8; i = i + 1) {
         let at = eye + dir * (near + step * (f32(i) + dither));
         let h = length(at);
-        if (h < air.ground) {
+        // `air.floor` and never `air.ground`: the core's `gather` says
+        // what skipping on the mean radius did to a sky looked at from
+        // under it.
+        if (h < air.floor) {
             continue;
         }
         let alt = clamp((h - air.ground) / thick, 0.0, 1.0);

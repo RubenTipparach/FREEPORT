@@ -330,6 +330,26 @@ impl Grid {
         (base, (v[f[1]] - v[f[0]]) / n, (v[f[2]] - v[f[0]]) / n)
     }
 
+    /// How many lattice steps of `tile`'s own basis the direction `d`
+    /// stands from its middle: the INVERSE of `basis`, so a window of
+    /// tiles addressed by `(u, v)` in a shader can be asked where any tile
+    /// of the planet sits in it, or whether it sits in it at all.
+    ///
+    /// `basis` says the tile `(u, v)` away is `mid + u * e1 + v * e2`
+    /// normalised, so this solves `e1 u + e2 v - d t = -mid` for the three
+    /// by the inverse of the matrix those columns make. It is exact
+    /// wherever `basis` is, which is the anchor's own face, and carries
+    /// `basis`'s own error across an edge.
+    pub fn steps(&self, tile: Tile, d: DVec3) -> (f64, f64) {
+        let (mid, e1, e2) = self.basis(tile);
+        let m = glam::DMat3::from_cols(e1, e2, -d);
+        if m.determinant().abs() < 1e-18 {
+            return (0.0, 0.0);
+        }
+        let x = m.inverse() * -mid;
+        (x.x, x.y)
+    }
+
     /// Every tile whose middle is within `angle` radians of a direction,
     /// found by walking out from the tile under it. A disc of tiles is what
     /// the near tier draws, and it is bounded by the angle and never by the
@@ -625,5 +645,24 @@ mod tests {
         // And a planet is more tiles than anything could hold, which is the
         // reason this module addresses rather than lists.
         assert!(grid.count() > 1_000_000_000, "{} tiles", grid.count());
+    }
+
+    #[test]
+    fn a_window_of_steps_is_found_again_by_steps() {
+        // What the app does to put a raised tile into the shader's own
+        // window: walk the window forward with `basis` and back with
+        // `steps`, and they have to be the same two whole numbers.
+        let grid = Grid::for_tile(1_000_000.0, 1.0);
+        let anchor = grid.at(DVec3::new(0.21, 0.83, 0.52).normalize());
+        let (mid, e1, e2) = grid.basis(anchor);
+        let mut worst = 0.0_f64;
+        for u in -24..=24 {
+            for v in -24..=24 {
+                let dir = (mid + e1 * u as f64 + e2 * v as f64).normalize();
+                let (a, b) = grid.steps(anchor, dir);
+                worst = worst.max((a - u as f64).abs()).max((b - v as f64).abs());
+            }
+        }
+        assert!(worst < 1e-6, "a window round trip lost {worst} of a step");
     }
 }

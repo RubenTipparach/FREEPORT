@@ -278,13 +278,11 @@ fn lod(vertex: Vertex) -> VertexOutput {
 
 // ---------------------------------------------------------------- the sea
 
-// The sheet is ONE surface for both tiers, because a sea is flat whatever
-// the ground under it is made of: it rides the same Planet-LOD leaves the
-// far tier does, at the sea's radius instead of the ground's, with no hole
-// cut in it, so it lies over the hex columns at a shore exactly as it lies
-// over the far tier's triangles. A sub triangle whose three corners all
-// stand on ground above the sea is not drawn, which is where a coastline
-// comes from.
+// The sheet PAST the disc: it rides the same Planet-LOD leaves the far
+// ground tier does, at the sea's radius instead of the ground's, and with
+// the same hole cut in it, because inside the disc the sea is columns.
+// A sub triangle whose three corners all stand on ground above the sea is
+// not drawn, which is where a coastline comes from.
 //
 // It carries the water's own COLUMN in `uv.x`, which is what
 // `water.wgsl` turns into the thickness Beer's law attenuates over: the
@@ -324,12 +322,28 @@ fn sea(vertex: Vertex) -> VertexOutput {
     if (dry == 3) {
         return nowhere(vertex);
     }
+    // The hole the columns stand in, the ground tier's own test on the
+    // same lane: a sub triangle wholly inside the disc is the hex sea's.
+    if (dot(at[0].off, at[0].off) < tier.disc.w
+        && dot(at[1].off, at[1].off) < tier.disc.w
+        && dot(at[2].off, at[2].off) < tier.disc.w) {
+        return nowhere(vertex);
+    }
     let here = at[corner];
     // The swell is `water_lib.wgsl`'s, the same function the dual
     // contoured sheet's vertex stage calls, so the two seas are one sea.
     // It is asked in the planet's own frame, which for a point on the
     // sheet is its direction times the sea's radius.
-    let lift = water::swell(here.dir * p.sea, tier.wave, tier.deep.w, globals.time);
+    //
+    // And it is FADED OUT toward the hole, because the sea inside the disc
+    // is columns and a column is flat: the swell is up to a metre of
+    // geometry, so a sheet carrying it met the flat tops at the rim with a
+    // step in it, and the step caught the sun as a white band right round
+    // the disc. Nought at the hole's own rim and full at twice its angle,
+    // which is well inside where a leaf is wider than a wave anyway.
+    let far = dot(here.off, here.off);
+    let swell = smoothstep(tier.disc.w, tier.disc.w * 4.0, far);
+    let lift = water::swell(here.dir * p.sea, tier.wave, tier.deep.w, globals.time) * swell;
     var out = emit(
         vertex,
         tier.base.xyz + here.off * p.radius + here.dir * (sea_up + lift),
@@ -449,4 +463,96 @@ fn hex(vertex: Vertex) -> VertexOutput {
         n = normalize(across);
     }
     return emit(vertex, at[which], n, top - (p.sea - p.radius));
+}
+
+// ------------------------------------------------------- the sea, in tiles
+
+// The sea INSIDE the disc, as columns: the same prism the `hex` entry
+// point makes, on the same tiles, but topped at the sea's level rather
+// than at the ground's and drawn only where the ground is under it. That
+// is the owner's ask and tenebris's water: a shore is a wall of water down
+// to the beach rather than a sheet fading into it, and a puddle in a
+// hollow is the tiles of that hollow and no others.
+//
+// The skirt is the ground tier's own. A water column's side is only ever
+// SEEN where the tile beside it has no water in it, and there the skirt
+// hangs into the beach, which is what the ground draws over.
+@vertex
+fn hexsea(vertex: Vertex) -> VertexOutput {
+    let span = i32(tier.lat2.w);
+    let wide = span * 2 + 1;
+    let id = i32(vertex.position.x);
+    let tile = id / PRISM_VERTS;
+    let k = id - tile * PRISM_VERTS;
+    let u = tile % wide - span;
+    let v = tile / wide - span;
+    if (u * u + u * v + v * v > span * span) {
+        return nowhere(vertex);
+    }
+    let p = planet();
+    let uv = vec2<f32>(f32(u), f32(v));
+    let middle = tile_spot(uv);
+    // The sea's height over the mean radius, and how deep the water on
+    // this tile is. A tile whose ground stands over the sea has none.
+    let sea_up = p.sea - p.radius;
+    let column = sea_up - field::surface(p, middle.dir);
+    if (column <= 0.0) {
+        return nowhere(vertex);
+    }
+    // FLAT at the sea's own level, with no swell in the geometry at all.
+    // The sheet's swell is metres of wavelength and a tile is a metre, so
+    // asking it at the tile's MIDDLE aliases it: every column came out at
+    // its own height and the sea read as a field of cracked slabs rather
+    // than as water. A column of water is flat and the ripples are the
+    // shader's, which is what tenebris's water is; the swell stays on the
+    // sheet past the disc, where a leaf is wider than a wave.
+    let top = sea_up;
+    let foot = top - tier.lat1.w;
+    var corner = array<vec3<f32>, 6>();
+    var round_it = array<vec3<f32>, 6>();
+    for (var i = 0; i < 6; i = i + 1) {
+        round_it[i] = tile_spot(uv + hex_step(i)).off;
+    }
+    for (var i = 0; i < 6; i = i + 1) {
+        corner[i] = (middle.off + round_it[i] + round_it[(i + 1) % 6]) / 3.0;
+    }
+    let tri = k / 3;
+    let which = k - tri * 3;
+    var out: VertexOutput;
+    if (tri < TOP_TRIS) {
+        var idx = array<i32, 3>(0, tri + 1, tri + 2);
+        let off = corner[idx[which]];
+        out = emit(
+            vertex,
+            tier.base.xyz + off * p.radius + middle.dir * top,
+            middle.dir,
+            0.0,
+        );
+    } else {
+        let side = (tri - TOP_TRIS) / 2;
+        let half = (tri - TOP_TRIS) - side * 2;
+        let a = corner[side];
+        let b = corner[(side + 1) % 6];
+        let pa = tier.base.xyz + a * p.radius;
+        let pb = tier.base.xyz + b * p.radius;
+        let up = middle.dir;
+        var at = array<vec3<f32>, 3>(pa + up * top, pb + up * top, pb + up * foot);
+        if (half == 1) {
+            at = array<vec3<f32>, 3>(pa + up * top, pb + up * foot, pa + up * foot);
+        }
+        let edge = normalize(tier.disc.xyz + (a + b) * 0.5);
+        let across = edge - up * dot(edge, up);
+        var n = up;
+        if (dot(across, across) > 1.0e-12) {
+            n = normalize(across);
+        }
+        out = emit(vertex, at[which], n, 0.0);
+    }
+#ifdef VERTEX_UVS_A
+    // The water's own COLUMN, which on a tile is one number for the whole
+    // prism rather than a corner's: a column of water is as deep as its
+    // tile and not as deep as the slope under its corner.
+    out.uv.x = column;
+#endif
+    return out;
 }

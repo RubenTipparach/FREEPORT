@@ -1181,13 +1181,29 @@ would draw the undisplaced counting mesh: a depth buffer of a point at the
 origin and a shadow map of nothing. Putting them back means transcribing
 the prepass vertex stage too, and that is what it will take.
 
-**The sea is ONE sheet for both tiers**, because a sea is flat whatever
-the ground under it is made of. It rides the same Planet-LOD leaves the
-far tier does, at the sea's radius instead of the ground's, with no hole
-cut in it, so it lies over the hex columns at a shore exactly as it lies
-over the far tier's triangles. A sub triangle whose three corners all
-stand on ground above the sea is not drawn, and that is where a coastline
-comes from. The fragment shader is `water.wgsl` unchanged, tenebris's
+**The sea is COLUMNS inside the disc and a sheet past it**, which is the
+owner's ask: "hex based water similar to what we have in tenebris, so we
+can have voxel water". A tile whose ground stands under the sea's level
+gets a prism of water on it, flat at that level, with the ground tier's
+own skirt hanging below, so a shore is a wall of water down to the beach
+and a puddle in a hollow is the tiles of that hollow and no others. Past
+the disc the sheet rides the same Planet-LOD leaves the far ground tier
+does, at the sea's radius instead of the ground's and with the same hole
+cut in it. A sub triangle whose three corners all stand on ground above
+the sea is not drawn, and that is where a coastline comes from. One
+material, one extension, two entry points, and the columns win the depth
+test where the two overlap for the reason the ground's own overlap has.
+
+**A column of water is FLAT and its ripples are the shader's**, which is
+what tenebris's water is and what the first cut was not. The sheet's swell
+is `water_lib.wgsl`'s, metres of wavelength, and a tile is a metre: asked
+at the tile's MIDDLE it ALIASES, every column came out at its own height,
+and the sea read as a field of cracked slabs. The swell stays on the sheet,
+where a leaf is wider than a wave, and is faded out toward the hole so the
+two seas meet at the rim without a step in them. The water's own COLUMN,
+which `water.wgsl` attenuates over, is one number for the whole prism
+rather than a corner's: a column of water is as deep as its tile and not
+as deep as the slope under its corner. The fragment shader is `water.wgsl` unchanged, tenebris's
 own. What differs is where the THICKNESS comes from: the tiers are not in
 the depth prepass at all (Bevy's own vertex stage would draw their
 counting mesh), and a depth buffer measures to whatever is behind, which
@@ -1232,12 +1248,51 @@ has no sphere in it to sag. The dual contoured world keeps the length,
 because a chunk's triangles are metres across and their position IS the
 surface, so there the varying would cost something and buy nothing.
 
+**The walker stands on a COLUMN, and nothing about the walker changed.**
+The owner's ask was that walking respect the hexagons, "a rigid collision
+system where I snap to the hex surface instead of some curved
+interpolation". The smooth field is what `tiers.wgsl` DISPLACES a column
+by and not what it draws: a column's top is flat at its middle's height
+and its sides are vertical, so a walker on the smooth field floats over a
+tile's low corner, sinks into its high one, and walks through a step
+between two tiles as though it were not there. `columns.rs` is that
+picture as a DENSITY, and the walker's ground, ceiling, wall and stand
+rules are the same functions reading the same trait, because "the picture
+is the collider" is a rule about the FIELD and not about the mesher.
+`World::underfoot` is the one place the two worlds are told apart, and
+`walk.rs` does not know which it got.
+
+What the field answers is the way OUT and not the drop to the top, which
+is what makes a step a wall: the walker pushes out along the gradient by
+the density over the slope, so a field that only measured the drop would
+push a body pressed against a step four centimetres a pass (the gradient's
+own step) and leave it standing in the rock. Inside a column the answer is
+the least of the drop to its top and the distance sideways through any
+face whose neighbour's top is UNDER this height, and the cheap half of
+that test comes first, so a body standing on a top, where the depth is
+nought, never asks the field about its six neighbours at all. A tile's
+boundary is taken as the perpendicular bisector of the two middles, which
+is the Voronoi edge, where the mesh's corner is the CENTROID of the three
+middles round it: on a lattice this close to equilateral the two are the
+same point to well under a tile.
+
+**And on this planet a hex world has no walls in it at all, which is
+measured rather than assumed** (`columns::sizes::the_steepest_step_between_two_tiles`).
+A fractal's slope is about `4 * relief * octaves / (2 pi R / lumps)`
+whatever the tile size, so whether two neighbouring tiles differ by more
+than the walker's 0.6 m stride is a property of the RELIEF: at one metre
+tiles the steepest step between neighbours is 0.24 m and the mean 0.06,
+at half a metre 0.12 and 0.03, and at four metres 0.95 and 0.22. So the
+harness at one metre tiles is a staircase a walker climbs without ever
+stopping, and a wall arrives when the tiles are four metres or the relief
+is steeper. `--walk N` drives the walker forward N frames at a fixed
+sixtieth and says how far it has come and how far the feet ever stood off
+the ground, because a headless run has nobody to press W.
+
 **What is still to build on the tiers, named so the gap is visible:** the
-walker (a hex column's ground is a question `freeport_core::walker` has
-not been asked), the towns (`field.wgsl` has no sites in it, so a levelled
-plateau would be in the walker's field and not in the picture), the
-builder on tiles, the shadow and prepass stages, and the twelve
-pentagons.
+towns (`field.wgsl` has no sites in it, so a levelled plateau would be in
+the walker's field and not in the picture), the builder on tiles, the
+shadow and prepass stages, and the twelve pentagons.
 
 Measured on the harness, which is the 1,000 km planet: one metre tiles
 (12,257,789,082,012 round it), a disc of 48 tiles and 48 m, 9,409 prisms
@@ -1302,6 +1357,16 @@ because that is what the weather has to fill.
   for. The coefficients were then SWEPT (`atmos::sizes::sky_colours`
   prints it) and taken at the setting where the zenith is blue by a factor
   of two and a half and the horizon is still the pale band it ought to be.
+- **A BLACK sky, looking down from under the mean radius.** The march
+  skipped every sample under `Air::ground` on the reasoning that under the
+  planet's radius is inside the planet. It is not: the sea is four hundred
+  metres under the mean radius on this world, so a walker on a beach is
+  under it, and every sample of a ray that walker casts DOWNWARD is under
+  it too. All eight were skipped, the march came back nought with an alpha
+  of one, and the sky over a lit shore was pure black. It skips on
+  `Air::floor` now, which is the lowest the ground goes, and `alt`'s own
+  clamp already says that the air in a valley is the densest there is.
+  `an_eye_under_the_mean_radius_has_a_sky_when_it_looks_down` holds it.
 - **A dark stripe along the horizon**, which the owner's own eye would have
   caught and a picture did. `Air::floor` is the answer and the field's own
   doc comment is the long form: what stops a view ray going DOWN is the
@@ -1446,7 +1511,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 85, the core, about 4 s
+cargo test -p freeport_core                       # 95, the core, about 4 s
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -1465,6 +1530,7 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 ./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,1000012,-14 --look 0,1000012,60 --shot graze.png   # the horizon dead level, which is where the dark band was
 ./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,1030000,0 --look 0,1000000,120000 --shot high.png  # 30 km up: the curve, the sea and the haze
 ./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,4000000,0 --look 0,1000000,0 --shot orbit.png      # the whole planet in 44 leaves and 704 triangles
+./target/release/freeport_app --span 20 --octaves 14 --walk 600 --frames 620 --shot walked.png   # ten seconds of walking on the columns, the distance and the feet's own gap said every second
 ./target/release/freeport_app --chunks --octaves 14 --levels 9 --frames 20 --shot chunks.png   # the dual contoured world on the same planet, on the port's main street
 ./target/release/freeport_app --chunks --frames 50 --sculpt block --shot sculpt.png            # a block placed on the street once the ground has settled, and the chunks it remade
 ```
@@ -1492,7 +1558,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 85 tests in about 3.5 s. A 6 m sphere on a 32^3 lattice at
+- `freeport_core`: 95 tests in about 4 s. A 6 m sphere on a 32^3 lattice at
   half a metre marches to 5,288 triangles, a closed shell within 3% of the
   sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across, with
@@ -1517,6 +1583,18 @@ Numbers in the commit message. What is measured so far:
   kilometres is 6.5 cm out of place the naive way and 18 microns through
   `pos::unit_offset`; `log2(2 pi R / lumps / 2 m)` is 18 octaves against
   11 on a five kilometre world.
+- The hex world's steps, on the harness's planet
+  (`columns::sizes::the_steepest_step_between_two_tiles`): at one metre
+  tiles the steepest step between two neighbouring tiles is 0.24 m and the
+  mean 0.06, at half a metre 0.12 and 0.03, at four metres 0.95 and 0.22,
+  against the walker's own 0.6 m stride. So there is no WALL in a one metre
+  hex world on this relief, only a staircase, and the walker's feet stay
+  within half a millimetre of the column under them
+  (`--walk`, which drives the walker forward at a fixed sixtieth). A frame
+  of the walker on that world costs 0.1 ms and a sample of its field 1.7
+  microseconds (`columns::sizes::what_a_frame_of_the_walker_costs`), and
+  setting a walker down costs 7 ms, which is the scan from the top of the
+  band that `Walker::enter` does once.
 - The far tier's chord, at four radii up: 44 leaves over the planet, a sub
   triangle 75 km across, and a 75 km chord on a 1,000 km sphere sags 703 m
   under the sphere against a sea 400 m down, which is why a tier hands its

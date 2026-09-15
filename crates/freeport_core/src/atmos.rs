@@ -248,7 +248,16 @@ fn gather(air: &Air, eye: DVec3, dir: DVec3, from: f64, to: f64, sun: DVec3) -> 
         // and wants the same answer twice, so it takes the middle.
         let at = eye + dir * (from + step * (i as f64 + 0.5));
         let h = at.length();
-        if h < air.ground {
+        // Below the FLOOR is inside the rock and has no air in it; below
+        // the mean radius is a valley, and the air there is the densest
+        // there is, which `alt`'s own clamp already says. Skipping on the
+        // mean radius instead was a sky that went BLACK the moment an eye
+        // under the mean radius looked down: every sample of a downward
+        // ray is under it, every one was skipped, and the march came back
+        // nought with an alpha of one. The sea is four hundred metres
+        // under the mean radius on this planet, so that is most of the
+        // ground a player ever stands on.
+        if h < air.floor {
             continue;
         }
         let alt = ((h - air.ground) / thickness).clamp(0.0, 1.0);
@@ -473,6 +482,28 @@ mod tests {
         assert!(far > near, "{far} against {near}");
         assert!(near > 0.0 && far < 1.0, "{near} to {far}");
         assert!(aloft < 1e-6, "the fog followed the eye up: {aloft}");
+    }
+
+    #[test]
+    fn an_eye_under_the_mean_radius_has_a_sky_when_it_looks_down() {
+        // The sea is under the mean radius and a walker stands beside it,
+        // so a look down a beach is a look from under the mean radius at
+        // ground under it too. Every sample of that ray is below the mean
+        // radius, and a march that skipped them came back nought with an
+        // alpha of one: a black sky over a lit shore.
+        let air = Air::round(1_000_000.0, 8_000.0);
+        let sun = DVec3::new(0.42, 0.62, -0.66).normalize();
+        // Forty metres over a sea four hundred metres under the mean
+        // radius, looking down at forty five degrees.
+        let eye = DVec3::new(0.0, air.ground - 360.0, 0.0);
+        let dir = DVec3::new(1.0, -1.0, 0.0).normalize();
+        let (down, alpha) = sky(&air, eye, dir, sun);
+        assert!(alpha > 0.99, "a ray into the ground is not opaque: {alpha}");
+        let level = sky(&air, eye, DVec3::X, sun).0.length();
+        assert!(
+            down.length() > level * 0.05,
+            "looking down from under the mean radius came out {down:?} against {level:.3} level"
+        );
     }
 
     #[test]
