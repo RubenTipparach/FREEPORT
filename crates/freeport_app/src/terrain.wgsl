@@ -169,9 +169,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let n = normalize(in.world_normal);
     let rel = in.world_position.xyz - terrain.centre.xyz;
     let up = normalize(rel);
+    // What this triangle is made of. A dual contoured chunk carries it in
+    // the vertex colour's red, every corner the same so no driver's choice
+    // of provoking vertex can change it; a tier's mesh is a vertex COUNT
+    // and has no colours at all, so it rides the same varying its height
+    // over the sea does, and every vertex of one of its triangles carries
+    // the same number, which makes the interpolation a constant.
+#ifdef TIER_HEIGHT
+    let material = in.uv.x;
+#else
     var material = 0.0;
 #ifdef VERTEX_COLORS
     material = in.color.r;
+#endif
 #endif
     let ground = is(material, M_TERRAIN);
     let slope = 1.0 - clamp(dot(n, up), 0.0, 1.0);

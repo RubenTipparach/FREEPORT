@@ -7,10 +7,11 @@ of. Bevy 0.18, Rust, `f64` world frame with a floating origin, and a two
 thousand kilometre planet drawn two ways off one density field: a disc of
 Goldberg columns round the eye with sp4cerat's Planet-LOD past it, both made
 in the vertex stage, or the same field dual contoured into triangles a chunk
-at a time in rings of detail round the eye, with a finite sea, cities built
-from recipes of brushes in that field, and a builder on foot in both: a
-column raised a tile at a time on the hex world, a brush added or cut on the
-other. The sky is
+at a time in rings of detail round the eye, with a finite sea, cities on
+both (recipes of brushes in the field on one, a levelled site with its lots
+raised and its streets tagged on the other) and a builder on foot in both:
+a column raised a tile at a time on the hex world, a brush added or cut on
+the other. The sky is
 tenebris's scattering march, run in the core so the dome and the fog cannot
 disagree.
 

@@ -77,11 +77,12 @@ struct Tier {
 // in `tiers::feed_tiers` and buys one vertex shader for three materials.
 @group(#{MATERIAL_BIND_GROUP}) @binding(110) var<uniform> tier: Tier;
 @group(#{MATERIAL_BIND_GROUP}) @binding(111) var<storage, read> leaves: array<vec4<f32>>;
-// How much every tile of the hex window has been RAISED, metres, in the
-// window's own order: the same `tile` number the entry points already work
-// out from the vertex index is the index of this, so a built tile is never
-// looked up by address. `tiers.rs`'s `send_raised` fills it.
-@group(#{MATERIAL_BIND_GROUP}) @binding(112) var<storage, read> raised: array<f32>;
+// What every tile of the hex window carries: how far it has been RAISED in
+// x, metres, and what it is MADE OF in y, one of `freeport_core::field`'s
+// numbers. The same `tile` number the entry points already work out from
+// the vertex index is the index of this, so a built tile is never looked
+// up by address. `feed::send_raised` fills it.
+@group(#{MATERIAL_BIND_GROUP}) @binding(112) var<storage, read> raised: array<vec2<f32>>;
 
 // The only thing a tier's mesh carries is which vertex of the draw this
 // is, in `position.x`. See `tiers::counted_mesh` for why it is not
@@ -142,6 +143,7 @@ fn emit(
     world: vec3<f32>,
     normal: vec3<f32>,
     over_sea: f32,
+    material: f32,
 ) -> VertexOutput {
     var out: VertexOutput;
     out.world_position = vec4<f32>(world, 1.0);
@@ -161,8 +163,14 @@ fn emit(
     // sand while the sea itself, which is clipped on the true field at
     // the corners, stayed where it belonged. A height interpolated
     // between three corners has no sphere in it to sag.
+    // And what it is MADE OF, in the other lane of the same varying. A
+    // tier's mesh is a vertex COUNT and nothing else, so there is no
+    // vertex colour to put it in the way a dual contoured chunk does; and
+    // every vertex of one of these triangles carries the same number, so
+    // the interpolation across the triangle is a constant and `terrain`'s
+    // own half unit test never sees a value between two materials.
 #ifdef VERTEX_UVS_A
-    out.uv = vec2<f32>(0.0, over_sea);
+    out.uv = vec2<f32>(material, over_sea);
 #endif
     return out;
 }
@@ -272,12 +280,16 @@ fn lod(vertex: Vertex) -> VertexOutput {
     // and no coarser.
     let step = length(a - b) * p.radius / f32(sub);
     let here = at[corner];
-    let up = field::surface(p, here.dir);
+    let up = field::surface(p, here.dir, here.off);
     return emit(
         vertex,
         place(p, here, up),
-        field::ground_normal(p, here.dir, step),
+        field::ground_normal(p, here.dir, here.off, step),
         up - (p.sea - p.radius),
+        // The far tier draws the relief and nothing built: a town past
+        // the hex disc is its levelled plateau, since a column raised on
+        // a tile is only ever drawn where the tiles are.
+        0.0,
     );
 }
 
@@ -319,7 +331,7 @@ fn sea(vertex: Vertex) -> VertexOutput {
     let sea_up = p.sea - p.radius;
     for (var k = 0; k < 3; k = k + 1) {
         at[k] = leaf_spot(a, b, c, pq[k].x, pq[k].y, sub);
-        depth[k] = sea_up - field::surface(p, at[k].dir);
+        depth[k] = sea_up - field::surface(p, at[k].dir, at[k].off);
         if (depth[k] <= 0.0) {
             dry = dry + 1;
         }
@@ -353,6 +365,9 @@ fn sea(vertex: Vertex) -> VertexOutput {
         vertex,
         tier.base.xyz + here.off * p.radius + here.dir * (sea_up + lift),
         here.dir,
+        0.0,
+        // The sea wears `water.wgsl` and not `terrain.wgsl`, so its own
+        // uv.x is the water's COLUMN and is written over this below.
         0.0,
     );
 #ifdef VERTEX_UVS_A
@@ -420,7 +435,8 @@ fn hex(vertex: Vertex) -> VertexOutput {
     // The relief at the tile's middle plus what has been built there,
     // which is `columns::Columns::top` asked on the GPU: the walker's
     // ground and the picture are one number.
-    let top = field::surface(p, middle.dir) + raised[u32(tile)];
+    let built = raised[u32(tile)];
+    let top = field::surface(p, middle.dir, middle.off) + built.x;
     let foot = top - tier.lat1.w;
     // The hexagon's corners: each is the middle of the three tiles round
     // it, which is the dual of the lattice and the one construction every
@@ -443,7 +459,7 @@ fn hex(vertex: Vertex) -> VertexOutput {
         var idx = array<i32, 3>(0, tri + 1, tri + 2);
         let off = corner[idx[which]];
         let world = tier.base.xyz + off * p.radius + middle.dir * top;
-        return emit(vertex, world, middle.dir, top - (p.sea - p.radius));
+        return emit(vertex, world, middle.dir, top - (p.sea - p.radius), built.y);
     }
     // A side: the quad from one corner to the next, down to the skirt.
     let side = (tri - TOP_TRIS) / 2;
@@ -470,7 +486,7 @@ fn hex(vertex: Vertex) -> VertexOutput {
     if (dot(across, across) > 1.0e-12) {
         n = normalize(across);
     }
-    return emit(vertex, at[which], n, top - (p.sea - p.radius));
+    return emit(vertex, at[which], n, top - (p.sea - p.radius), built.y);
 }
 
 // ------------------------------------------------------- the sea, in tiles
@@ -503,7 +519,7 @@ fn hexsea(vertex: Vertex) -> VertexOutput {
     // The sea's height over the mean radius, and how deep the water on
     // this tile is. A tile whose ground stands over the sea has none.
     let sea_up = p.sea - p.radius;
-    let column = sea_up - (field::surface(p, middle.dir) + raised[u32(tile)]);
+    let column = sea_up - (field::surface(p, middle.dir, middle.off) + raised[u32(tile)].x);
     if (column <= 0.0) {
         return nowhere(vertex);
     }
@@ -535,6 +551,7 @@ fn hexsea(vertex: Vertex) -> VertexOutput {
             tier.base.xyz + off * p.radius + middle.dir * top,
             middle.dir,
             0.0,
+            0.0,
         );
     } else {
         let side = (tri - TOP_TRIS) / 2;
@@ -554,7 +571,7 @@ fn hexsea(vertex: Vertex) -> VertexOutput {
         if (dot(across, across) > 1.0e-12) {
             n = normalize(across);
         }
-        out = emit(vertex, at[which], n, 0.0);
+        out = emit(vertex, at[which], n, 0.0, 0.0);
     }
 #ifdef VERTEX_UVS_A
     // The water's own COLUMN, which on a tile is one number for the whole

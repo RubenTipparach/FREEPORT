@@ -142,13 +142,23 @@ fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
 const SKIRT_IN: f64 = 5.0;
 const SKIRT_OUT: f64 = 6.0;
 
+/// The arc from a site's middle inside which the ground is level right
+/// across, and the arc past which it is the relief again, metres. The one
+/// place the skirt's two widths are read, so a shader handed this pair is
+/// applying the same rule `Planet::site_weight` does rather than a second
+/// copy of two constants (`field.wgsl`'s `site_weight` is that shader).
+pub fn site_band(site: &crate::town::Site) -> (f64, f64) {
+    (site.r * 0.5 - SKIRT_IN, site.r * 0.5 + SKIRT_OUT)
+}
+
 impl Planet {
     /// How much a site levels a direction: one right across it, nought
     /// past its apron.
     fn site_weight(&self, site: &crate::town::Site, dir: DVec3) -> f64 {
         let c = dir.dot(site.dir).clamp(-1.0, 1.0);
         let dist = c.acos() * self.radius;
-        1.0 - smoothstep(site.r * 0.5 - SKIRT_IN, site.r * 0.5 + SKIRT_OUT, dist)
+        let (inner, outer) = site_band(site);
+        1.0 - smoothstep(inner, outer, dist)
     }
 
     /// The relief at a direction, metres over the mean radius, sites
@@ -731,6 +741,47 @@ mod tests {
             "{g:?}"
         );
         assert_eq!(grid.point(0, 0, 0), grid.corner);
+    }
+
+    #[test]
+    fn a_sites_band_is_level_inside_and_relief_outside() {
+        let mut planet = Planet {
+            radius: 2_000.0,
+            relief: 40.0,
+            lumps: 12.0,
+            octaves: 8,
+            overhang: 0.0,
+            ledge: 0.0,
+            seed: 3,
+            sites: vec![],
+        };
+        let dir = DVec3::new(0.2, 0.9, 0.3).normalize();
+        let site = crate::town::Site {
+            dir,
+            h: 7.5,
+            r: 80.0,
+        };
+        let (inner, outer) = site_band(&site);
+        assert!(inner < outer, "the band runs inward to outward");
+        planet.sites = vec![site];
+        let (east, _) = crate::town::frame_at(dir);
+        // A point a hair inside the inner arc is the site's height and a
+        // point a hair outside the outer one is the relief alone, which is
+        // what a shader handed the pair has to reproduce.
+        let at = |m: f64| {
+            let a = m / planet.radius;
+            (dir * a.cos() + east * a.sin()).normalize()
+        };
+        assert_eq!(planet.surface(at(inner - 0.5)).0, 7.5);
+        let bare = Planet {
+            sites: vec![],
+            ..planet.clone()
+        };
+        let far = at(outer + 0.5);
+        assert!(
+            (planet.surface(far).0 - bare.surface(far).0).abs() < 1e-12,
+            "the ground past the skirt is not the relief"
+        );
     }
 
     #[test]

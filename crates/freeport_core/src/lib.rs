@@ -13,6 +13,7 @@ pub mod audit;
 pub mod columns;
 pub mod dc;
 pub mod field;
+pub mod grow;
 pub mod hex;
 pub mod json;
 pub mod lattice;

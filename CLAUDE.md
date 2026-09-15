@@ -1350,11 +1350,59 @@ A tile raised UNDER the feet carries the walker up with it in one frame
 the same claim from the other side: the store the shader reads is the field
 the walker walks.
 
-**What is still to build on the tiers, named so the gap is visible:** the
-towns (`field.wgsl` has no sites in it, so a levelled plateau would be in
-the walker's field and not in the picture), an EXPORT of what was built
-(the dual contoured builder writes a recipe and this writes nothing yet),
-the shadow and prepass stages, and the twelve pentagons.
+**A town on the hex world is a levelled site and columns, and neither is a
+brush.** The dual contoured world's cities are recipes of signed distance
+brushes cut into the ground's own field; a column world has nothing to cut,
+because a wall, a floor, a lintel and a step are all the same thing there,
+a run of blocks in a column, which is tenebris's rule and the hex mockup's.
+So the same `town::plan` puts the towns on the planet for both worlds, and
+what differs is what happens after:
+
+- **The SITE is in the shader now**, which is the thing this file used to
+  name as the gap. `field.wgsl` owns binding 113, two lanes a site, and its
+  `surface` applies them exactly as `Planet::surface` does, so a levelled
+  plateau is in the picture and in the walker's field at once and
+  `ground_normal` shades a town flat rather than as the hill it replaced.
+  A site's DIRECTION goes up as an OFFSET from the tier's anchor,
+  differenced in f64 like every other vertex here, because the weight is a
+  function of how far a point is from the site's middle and that distance
+  is metres: `acos(dot(dir, site))` in `f32` near one resolves 3.5e-4
+  radians, which on a thousand kilometre planet is 346 m, so a town 80 m
+  across would fall inside ONE STEP of the arithmetic. The two skirt arcs
+  come up precomputed off the core's own `field::site_band`, so the pair of
+  constants is written once.
+- **A building is `grow.rs`**: a lot's ring of tiles raised to its parapet
+  and tagged concrete, its inside left at the town's level, a gap in the
+  street wall where the door is, and a street tagged and not raised at all,
+  which is the whole reason `Stacks` holds a tile that stands at nought.
+  A tile is classified by where its own MIDDLE stands in the town's frame
+  (`grow::where_in`, the inverse of `lot_frame` to the small angle) and
+  never by which sampled rectangles it turned up in: the first cut took the
+  ring as the footprint's tiles less the room's, and a walk at half a tile
+  puts a tile that straddles the line in BOTH sets, so every one of them
+  was dropped and the wall came out with holes wherever it was under two
+  tiles thick, which at `WALL` on this grid is everywhere.
+- **The store carries a MATERIAL as well as a height**, because a street is
+  a tag with no rise and a wall is both. `Stacks` is sorted pairs of a key
+  with the two, a tile is removed when it carries neither, and the window
+  at binding 112 is a `vec2` a tile: the rise in x and the material in y.
+  A tier's mesh is a vertex COUNT and has no vertex colours, so the
+  material rides the same varying the height over the sea does, and every
+  vertex of one of its triangles carries the same number, which makes the
+  interpolation a constant and `terrain.wgsl`'s own half unit test never
+  sees a value between two materials.
+- **The far tier draws no buildings**, and that is not a defect to hide: a
+  column raised on a tile is only ever drawn where the tiles are, so past
+  the hex disc a town is its levelled plateau and nothing more. That is the
+  dual contoured world's massing rule arrived at from the other side, and
+  it is why the disc's own span is what decides how much of a city is in a
+  picture.
+
+**What is still to build on the tiers, named so the gap is visible:**
+FLOORS, because a column has one top and a storey over a storey is not a
+thing one can hold (the hex mockup gave every tile a list of RUNS, which is
+a change to the store rather than to the growing), lamps, an EXPORT of what
+was built, the shadow and prepass stages, and the twelve pentagons.
 
 Measured on the harness, which is the 1,000 km planet: one metre tiles
 (12,257,789,082,012 round it), a disc of 48 tiles and 48 m, 9,409 prisms
@@ -1573,7 +1621,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 98, the core, about 4 s
+cargo test -p freeport_core                       # 103, the core, about 4 s
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -1596,6 +1644,7 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 ./target/release/freeport_app --chunks --octaves 14 --levels 9 --frames 20 --shot chunks.png   # the dual contoured world on the same planet, on the port's main street
 ./target/release/freeport_app --chunks --frames 50 --sculpt block --shot sculpt.png            # a block placed on the street once the ground has settled, and the chunks it remade
 ./target/release/freeport_app --fly --span 20 --octaves 14 --sculpt tile --eye 0,999736,-8.5 --look 0,999731.3,-6 --frames 8 --shot tile-build.png   # a patch of nineteen tiles raised 1.5 m, from above: on foot the same patch is a wall two metres from the eye
+./target/release/freeport_app --span 48 --octaves 14 --frames 8 --shot hextown.png   # the port on the tiles: a levelled site, its streets tagged and its lots raised, the walker on a street of it
 ```
 
 The mockups are `docs/mockups/marching-cubes.html` and
@@ -1621,7 +1670,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 98 tests in about 4 s. A 6 m sphere on a 32^3 lattice at
+- `freeport_core`: 103 tests in about 4 s. A 6 m sphere on a 32^3 lattice at
   half a metre marches to 5,288 triangles, a closed shell within 3% of the
   sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across, with
@@ -1658,6 +1707,24 @@ Numbers in the commit message. What is measured so far:
   microseconds (`columns::sizes::what_a_frame_of_the_walker_costs`), and
   setting a walker down costs 7 ms, which is the scan from the top of the
   band that `Walker::enter` does once.
+- The towns on the hex world: the same eight `town::plan` places, 175,912
+  tiles built on in 2.8 s at startup (the walls, the floors and the
+  streets), of which 7,475 fall inside a 48 m window at once. The cost is
+  `hex::Grid::at` once a sample and the walk is at half a tile, so it is
+  875,000 of those; walking the LATTICE rather than the rectangle is the
+  fix the day it is worth one. The whole of a town is paved, and that is
+  the PLAN rather than the growing: `PITCH` is `BLOCK` plus `STREET`
+  exactly, so every tile of a town is a lot or a street and the few blocks
+  left as plazas are the only grass in one.
+- The port from the air read as concrete islands in a blue void, and the
+  blue is the SEA, which is the picture being right rather than wrong. The
+  port is placed on a shore, its site levels 172 m of ground to 3.1 m over
+  the sea, and past the skirt the relief takes over: at 0.24 m of step
+  between neighbouring tiles the ground is twenty metres under the sea a
+  hundred metres out, so the town is a mesa on a shore with water round
+  three sides of it. A picture from sixteen metres up reads it as a shore;
+  one from thirty four reads it as a void, and the difference is the
+  angle the sheet is seen at.
 - The tile builder: a patch of nineteen tiles (two rings of the widest
   brush) raised three clicks of half a metre, which is one write of an
   `f32` a tile into the window at binding 112 and nothing remeshed, against

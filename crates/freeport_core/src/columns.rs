@@ -44,10 +44,9 @@ impl<'a> Columns<'a> {
     /// own MIDDLE plus what has been built there, which is what
     /// `tiers.wgsl`'s `hex` entry point lifts every one of the tile's
     /// vertices by. The two are one number asked twice, so the collider is
-    /// the picture rather than something near it, and the day the hex
-    /// world grows towns they gain a site term together (`field.wgsl` has
-    /// none yet and `Planet::surface` applies what sites there are, which
-    /// on a planet with no towns is none).
+    /// the picture rather than something near it, and a town's levelled
+    /// site is in both, because `Planet::surface` applies the sites and
+    /// `field.wgsl`'s transcription of it does too.
     pub fn top(&self, tile: Tile) -> f64 {
         self.planet.radius
             + self.planet.surface(self.grid.dir(tile)).0
@@ -108,6 +107,15 @@ impl Density for Columns<'_> {
             }
         }
         out
+    }
+
+    /// What a column is made of, which is whatever was built on its tile:
+    /// concrete on a wall, a street where a street was laid, and terrain
+    /// everywhere nothing has said otherwise. The walker never asks, and
+    /// the picture does (`tiers.wgsl` reads the same store).
+    fn material(&self, p: DVec3) -> u8 {
+        let dir = p.normalize_or(DVec3::Y);
+        self.stacks.material(self.grid, self.grid.at(dir))
     }
 }
 

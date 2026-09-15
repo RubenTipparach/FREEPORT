@@ -32,7 +32,6 @@
 use crate::terrain::FRAMES;
 use bevy::asset::{embedded_asset, RenderAssetUsages};
 use bevy::camera::visibility::NoFrustumCulling;
-use bevy::math::DVec3;
 use bevy::mesh::{MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::pbr::{
     ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
@@ -43,10 +42,19 @@ use bevy::render::render_resource::{
 };
 use bevy::render::storage::ShaderStorageBuffer;
 use bevy::shader::ShaderRef;
-use freeport_core::{hex, lod};
+use freeport_core::hex;
 
 pub type TierMaterial = ExtendedMaterial<StandardMaterial, Tier>;
 pub type SeaMaterial = ExtendedMaterial<StandardMaterial, SeaTier>;
+
+/// The towns as `terrain.wgsl` takes them: three lanes a town and how
+/// many of them, which is what `terrain::frame_lanes` makes of a list of
+/// frames. It is a value rather than a list so `Tiers` stays `Copy`.
+#[derive(Clone, Copy, Debug)]
+pub struct TownLanes {
+    pub lanes: [Vec4; FRAMES * 3],
+    pub count: f32,
+}
 
 /// Which tier a material draws. It is the whole of the pipeline key,
 /// because the two tiers differ in exactly one thing: which entry point of
@@ -152,11 +160,15 @@ pub struct Tier {
     /// Planet-LOD's leaves, three corners a triangle, as directions.
     #[storage(111, read_only)]
     pub leaves: Handle<ShaderStorageBuffer>,
-    /// How much every tile of the hex window has been RAISED, metres, in
-    /// the window's own order, so a shader indexes it with the number it
-    /// already has worked out.
+    /// What every tile of the hex window carries: how far it has been
+    /// RAISED in x and what it is MADE OF in y, in the window's own order,
+    /// so a shader indexes it with the number it already has worked out.
     #[storage(112, read_only)]
     pub raised: Handle<ShaderStorageBuffer>,
+    /// The towns' levelled ground, two lanes a site, which `field.wgsl`
+    /// owns and `send_sites` fills.
+    #[storage(113, read_only)]
+    pub sites: Handle<ShaderStorageBuffer>,
     /// Which tier: the key, and never read by a shader.
     pub which: Which,
 }
@@ -193,11 +205,13 @@ pub struct SeaTier {
     pub lanes: Lanes,
     #[storage(111, read_only)]
     pub leaves: Handle<ShaderStorageBuffer>,
-    /// How much every tile of the hex window has been RAISED, metres, in
-    /// the window's own order, so a shader indexes it with the number it
-    /// already has worked out.
+    /// What every tile of the hex window carries: its rise in x and its
+    /// material in y.
     #[storage(112, read_only)]
     pub raised: Handle<ShaderStorageBuffer>,
+    /// The towns' levelled ground, two lanes a site.
+    #[storage(113, read_only)]
+    pub sites: Handle<ShaderStorageBuffer>,
     /// `Which::Sea` or `Which::HexSea`, and the key that picks the entry
     /// point.
     pub which: Which,
@@ -405,6 +419,14 @@ pub struct Tiers {
     /// into on the way past: the detail on the ground is the product.
     pub ratio: f64,
     pub sub: u32,
+    /// Every town's own frame as the shader takes it, three lanes a town
+    /// and how many, off `terrain::frame_lanes`. `terrain.wgsl` maps
+    /// concrete, plate and a street in the nearest one, because a wall
+    /// plumb on its lot has constant east or north up its height only in
+    /// the frame of the town it stands in: in the planet's own the panel
+    /// seams run across it at whatever angle the two make, which is what
+    /// the owner read off the first render of a city.
+    pub towns: TownLanes,
 }
 
 impl Tiers {
@@ -452,7 +474,7 @@ impl Tiers {
 /// and two down each of six sides.
 const PRISM_VERTS: usize = 48;
 /// How many tiles of the near tier's disc the far tier is drawn under.
-const OVERLAP: f64 = 6.0;
+pub const OVERLAP: f64 = 6.0;
 /// How far toward the eye the hex tier's depth is nudged, so the columns
 /// beat the far tier's surface wherever the two are drawn over one another.
 const HEX_BIAS: f32 = 2000.0;
@@ -493,6 +515,11 @@ pub struct Drawn {
     /// nothing.
     pub raised: Handle<ShaderStorageBuffer>,
     pub filled: Option<(hex::Tile, u64)>,
+    /// The towns' sites as offsets from the anchor, and the anchor they
+    /// were differenced against, so they are redone when it moves and not
+    /// once a frame.
+    pub sites: Handle<ShaderStorageBuffer>,
+    pub sited: Option<hex::Tile>,
 }
 
 /// The three entities and everything they need: the two ground tiers and
@@ -557,32 +584,13 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
     } = assets;
     let maps = crate::terrain::terrain_maps(images);
     let (ground_tile, concrete_tile) = crate::terrain::tiles();
-    let leaves = buffers.add(ShaderStorageBuffer::from(vec![
-        Vec4::ZERO;
-        at.most_leaves() * 3
-    ]));
-    let raised = buffers.add(ShaderStorageBuffer::from(vec![0.0f32; at.window()]));
+    let (leaves, raised, sites) = tier_buffers(buffers, at);
     let sheet = crate::water::sheet_ext(at.sea);
-    let lanes = Lanes {
-        at: Vec4::ZERO,
-        disc: Vec4::ZERO,
-        base: Vec4::ZERO,
-        shape: Vec4::new(
-            at.radius as f32,
-            at.sea as f32,
-            at.relief as f32,
-            at.lumps as f32,
-        ),
-        counts: UVec4::new(at.octaves, at.seed, at.sub, at.grid().n),
-        lat1: Vec4::new(0.0, 0.0, 0.0, at.skirt as f32),
-        lat2: Vec4::new(0.0, 0.0, 0.0, at.span as f32),
-        wave: sheet.wave,
-        deep: sheet.deep,
-    };
+    let lanes = lanes_of(at, &sheet);
     let make = |which: Which| Tier {
-        params: Vec4::new(ground_tile, concrete_tile, 0.0, at.sea as f32),
+        params: Vec4::new(ground_tile, concrete_tile, at.towns.count, at.sea as f32),
         centre: Vec4::ZERO,
-        frames: [Vec4::ZERO; FRAMES * 3],
+        frames: at.towns.lanes,
         fog: Vec4::ZERO,
         haze: Vec4::ZERO,
         albedo: maps[0].clone(),
@@ -591,6 +599,7 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
         lanes,
         leaves: leaves.clone(),
         raised: raised.clone(),
+        sites: sites.clone(),
         which,
     };
     // Neither tier is culled by its winding: which way round a hexagon's
@@ -622,13 +631,23 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
     // The columns win the depth test where the two seas overlap, for the
     // reason the ground tiers' own overlap has: the overlap exists so the
     // near tier covers the far one and never the other way about.
-    let sea = sea_material(seas, &sheet, lanes, &leaves, &raised, Which::Sea, 0.0);
+    let sea = sea_material(
+        seas,
+        &sheet,
+        lanes,
+        &leaves,
+        &raised,
+        &sites,
+        Which::Sea,
+        0.0,
+    );
     let shallows = sea_material(
         seas,
         &sheet,
         lanes,
         &leaves,
         &raised,
+        &sites,
         Which::HexSea,
         HEX_BIAS,
     );
@@ -640,6 +659,58 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
         leaves,
         raised,
         filled: None,
+        sites,
+        sited: None,
+    }
+}
+
+/// The three storage buffers `feed` writes: Planet-LOD's leaves, what has
+/// been built on the hex tiles, and the towns' levelled sites. The sites
+/// are never NOUGHT lanes, because a zero length storage buffer is not a
+/// binding: with no towns this is one site whose skirt runs from two
+/// metres BEHIND the viewer to one metre behind, which weighs nought at
+/// every distance a point can be and costs the loop one iteration rather
+/// than costing every caller a branch.
+fn tier_buffers(
+    buffers: &mut Assets<ShaderStorageBuffer>,
+    at: &Tiers,
+) -> (
+    Handle<ShaderStorageBuffer>,
+    Handle<ShaderStorageBuffer>,
+    Handle<ShaderStorageBuffer>,
+) {
+    (
+        buffers.add(ShaderStorageBuffer::from(vec![
+            Vec4::ZERO;
+            at.most_leaves() * 3
+        ])),
+        buffers.add(ShaderStorageBuffer::from(vec![Vec2::ZERO; at.window()])),
+        buffers.add(ShaderStorageBuffer::from(vec![
+            Vec4::ZERO,
+            Vec4::new(-2.0, -1.0, 0.0, 0.0),
+        ])),
+    )
+}
+
+/// The lanes that do not change while the harness runs: the planet, the
+/// counts, the skirt, the span and the sea's own numbers. `feed::feed_tiers`
+/// writes the rest of them every frame.
+fn lanes_of(at: &Tiers, sheet: &crate::water::WaterExt) -> Lanes {
+    Lanes {
+        at: Vec4::ZERO,
+        disc: Vec4::ZERO,
+        base: Vec4::ZERO,
+        shape: Vec4::new(
+            at.radius as f32,
+            at.sea as f32,
+            at.relief as f32,
+            at.lumps as f32,
+        ),
+        counts: UVec4::new(at.octaves, at.seed, at.sub, at.grid().n),
+        lat1: Vec4::new(0.0, 0.0, 0.0, at.skirt as f32),
+        lat2: Vec4::new(0.0, 0.0, 0.0, at.span as f32),
+        wave: sheet.wave,
+        deep: sheet.deep,
     }
 }
 
@@ -652,6 +723,7 @@ fn sea_material(
     lanes: Lanes,
     leaves: &Handle<ShaderStorageBuffer>,
     raised: &Handle<ShaderStorageBuffer>,
+    sites: &Handle<ShaderStorageBuffer>,
     which: Which,
     bias: f32,
 ) -> Handle<SeaMaterial> {
@@ -673,196 +745,10 @@ fn sea_material(
             lanes,
             leaves: leaves.clone(),
             raised: raised.clone(),
+            sites: sites.clone(),
             which,
         },
     })
-}
-
-/// The leaves Planet-LOD picked, into the buffer the far tier and the sea
-/// both read, as OFFSETS from the anchor: the subtraction is done in f64
-/// here so the shader never has to form a unit vector at a planet's
-/// scale. A far leaf's offset is large and its accuracy does not matter;
-/// a near one's is small and exact. Answers how many went, which is where
-/// the shader is told to stop.
-fn send_leaves(
-    at: &Tiers,
-    drawn: &Drawn,
-    buffers: &mut Assets<ShaderStorageBuffer>,
-    anchor: DVec3,
-    picked: &[lod::Tri],
-) -> usize {
-    let live = picked.len().min(at.most_leaves());
-    if let Some(buffer) = buffers.get_mut(&drawn.leaves) {
-        let mut data: Vec<Vec4> = Vec::with_capacity(live * 3);
-        for tri in picked.iter().take(live) {
-            for corner in tri {
-                data.push((*corner - anchor).as_vec3().extend(0.0));
-            }
-        }
-        data.resize(at.most_leaves() * 3, Vec4::ZERO);
-        buffer.set_data(data.as_slice());
-    }
-    live
-}
-
-/// What has been BUILT on the tiles of the hex window, into the buffer the
-/// two hex entry points read: one number a tile, in the window's own
-/// order, so the shader indexes it with the `tile` it has already worked
-/// out and never looks an address up.
-///
-/// It is filled from the STACKS rather than by walking the window, because
-/// a window is nine thousand tiles and what is built is a handful:
-/// `hex::Grid::steps` is `basis` inverted, so a built tile is asked where
-/// it sits in the window and written there if it sits in it at all. And it
-/// is only filled when the anchor MOVES or an edit lands, which is once
-/// every tile the walker crosses rather than once a frame.
-fn send_raised(
-    at: &Tiers,
-    drawn: &mut Drawn,
-    buffers: &mut Assets<ShaderStorageBuffer>,
-    ground: &crate::Ground,
-    anchor: hex::Tile,
-) {
-    let Some(grid) = ground.0.tiles else {
-        return;
-    };
-    let built = ground.0.stacks.len() as u64;
-    if drawn.filled == Some((anchor, built)) {
-        return;
-    }
-    drawn.filled = Some((anchor, built));
-    let Some(buffer) = buffers.get_mut(&drawn.raised) else {
-        return;
-    };
-    let span = at.span as i64;
-    let wide = span * 2 + 1;
-    let mut data = vec![0.0f32; at.window()];
-    let mut inside = 0usize;
-    for (key, metres) in ground.0.stacks.each() {
-        let Some(tile) = freeport_core::stack::tile(grid, key) else {
-            continue;
-        };
-        let (u, v) = grid.steps(anchor, grid.dir(tile));
-        let (u, v) = (u.round() as i64, v.round() as i64);
-        if u.abs() > span || v.abs() > span {
-            continue;
-        }
-        inside += 1;
-        data[((v + span) * wide + u + span) as usize] = metres as f32;
-    }
-    if inside != built as usize {
-        // A tile built and then walked away from falls out of the window
-        // and is not drawn, which is right. One built HERE that missed it
-        // would be an edit the walker stands on and the picture has not
-        // got, so the count says so rather than leaving it to be found in
-        // a screenshot.
-        info!("raised: {built} tiles built, {inside} of them in the hex window");
-    }
-    buffer.set_data(data.as_slice());
-}
-
-/// Every frame: where the eye is, which tile it stands on, and which
-/// leaves Planet-LOD picks from there. This is the whole of what the CPU
-/// does for either tier.
-pub fn feed_tiers(
-    eye: Res<crate::Eye>,
-    frame: Res<crate::stream::Frame>,
-    at: Res<Tiers>,
-    ground: Res<crate::Ground>,
-    mut drawn: ResMut<Drawn>,
-    mut assets: Store,
-    mut said: Local<usize>,
-) {
-    let clock = std::time::Instant::now();
-    let here = eye.0 .0;
-    let centre = frame.0.local(freeport_core::pos::WorldPos(DVec3::ZERO));
-    let dir = here.normalize_or(DVec3::Z);
-    let grid = at.grid();
-    // The anchor: the eye's own tile, as a point in its face's plane and
-    // as the unit direction every vertex of every tier is measured off.
-    // The two lattice steps come down DIVIDED by that point's own length,
-    // so what the shader adds to a unit anchor is a small number.
-    let (point, e1, e2) = grid.basis(grid.at(dir));
-    let span = point.length().max(f64::MIN_POSITIVE);
-    let anchor = point / span;
-    let (e1, e2) = (e1 / span, e2 / span);
-    // The one large subtraction, in f64: where the anchor's own ground
-    // stands in the render frame. Everything else is an offset from it.
-    let base = (anchor * at.radius - frame.0.at).as_vec3();
-    // `select` is asked for the WHOLE planet, with no hole: the far tier
-    // cuts its own in the shader, a sub triangle at a time, and the sea
-    // rides the very same leaves with no hole at all. One walk a frame
-    // serves all three.
-    //
-    // The hole is the near tier's disc less `OVERLAP` tiles, so the two
-    // ground tiers OVERLAP at the rim rather than meeting there. A tile of
-    // overlap was not enough and the picture said so: at a grazing angle
-    // the rim was a band of SKY, because the two carry the same height
-    // differently (a column's top is flat at its middle's height, a leaf's
-    // is linear between its corners) and where the far tier stood higher
-    // the line of sight went under it, over the ground behind and out.
-    // The hole, as the SQUARED CHORD of its angle: `|dir - anchor|^2` is
-    // `2 (1 - cos t)`, and a chord is where an f32 keeps its precision
-    // while a cosine near one is a number it cannot tell from one.
-    let reach = at.disc() - OVERLAP * grid.spacing(at.radius) / at.radius;
-    let hole = 2.0 * (1.0 - reach.cos());
-    let picked = lod::select(
-        here,
-        at.radius,
-        &lod::Lod {
-            ratio: at.ratio,
-            detail: 0.0,
-            cull: true,
-        },
-        0.0,
-        dir,
-    );
-    let live = send_leaves(&at, &drawn, &mut assets.buffers, anchor, &picked);
-    send_raised(&at, &mut drawn, &mut assets.buffers, &ground, grid.at(dir));
-    // What the CPU costs, said when it moves by a fifth: the whole of the
-    // far tier's work is this one `select`, and the vertex stage makes
-    // `sub * sub` triangles out of every leaf it picks.
-    if picked.len() * 5 > *said * 6 || picked.len() * 6 < *said * 5 {
-        // What was PICKED throttles the line, not what was drawn, so a
-        // truncated frame does not pin the count and report itself for
-        // ever. A truncation is a piece of the planet not drawn, so it
-        // says so rather than leaving a hole for somebody to find in a
-        // picture.
-        if picked.len() > live {
-            warn!(
-                "Planet-LOD picked {} leaves and the buffer holds {live}: raise MOST_LEAVES",
-                picked.len(),
-            );
-        }
-        info!(
-            "Planet-LOD picked {live} leaves in {:.2} ms, drawn as {} triangles",
-            clock.elapsed().as_secs_f64() * 1e3,
-            live * (at.sub * at.sub) as usize,
-        );
-        *said = picked.len();
-    }
-    // The anchor doubles as the hex disc's own middle, which is what the
-    // far tier measures its hole against, so the near tier and the hole
-    // are one direction and never two.
-    let step = |count: usize, lanes: &mut Lanes| {
-        lanes.at = centre.extend(count as f32);
-        lanes.disc = anchor.as_vec3().extend(hole as f32);
-        lanes.base = base.extend(0.0);
-        lanes.lat1 = e1.as_vec3().extend(at.skirt as f32);
-        lanes.lat2 = e2.as_vec3().extend(at.span as f32);
-    };
-    for handle in [&drawn.far, &drawn.near] {
-        if let Some(m) = assets.materials.get_mut(handle) {
-            m.extension.centre = centre.extend(0.0);
-            step(live, &mut m.extension.lanes);
-        }
-    }
-    for handle in [&drawn.sea, &drawn.shallows] {
-        if let Some(m) = assets.seas.get_mut(handle) {
-            m.extension.centre = centre.extend(m.extension.centre.w);
-            step(live, &mut m.extension.lanes);
-        }
-    }
 }
 
 /// The two tiers' entities, once `spawn_world` has put `Tiers` in place.

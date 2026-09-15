@@ -221,7 +221,7 @@ fn mips(rgba: &[u8], width: u32, height: u32) -> (Vec<u8>, u32) {
 /// The town frames as the shader takes them: three lanes a town, the
 /// count in the return's second half, and a warning for any past the
 /// array, which are mapped in their nearest neighbour's frame.
-fn frame_lanes(frames: &[Frame]) -> ([Vec4; FRAMES * 3], f32) {
+pub(crate) fn frame_lanes(frames: &[Frame]) -> ([Vec4; FRAMES * 3], f32) {
     let mut lanes = [Vec4::ZERO; FRAMES * 3];
     if frames.len() > FRAMES {
         warn!(

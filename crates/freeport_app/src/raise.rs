@@ -18,6 +18,7 @@ use crate::{Args, Eye, Ground, Status};
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::window::{CursorOptions, PrimaryWindow};
+use freeport_core::field;
 use freeport_core::hex::Tile;
 
 /// How many rings of tiles round the one aimed at an edit covers, by
@@ -33,6 +34,18 @@ const BRUSHES: [(&str, i64); 3] = [("a tile", 0), ("seven", 1), ("nineteen", 2)]
 /// what it built.
 const CLICKS: u32 = 3;
 
+/// What a raised column can be made of, and what a town already builds
+/// with: `,` and `.` step through them, as they do on the dual contoured
+/// builder. A column is a solid, so the list is the solids: glass, a lamp
+/// and a lit pane are a colour and a glow on a FACE, which a column has
+/// six of and no way to tell apart.
+const MATERIALS: [(&str, u8); 4] = [
+    ("terrain", field::TERRAIN),
+    ("concrete", field::CONCRETE),
+    ("plate", field::PLATE),
+    ("street", field::STREET),
+];
+
 /// What the tile builder is set to, and what it has done.
 #[derive(Resource, Default)]
 pub struct Raising {
@@ -40,9 +53,12 @@ pub struct Raising {
     pub on: bool,
     /// Which of `BRUSHES`.
     pub brush: usize,
+    /// Which of `MATERIALS` a raised column is made of.
+    pub material: usize,
     /// Every edit made, newest last, so Z takes one back: the tiles it
-    /// touched and by how much.
-    pub done: Vec<Vec<(Tile, f64)>>,
+    /// touched, by how much, and what each was made of BEFORE, since a
+    /// tile that was a street before a wall went up is a street again.
+    pub done: Vec<Vec<(Tile, f64, u8)>>,
 }
 
 /// The tiles an edit covers: the one aimed at and `rings` of neighbours
@@ -100,6 +116,12 @@ pub fn raise(
     if keys.just_pressed(KeyCode::BracketRight) {
         tool.brush = (tool.brush + 1) % BRUSHES.len();
     }
+    if keys.just_pressed(KeyCode::Comma) {
+        tool.material = (tool.material + MATERIALS.len() - 1) % MATERIALS.len();
+    }
+    if keys.just_pressed(KeyCode::Period) {
+        tool.material = (tool.material + 1) % MATERIALS.len();
+    }
     if keys.just_pressed(KeyCode::KeyZ) {
         undo(&mut ground, &mut tool);
     }
@@ -116,8 +138,9 @@ pub fn raise(
         }
     }
     let (name, _) = BRUSHES[tool.brush];
+    let (made, _) = MATERIALS[tool.material];
     status.build = format!(
-        "tiles: {name}, {} built, [ ] brush, click raises, right click lowers, Z back, B off",
+        "tiles: {name} of {made}, {} built, [ ] brush, , . material, click raises, right click lowers, Z back, B off",
         ground.0.stacks.len()
     );
 }
@@ -213,8 +236,9 @@ fn aimed(ground: &Ground, eye: DVec3, look: DVec3, rings: i64) -> Vec<Tile> {
     round_about(ground, grid.at(at.normalize_or(DVec3::Y)), rings)
 }
 
-/// Those tiles, raised by `by`, as one edit: Z takes the whole patch back
-/// rather than a tile of it.
+/// Those tiles, raised by `by` and made of what is armed, as one edit: Z
+/// takes the whole patch back rather than a tile of it, and takes its
+/// material back with it.
 fn lift(ground: &mut Ground, tool: &mut Raising, tiles: &[Tile], by: f64) {
     let Some(grid) = ground.0.tiles else {
         return;
@@ -222,12 +246,16 @@ fn lift(ground: &mut Ground, tool: &mut Raising, tiles: &[Tile], by: f64) {
     if tiles.is_empty() {
         return;
     }
+    let made = MATERIALS[tool.material].1;
     let mut world = (*ground.0).clone();
+    let mut edit = Vec::with_capacity(tiles.len());
     for tile in tiles {
+        edit.push((*tile, by, world.stacks.material(grid, *tile)));
         world.stacks.raise(grid, *tile, by);
+        world.stacks.tag(grid, *tile, made);
     }
     ground.0 = std::sync::Arc::new(world);
-    tool.done.push(tiles.iter().map(|t| (*t, by)).collect());
+    tool.done.push(edit);
 }
 
 /// An edit at the crosshair: every tile of the brush raised by `by`.
@@ -245,8 +273,9 @@ fn undo(ground: &mut Ground, tool: &mut Raising) {
         return;
     };
     let mut world = (*ground.0).clone();
-    for (tile, by) in last {
+    for (tile, by, was) in last {
         world.stacks.raise(grid, tile, -by);
+        world.stacks.tag(grid, tile, was);
     }
     ground.0 = std::sync::Arc::new(world);
 }

@@ -28,6 +28,7 @@
 
 mod args;
 mod edit;
+mod feed;
 mod lamps;
 mod raise;
 mod sky;
@@ -190,7 +191,7 @@ fn main() {
                 raise::raise.run_if(on_tiers),
                 rebase_origin,
                 stream.run_if(not(on_tiers)),
-                tiers::feed_tiers.run_if(on_tiers),
+                feed::feed_tiers.run_if(on_tiers),
                 light_lamps.run_if(not(on_tiers)),
                 place_eye,
                 sky::drift_sky,
@@ -337,6 +338,10 @@ fn spawn_world(
             skirt: HEX_SKIRT,
             ratio: LOD_RATIO,
             sub: LOD_SUB,
+            towns: {
+                let (lanes, count) = terrain::frame_lanes(&frames);
+                tiers::TownLanes { lanes, count }
+            },
         });
     } else {
         commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));

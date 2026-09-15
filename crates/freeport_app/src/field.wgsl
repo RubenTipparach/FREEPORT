@@ -15,12 +15,28 @@
 // relief, which is under anything a renderer can show and well under the
 // quarter millimetre the floating origin already allows itself.
 //
-// Sites (a town's levelled ground) are NOT here. They are a list, and a
-// list is a binding rather than a value; the tiers that draw a town will
-// take one and this file will grow a `site_weight` beside `surface`.
+// Sites (a town's levelled ground) ARE here now, and they are the one
+// binding this file owns, because they have to be: the core's
+// `Planet::surface` applies them, so a transcription that did not would be
+// a function with the core's name and a different answer, and
+// `ground_normal` has to see a plateau or a levelled town shades as the
+// hill it replaced. Every material that imports this file declares binding
+// 113 (`tiers::Tier` and `tiers::SeaTier` do), and the buffer is never
+// empty: with no towns it carries one site whose skirt is behind the
+// viewer, which weighs nought at every distance and needs no branch.
+//
+// A site's DIRECTION is carried as an OFFSET from the tier's anchor,
+// differenced in f64 on the CPU like everything else here, because the
+// weight is a function of how far a point is from the site's middle and
+// that distance is metres on a planet of kilometres. Measured the obvious
+// way, `acos(dot(dir, site))` in f32 near one resolves 3.5e-4 radians,
+// which on a thousand kilometre planet is 346 m: a town is 80 m across, so
+// the whole plateau would fall inside one step of the arithmetic. The
+// difference of two offsets is a small number and the chord of an 80 m arc
+// is the arc to eight significant figures.
 
-// A planet's relief, passed by value so this file owns no binding: the
-// tiers that use it own the uniform it comes out of.
+// A planet's relief, passed by value: the tiers that use it own the
+// uniform it comes out of, and the sites below are the one exception.
 struct Planet {
     // Mean radius and the sea's, metres.
     radius: f32,
@@ -33,6 +49,15 @@ struct Planet {
     octaves: u32,
     seed: u32,
 }
+
+// The towns' levelled ground, two lanes a site, which is
+// `freeport_core::town::Site` with its direction taken to the anchor and
+// its skirt worked out: lane 2i is that offset with the site's height over
+// the mean radius in w, and lane 2i+1 is the arc inside which the ground
+// is level and the arc past which it is the relief again, metres, which
+// the CPU makes out of `r * 0.5` and the core's own SKIRT_IN and
+// SKIRT_OUT so neither constant is written twice.
+@group(#{MATERIAL_BIND_GROUP}) @binding(113) var<storage, read> sites: array<vec4<f32>>;
 
 // `field::mix3`: multiply, exclusive or and shift, and nothing else, so it
 // is the same number here as in the core.
@@ -107,8 +132,17 @@ fn planet_of(shape: vec4<f32>, counts: vec4<u32>) -> Planet {
     return p;
 }
 
-// `field::Planet::surface` with no sites: the relief at a direction, metres
-// over the mean radius.
+// `field::Planet::site_weight`: how much a site levels a point, one right
+// across it and nought past its skirt. `off` is the point's own offset
+// from the anchor and `a`, `b` are the site's two lanes.
+fn site_weight(a: vec4<f32>, b: vec4<f32>, radius: f32, off: vec3<f32>) -> f32 {
+    let dist = length(off - a.xyz) * radius;
+    return 1.0 - smoothstep(b.x, b.y, dist);
+}
+
+// `field::Planet::surface`: the relief at a direction, metres over the
+// mean radius, with the towns' sites applied. `off` is the direction's own
+// offset from the anchor, which is what the sites are measured against.
 //
 // There is deliberately no `ground` beside it, which would be this plus
 // the radius. A caller on a thousand kilometre planet that forms one is a
@@ -117,9 +151,28 @@ fn planet_of(shape: vec4<f32>, counts: vec4<u32>) -> Planet {
 // what that cost), the sea measured its own column off one, and a vertex
 // was placed from one instead of from an offset. What a caller wants is
 // the relief, added to a base the CPU worked out in f64.
-fn surface(planet: Planet, dir: vec3<f32>) -> f32 {
-    let n = fbm3(dir * planet.lumps, planet.seed, planet.octaves);
-    return (n * 2.0 - 1.0) * planet.relief * 0.5;
+fn surface(planet: Planet, dir: vec3<f32>, off: vec3<f32>) -> f32 {
+    // A point right inside a site is the site's height and the noise is
+    // never asked, which is the core's own early return: on a levelled
+    // town that is a few dozen fbm octaves a vertex not evaluated.
+    let n = arrayLength(&sites) / 2u;
+    for (var i = 0u; i < n; i = i + 1u) {
+        let a = sites[i * 2u];
+        let b = sites[i * 2u + 1u];
+        if (site_weight(a, b, planet.radius, off) >= 1.0) {
+            return a.w;
+        }
+    }
+    var s = (fbm3(dir * planet.lumps, planet.seed, planet.octaves) * 2.0 - 1.0)
+        * planet.relief * 0.5;
+    for (var i = 0u; i < n; i = i + 1u) {
+        let a = sites[i * 2u];
+        let w = site_weight(a, sites[i * 2u + 1u], planet.radius, off);
+        if (w > 0.0) {
+            s = s + (a.w - s) * w;
+        }
+    }
+    return s;
 }
 
 // East and north at a direction, for stepping off it. The pole is swapped
@@ -152,15 +205,19 @@ fn frame(up: vec3<f32>) -> mat2x3<f32> {
 // hex disc and everything beyond it steps in metres. It is still the
 // difference between a normal that is right by construction and one that
 // is right because the triangles happen to be big.
-fn ground_normal(planet: Planet, dir: vec3<f32>, step: f32) -> vec3<f32> {
+fn ground_normal(planet: Planet, dir: vec3<f32>, off: vec3<f32>, step: f32) -> vec3<f32> {
     let f = frame(dir);
     let d = step / planet.radius;
     let east = f[0];
     let north = f[1];
-    let he = surface(planet, normalize(dir + east * d))
-        - surface(planet, normalize(dir - east * d));
-    let hn = surface(planet, normalize(dir + north * d))
-        - surface(planet, normalize(dir - north * d));
+    // The stepped OFFSET is the offset plus the step: normalising would
+    // take a second order correction off it, `step * step / (2 * radius)`,
+    // which at a metre on this planet is half a micron, and the sites are
+    // measured in metres.
+    let he = surface(planet, normalize(dir + east * d), off + east * d)
+        - surface(planet, normalize(dir - east * d), off - east * d);
+    let hn = surface(planet, normalize(dir + north * d), off + north * d)
+        - surface(planet, normalize(dir - north * d), off - north * d);
     // The surface is r(dir) along dir, so its tangents are the arc step
     // along each axis plus the height it gained over that step.
     let te = east * (2.0 * step) + dir * he;

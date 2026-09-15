@@ -14,14 +14,18 @@
 //! thing two clients agree on, and an edit list is exactly the thing they
 //! have to.
 
+use crate::field::TERRAIN;
 use crate::hex::{Grid, Tile};
 
-/// How much a tile has been raised, metres, for the tiles that have been.
+/// How much a tile has been raised, metres, and what its column is made
+/// of, for the tiles that carry either.
 #[derive(Clone, Debug, Default)]
 pub struct Stacks {
     /// Sorted by key, so a lookup is a binary search and the order is the
-    /// same on every machine that ever built this world.
-    raised: Vec<(u64, f64)>,
+    /// same on every machine that ever built this world. Height and
+    /// material are kept together because they are one tile's answer and a
+    /// second list would be a second thing to keep in step.
+    raised: Vec<(u64, f64, u8)>,
 }
 
 /// One number naming a tile, which is what a sorted list needs. The
@@ -54,43 +58,78 @@ impl Stacks {
         Stacks::default()
     }
 
+    /// Where this tile sits in the list, or where it would go.
+    fn find(&self, grid: Grid, tile: Tile) -> Result<usize, usize> {
+        let k = key(grid, tile);
+        self.raised.binary_search_by_key(&k, |(k, _, _)| *k)
+    }
+
     /// How far over the relief this tile's top stands, metres.
     pub fn at(&self, grid: Grid, tile: Tile) -> f64 {
-        let k = key(grid, tile);
-        match self.raised.binary_search_by_key(&k, |(k, _)| *k) {
+        match self.find(grid, tile) {
             Ok(i) => self.raised[i].1,
             Err(_) => 0.0,
         }
     }
 
+    /// What this tile's column is made of: `field::TERRAIN` wherever
+    /// nothing has said otherwise, which is most of a planet.
+    pub fn material(&self, grid: Grid, tile: Tile) -> u8 {
+        match self.find(grid, tile) {
+            Ok(i) => self.raised[i].2,
+            Err(_) => TERRAIN,
+        }
+    }
+
+    /// A tile that carries nothing is REMOVED, so an edit taken back
+    /// leaves the store as it was found and two worlds built to the same
+    /// shape are the same list.
+    fn settle(&mut self, i: usize) {
+        if self.raised[i].1.abs() < 1e-9 && self.raised[i].2 == TERRAIN {
+            self.raised.remove(i);
+        }
+    }
+
     /// Raise a tile by `metres`, or lower it with a negative one, and
-    /// answer what it stands at now. A tile back at nought is REMOVED, so
-    /// an edit taken back leaves the store as it was found and two worlds
-    /// built to the same shape are the same list.
+    /// answer what it stands at now. Its material is not touched: a
+    /// builder that raises a column and then says what it is made of is
+    /// two decisions, and a town makes them in that order.
     pub fn raise(&mut self, grid: Grid, tile: Tile, metres: f64) -> f64 {
-        let k = key(grid, tile);
-        match self.raised.binary_search_by_key(&k, |(k, _)| *k) {
+        match self.find(grid, tile) {
             Ok(i) => {
-                let now = self.raised[i].1 + metres;
-                if now.abs() < 1e-9 {
-                    self.raised.remove(i);
-                    0.0
-                } else {
-                    self.raised[i].1 = now;
-                    now
-                }
+                self.raised[i].1 += metres;
+                let now = self.raised[i].1;
+                self.settle(i);
+                now
             }
             Err(i) => {
                 if metres.abs() < 1e-9 {
                     return 0.0;
                 }
-                self.raised.insert(i, (k, metres));
+                self.raised.insert(i, (key(grid, tile), metres, TERRAIN));
                 metres
             }
         }
     }
 
-    /// How many tiles have been built on.
+    /// Say what a tile's column is made of, at whatever height it stands:
+    /// a street is a tag and no rise at all, and a wall is both.
+    pub fn tag(&mut self, grid: Grid, tile: Tile, material: u8) {
+        match self.find(grid, tile) {
+            Ok(i) => {
+                self.raised[i].2 = material;
+                self.settle(i);
+            }
+            Err(i) => {
+                if material == TERRAIN {
+                    return;
+                }
+                self.raised.insert(i, (key(grid, tile), 0.0, material));
+            }
+        }
+    }
+
+    /// How many tiles carry a height or a material.
     pub fn len(&self) -> usize {
         self.raised.len()
     }
@@ -100,9 +139,10 @@ impl Stacks {
         self.raised.is_empty()
     }
 
-    /// Every tile built on, with what it stands at, in the store's own
-    /// order: what an export writes and what a window is filled from.
-    pub fn each(&self) -> impl Iterator<Item = (u64, f64)> + '_ {
+    /// Every tile built on, with what it stands at and what it is made of,
+    /// in the store's own order: what an export writes and what a window
+    /// is filled from.
+    pub fn each(&self) -> impl Iterator<Item = (u64, f64, u8)> + '_ {
         self.raised.iter().copied()
     }
 }
@@ -143,6 +183,38 @@ mod tests {
     }
 
     #[test]
+    fn a_material_rides_a_tile_at_any_height_and_a_bare_tile_is_terrain() {
+        let grid = grid();
+        let mut stacks = Stacks::new();
+        let a = grid.at(DVec3::new(0.3, 0.8, 0.5).normalize());
+        let b = grid.at(DVec3::new(-0.2, 0.9, 0.1).normalize());
+        assert_eq!(stacks.material(grid, a), TERRAIN);
+        // A street is a tag and no rise at all, which is what makes the
+        // store hold a tile that stands at nought.
+        stacks.tag(grid, a, crate::field::STREET);
+        assert_eq!(stacks.material(grid, a), crate::field::STREET);
+        assert_eq!(stacks.at(grid, a), 0.0);
+        assert_eq!(stacks.len(), 1);
+        // A wall is both, and raising it does not forget what it is made
+        // of.
+        stacks.tag(grid, b, crate::field::CONCRETE);
+        stacks.raise(grid, b, 3.0);
+        assert_eq!(stacks.material(grid, b), crate::field::CONCRETE);
+        assert_eq!(stacks.at(grid, b), 3.0);
+        // Back to terrain at nought is back to nothing at all.
+        stacks.tag(grid, a, TERRAIN);
+        assert_eq!(stacks.len(), 1, "the street was not forgotten");
+        stacks.raise(grid, b, -3.0);
+        assert_eq!(
+            stacks.len(),
+            1,
+            "a concrete tile at nought is still concrete"
+        );
+        stacks.tag(grid, b, TERRAIN);
+        assert!(stacks.is_empty(), "a bare tile was kept");
+    }
+
+    #[test]
     fn a_key_names_its_own_tile_and_nothing_else() {
         let grid = grid();
         let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
@@ -173,7 +245,7 @@ mod tests {
             stacks.raise(grid, tile, 0.5);
         }
         assert_eq!(stacks.len(), tiles.len());
-        let keys: Vec<u64> = stacks.each().map(|(k, _)| k).collect();
+        let keys: Vec<u64> = stacks.each().map(|(k, _, _)| k).collect();
         assert!(
             keys.windows(2).all(|w| w[0] < w[1]),
             "the keys are not sorted"
