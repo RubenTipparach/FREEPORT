@@ -69,6 +69,7 @@ GPU, how the camera eases, what a button looks like: app.
 | engine | Bevy 0.18.1 | ECS that proves systems disjoint from their filters; wgpu, so one shader language on every platform; what swarm-demo already runs and what this toolchain (Rust 1.94) builds. Bevy 0.19 needs Rust 1.95 and neither physics nor floating origin has followed it yet; the engine moves when all three do, in one commit that carries nothing else |
 | physics | avian3d 0.6 | ECS native, `f64` build available, deterministic enough for a client authoritative game; Rapier through a plugin is the alternative and the extra layer is the reason not |
 | floating origin | our own `pos::Origin` in the core, applied by hand in the app (`rebase_origin` in `stream.rs`) | the RULE (f64 world, f32 render frame, rebase past a radius, snap to a grid) lives in the core where a test holds it; the app has one system that moves anything, every chunk, every lamp and the planet's centre in both materials, and that was small enough that `big_space` (evaluated at 0.12) would have been a dependency for one function |
+| a hex world | Goldberg columns near and sp4cerat's Planet-LOD far, both made in the VERTEX stage (`tiers.wgsl`, `hex.rs`, `lod.rs`), beside the dual contoured world rather than instead of it | the owner's ask, and Planet-LOD because its split test is per EDGE, so two triangles sharing one always agree and the mesh is crack free with no neighbour lookup: every triangle decides alone, which is what a shader can do; leifnode's chunked cube sphere quadtree is the alternative and it wants a patch cache, quantises detail to patches and papers its cracks with skirts |
 | terrain | a density field dual contoured in the core (`dc.rs`), a chunk at a time on one lattice at every level (`lattice.rs`), the chunks in rings round the eye and streamed by the app (`stream.rs`) | overhangs, caves, arches and craters with lips, and a corner that is a corner wherever something is built; marching cubes (`march.rs`) is the reference the surface table is derived from, tenebris's Goldberg hex prisms the alternative, and `docs/mockups` is where the two were compared on the same seed; the cube sphere quadtree (`sphere.rs`) is kept for the far tier, where a planet is patches on a sphere and not cells in a lattice |
 | water | a finite sea in the core (`water.rs`), its surface contoured by the same mesher, tenebris's water shader ported to WGSL on Bevy's own transmission | a hole dug away from the sea is dry and one dug from the shore floods, by a rule and not a second field, because two surfaces contoured in one cell pinch |
 | buildings | recipes of brushes (`assets/buildings/*.json`), read and compiled by the core (`recipe.rs`, `json.rs`), evaluated in the ground's field | the mockup's kit, so a city is the same field the ground is, walked by the same walker and edited by the same tool |
@@ -994,6 +995,171 @@ the curving ground, so a 0.4 kerb was a 0.63 wall and a wall's far end
 stood clear of the ground; the test ball is two kilometres, and a real
 block on a planet is built plumb on its own patch, which is the lot frame
 and the streets in pieces again.
+## A hex world is two tiers, and both are made in the vertex stage
+
+The owner's ask: hex terrain, but the hexes do not go on for ever, they
+give way to a planet tessellation, and the geometry runs on the GPU. What
+is built is `--tiers`: a disc of Goldberg columns round the eye, sp4cerat's
+Planet-LOD past it, and not one triangle of either built on the CPU or
+uploaded. It stands beside the dual contoured world rather than replacing
+it; the two share the planet's field, the five baked sets and the same
+shader, and a flag says which draws.
+
+**Planet-LOD was chosen over the cube sphere quadtree for one property,
+and it is the one that makes a shader possible.** sp4cerat's rule is that
+a triangle splits an EDGE when the eye is within `size * ratio` of that
+edge's MIDDLE, so two triangles sharing an edge always agree about it:
+the mesh is crack free with NO neighbour lookup, no patch cache, no
+skirts, no streaming, and every triangle decides alone. An unsplit edge
+collapses its midpoint onto a corner and drops one of the four children.
+leifnode's scheme (a cube sphere of chunked quadtrees with GPU
+heightmaps) is the alternative, and it needs a patch cache, quantises
+detail to patch sizes, and leaves cracks that are usually papered over
+with skirts. `lod.rs` is the f64 port and
+`the_mesh_is_closed_wherever_the_eye_is` welds it and counts every edge
+at four eye positions. It shares the icosahedron with the Goldberg tiles,
+so both tiers stand on one solid.
+
+Measured, the whole planet, eye on the ground and at three radii:
+
+| ratio | on the ground | at three radii |
+| --- | --- | --- |
+| 1 | 110 | 12 |
+| 2 | 474 | 14 |
+| 4 | 1,632 | 44 |
+| 8 | 5,572 | 148 |
+| 16 | 18,300 | 568 |
+| 32 | 57,770 | 2,240 |
+
+The stop detail barely moves the count (110 against 146 for a five times
+finer stop) because the refinement is a funnel: `ratio` is the quality
+knob and ratio 32 is still nothing for a GPU.
+
+**A tile is an ADDRESS, never a row of a list.** Tenebris builds its
+Goldberg polyhedron whole, 163,842 tiles for a three hundred metre planet,
+and walks it. A five kilometre planet at one metre tiles is 306,472,962
+tiles, which is neither a list nor an allocation, so `hex.rs` computes
+everything about a tile from `(face, i, j)` on the subdivided icosahedron:
+where it is, what is round it, its hexagon's corners, the disc of them
+under an eye. A step off a face is carried across by UNFOLDING the two
+triangles flat, which is exact and not near enough, since an icosahedron's
+faces are flat equilateral triangles and the lattice on them is linear in
+their corners. The first cut extrapolated the barycentric coordinates past
+the edge and asked which tile the direction fell in, and at a corner that
+put two of the five neighbours on one tile. **A corner is the one place
+the unfolding is defective** (five triangles meet, not six), so it is
+walked as the five edges that leave it.
+
+**What the shader is handed is `Grid::basis`, not an address.** The eye's
+tile and the two lattice steps there, in the FACE's own plane, so the tile
+`(u, v)` away is `normalize(mid + u * e1 + v * e2)` with no face table, no
+canonical and no unfolding. On the anchor's face that is not an
+approximation at all: a lattice point is linear in the face's corners and
+only the normalise is not, so stepping before the normalise IS `point`.
+Measured over a 24 tile window of one metre tiles
+(`a_window_of_steps_is_the_grids_own_tiles`): exact inside a face, 8.4 cm
+off the tile middles once the window crosses onto the next face and still
+one step to a tile, and at an icosahedron corner 65 steps of 1,825 share a
+tile, because five faces meet there and a square window is six ways round.
+That last is drawn wrong, and it is written down rather than hidden.
+
+**The vertex stage, and the number that decides.** A compute pass writing
+this geometry would write it to memory, wait on a barrier and read it back
+as a vertex buffer, and the only thing that buys is the geometry being
+READABLE afterwards: an indirect count, a second pass, a physics query.
+Nothing here wants that. What a compute pass WOULD save is measured: a
+prism's forty eight vertices each evaluate the same field sample, so the
+hex tier does 48 times the field work a dispatch a tile would. On this
+planet that is 452,000 evaluations a frame against 9,409, 36 million
+hashes against three quarters of a million, which is about a tenth of a
+millisecond on real silicon and most of four seconds on a software
+rasteriser. So it stays in the vertex stage, and the day the tile count
+or the field grows it moves, which is why `field.wgsl` is written to be
+called from either. The far tier has no such redundancy: its vertices are
+distinct points.
+
+**What is on the CPU is one `select` a frame.** Planet-LOD's recursion
+picks the leaves, 3,059 of them in 1.38 ms from the ground, and the vertex
+stage cuts each into `sub * sub` triangles: 48,944 triangles out of 3,059
+uploaded. The recursion cannot BE a vertex shader, because a vertex shader
+emits one vertex and not a variable number of triangles, and a compute
+recursion (breadth first over levels, ping pong buffers, indirect
+dispatch) is what this becomes when `select` stops being free.
+
+**Both tiers are watertight by an argument about floats, not about
+topology.** A vertex two triangles share is computed from the SAME inputs
+in the same order on both sides, so it lands on the same bits. A hex
+corner is `normalize(a + b + c)` of the three tiles round it whichever of
+the three is asking, and floating point addition is commutative, so the
+three orders agree exactly. A point on a leaf's edge has nought weight on
+the third corner, and Planet-LOD's own rule is that two leaves sharing an
+edge share the WHOLE edge, so both cut it into the same `sub` pieces with
+the same weights: that is what makes a uniform sub tessellation legal
+across levels at all, and it is the whole reason the far tier can be one
+draw. What the float costs is about a millimetre at five kilometres, the
+same on every vertex that shares a place, so it opens no crack.
+
+**The seam is an OVERLAP, and the picture found it.** The far tier is
+given the near tier's disc as a HOLE (`select`'s last two arguments: a
+triangle wholly inside it is dropped, one straddling the rim is kept
+whole), and the hex disc reaches `OVERLAP` tiles past that hole, so the
+far tier is drawn UNDER the rim columns rather than meeting them. A tile
+of overlap was not enough: at a grazing angle the rim was a band of SKY,
+because the two tiers carry the same height differently, a column's top
+flat at its middle's height and a leaf's linear between its corners, and
+wherever the far tier stood higher the line of sight went under it, over
+the ground behind and out. Six tiles costs a few hundred triangles drawn
+under the columns and closes it for good. No number would have found it.
+
+**Three defects, and two of them drew nothing with no error anywhere.**
+
+- **A shader that is REGISTERED is not a shader that is LOADED**, and an
+  import that is not in the asset system is a pipeline Bevy quietly
+  retries for ever. `tiers.wgsl` imports `freeport::field` and nothing had
+  ever asked for it: an empty sky, no error, no pipeline in the log. A
+  handle held in a resource is the load.
+- **`@builtin(vertex_index)` is where a vertex sits in Bevy's SHARED
+  vertex slab**, not in its own mesh. The tier allocated first counted
+  from nought and drew; the one after it counted from 1,152,000 and every
+  vertex of it worked out a tile outside the window. The number rides the
+  mesh now (`counted_mesh`), which is the mesh's own.
+- **A WGSL struct longer than the buffer it names is a pipeline wgpu
+  refuses** with two sizes and no field name (880 against 80): the vertex
+  shader had copied `terrain.wgsl`'s own lanes into its binding 110. A
+  shader may name the START of a buffer and stop, which is what it does
+  now, and a struct that grows past its buffer fails the pipeline rather
+  than reading rubbish.
+
+**One material, two entry points.** `Tier` is a `MaterialExtension` whose
+`specialize` sets `descriptor.vertex.entry_point` off its own bind group
+data, so the two tiers differ in exactly one thing: which entry point of
+`tiers.wgsl` makes their vertices. Its bindings 100 to 106 are
+`terrain::Terrain`'s to the field, because the fragment shader IS
+`terrain.wgsl`, and a bind group layout is what a shader is compiled
+against: if the two ever drift the pipeline fails to build rather than
+drawing something wrong. Neither tier is in the depth prepass or the
+shadow pass, because both of those draw with Bevy's own vertex shader and
+would draw the undisplaced counting mesh: a depth buffer of a point at the
+origin and a shadow map of nothing. Putting them back means transcribing
+the prepass vertex stage too, and that is what it will take.
+
+**What is still to build on the tiers, named so the gap is visible:** the
+walker (a hex column's ground is a question `freeport_core::walker` has
+not been asked), the sea, the towns (`field.wgsl` has no sites in it, so a
+levelled plateau would be in the walker's field and not in the picture),
+the shadow and prepass stages, and the twelve pentagons.
+
+Measured on the harness: one metre tiles (306,472,962 round the planet), a
+disc of 48 tiles and 48 m, 9,409 prisms of 150,544 triangles; Planet-LOD
+at ratio 6 cut 4 ways, which is ratio 24 of detail for the cost of
+selecting at 6. From the ground 3,059 leaves and 48,944 triangles, from
+two kilometres up 548 and 8,768, and from three radii up the whole planet
+is 44 leaves and 704 triangles with no streaming and no seam. A frame on
+lavapipe is 3.97 s at ground level and nearly all of it is the field in
+the vertex stage: about 892,000 evaluations of 80 hashes each, a tenth of
+a millisecond of real silicon and most of four seconds of software
+rasteriser.
+
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
 Every planet, moon and station's position is a closed form function of the
@@ -1106,6 +1272,9 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 ./run.sh --test                                   # the core suite and the shape and recipe checks, then the build and the window; run.bat is the Windows twin, --shot out.png takes a picture with no display
 ./target/release/freeport_app --fly --frames 20 --eye -1832,1474,4484 --look -1807,1453,4422 --shot town.png   # the port from 70 m up, headless under xvfb-run with VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
 ./target/release/freeport_app --frames 50 --sculpt block --shot sculpt.png   # a block placed on the street once the ground has settled, and the chunks it remade
+./target/release/freeport_app --tiers                                       # the hex world: a disc of columns round the eye, Planet-LOD past it, both made in the vertex stage
+./target/release/freeport_app --tiers --frames 10 --eye 0,5012,-14 --look 0,4998,40 --shot seam.png     # the seam between the tiers, at the grazing angle that found it
+./target/release/freeport_app --tiers --frames 10 --eye 0,20000,0 --look 0,5000,0 --shot orbit.png      # the whole planet in 44 leaves and 704 triangles
 ```
 
 The mockups are `docs/mockups/marching-cubes.html` and
@@ -1143,6 +1312,18 @@ Numbers in the commit message. What is measured so far:
   city. An edit on that street: a block dirties eight chunks, 30 to 39 ms
   of work to contour them again, drawn 4.7 s later at that frame rate; the
   walker stands on it the frame it lands.
+- The two tiers, on the same 10 km planet: one metre hex tiles
+  (306,472,962 round the planet, which is why a tile is an address and
+  never a list), a disc of 48 tiles, 9,409 prisms of 150,544 triangles;
+  Planet-LOD at ratio 6 cut 4 ways picks 3,059 leaves in 1.38 ms from the
+  ground and the vertex stage makes 48,944 triangles of them, 548 and
+  8,768 from two kilometres up, and 44 leaves and 704 triangles for the
+  whole planet from three radii. A frame on lavapipe is 3.97 s at ground
+  level, nearly all of it about 892,000 field evaluations of 80 hashes
+  each in the vertex stage: a tenth of a millisecond of real silicon. The
+  hex tier evaluates its field 48 times a prism where a compute pass
+  would do it once, which is the measured argument for moving it there
+  the day the count grows.
 - The towns: eight planned in 1.23 s (four thousand candidates on a golden
   spiral, the port first), 699 buildings from eight recipes and 7,744 pieces
   of street built in 14 to 20 ms, 2,132 lamps of which the nearest 48 are
