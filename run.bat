@@ -18,8 +18,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Left click takes the mouse, Escape gives it back. WASD walks, Shift runs,
-echo Space jumps, F swaps between walking and flying, Tab toggles the wire.
+echo The hex world: a disc of Goldberg columns round the eye and Planet-LOD
+echo past it, both made in the vertex stage. Pass --chunks for the dual
+echo contoured world instead, with its towns and its builder.
+echo.
+echo Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
+echo runs, Space jumps, and the feet stand on a column's own flat top. F
+echo swaps to the fly camera and back, Tab toggles the wire.
 echo.
 target\release\freeport_app.exe %*
 pause

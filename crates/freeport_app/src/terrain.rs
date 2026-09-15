@@ -18,25 +18,53 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
 use freeport_core::dc::DcMesh;
+use freeport_core::town::Frame;
 use std::path::PathBuf;
 
 /// The sets, in the order the shader's layers name them.
-pub const SETS: [&str; 3] = ["basalt", "grass", "concrete"];
-/// Metres a tile, on the ground and on concrete.
-const GROUND_TILE: f32 = 4.0;
+pub const SETS: [&str; 5] = ["basalt", "dunes", "grass", "concrete", "hull_plate"];
+/// Metres a tile, on the ground and on concrete. The ground's is what a
+/// strand of the hay is long: at four metres a blade was a metre and the
+/// grass read as a ploughed field at a grazing angle.
+const GROUND_TILE: f32 = 2.0;
 const CONCRETE_TILE: f32 = 3.0;
 
 pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, Terrain>;
 
+/// Town frames the shader may be handed: a fixed uniform array, because a
+/// shader has no other kind.
+pub const FRAMES: usize = 16;
+
 /// What the shader is handed beyond the standard material.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 pub struct Terrain {
-    /// x: metres a tile on the ground, y: on concrete.
+    /// x: metres a tile on the ground, y: on concrete, z: how many town
+    /// frames are set, w: the sea's radius, which is what the sand band is
+    /// measured from.
     #[uniform(100)]
     pub params: Vec4,
     /// The planet's centre in the render frame.
     #[uniform(100)]
     pub centre: Vec4,
+    /// Each town's frame, three lanes a town: its direction with the
+    /// radius its ground is at in w, its east, its north. Concrete, plate
+    /// and street are mapped in the nearest town's frame, so a panel is
+    /// level and plumb on every wall of every building, which stands on
+    /// that frame's heading.
+    #[uniform(100)]
+    pub frames: [Vec4; FRAMES * 3],
+    /// The sky at the horizon, and how much of it is in the way per metre
+    /// of view distance: `sky::drift_sky` hands it down off the core's own
+    /// march, so the ground fades into the sky it stands under.
+    #[uniform(100)]
+    pub fog: Vec4,
+    /// The ground fog's shape: x how many metres its density falls off
+    /// over, y how much thicker it is at the sea than the plain haze, z
+    /// the radius it is measured from. Air pools in the LOW ground, so a
+    /// valley is hazier than the ridge over it and a mountain stands out
+    /// of its own weather.
+    #[uniform(100)]
+    pub haze: Vec4,
     #[texture(101, dimension = "2d_array")]
     #[sampler(102)]
     pub albedo: Handle<Image>,
@@ -63,9 +91,9 @@ impl Plugin for TerrainPlugin {
     }
 }
 
-/// Where the baked sets are: `FREEPORT_ASSETS`, else the checkout this was
+/// Where the assets are: `FREEPORT_ASSETS`, else the checkout this was
 /// built from, else `assets` beside the working directory.
-fn textures_dir() -> Option<PathBuf> {
+pub fn assets_dir() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(root) = std::env::var("FREEPORT_ASSETS") {
         candidates.push(PathBuf::from(root));
@@ -77,8 +105,15 @@ fn textures_dir() -> Option<PathBuf> {
     candidates.push(PathBuf::from("assets"));
     candidates
         .into_iter()
-        .map(|c| c.join("textures/terrain"))
-        .find(|d| d.join("basalt_albedo.png").exists())
+        .find(|c| c.join("buildings").is_dir())
+}
+
+/// Where the baked sets are: under the one asset root, if the bakes are
+/// there.
+fn textures_dir() -> Option<PathBuf> {
+    assets_dir()
+        .map(|d| d.join("textures/terrain"))
+        .filter(|d| d.join("basalt_albedo.png").exists())
 }
 
 /// One kind of map for every set, stacked into an array texture that
@@ -107,15 +142,24 @@ fn stack(dir: Option<&PathBuf>, kind: &str, srgb: bool) -> Image {
             }
         }
     }
-    let data = layers.concat();
-    let mut image = Image::new(
+    // Every layer carries its whole mip chain, layer major, which is the
+    // order wgpu reads by default: without the chain a 4 m tile of grass
+    // seen from 70 m up is one texel a pixel picked at random, which is
+    // the noise the far ground read as.
+    let mut data = Vec::new();
+    let mut levels = 1;
+    for layer in &layers {
+        let (chain, count) = mips(layer, size.0, size.1);
+        data.extend_from_slice(&chain);
+        levels = count;
+    }
+    let mut image = Image::new_uninit(
         Extent3d {
             width: size.0,
             height: size.1,
             depth_or_array_layers: SETS.len() as u32,
         },
         TextureDimension::D2,
-        data,
         if srgb {
             TextureFormat::Rgba8UnormSrgb
         } else {
@@ -123,6 +167,8 @@ fn stack(dir: Option<&PathBuf>, kind: &str, srgb: bool) -> Image {
         },
         RenderAssetUsages::RENDER_WORLD,
     );
+    image.data = Some(data);
+    image.texture_descriptor.mip_level_count = levels;
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,
         address_mode_v: ImageAddressMode::Repeat,
@@ -130,24 +176,100 @@ fn stack(dir: Option<&PathBuf>, kind: &str, srgb: bool) -> Image {
         mag_filter: ImageFilterMode::Linear,
         min_filter: ImageFilterMode::Linear,
         mipmap_filter: ImageFilterMode::Linear,
+        anisotropy_clamp: ANISOTROPY,
         ..default()
     });
     image
 }
 
-/// The ground's material, with the sets loaded.
+/// Samples a grazing ground gets across a pixel: the streets and the
+/// grass are looked along, never down at.
+const ANISOTROPY: u16 = 8;
+
+/// A layer's mip chain, the level itself first and each level after it
+/// the box filter of the one before, down to one texel; and how many.
+fn mips(rgba: &[u8], width: u32, height: u32) -> (Vec<u8>, u32) {
+    let mut chain = rgba.to_vec();
+    let mut level = rgba.to_vec();
+    let (mut w, mut h) = (width as usize, height as usize);
+    let mut count = 1;
+    while w > 1 || h > 1 {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let (sx, sy) = (w / nw, h / nh);
+        let mut next = vec![0u8; nw * nh * 4];
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..4 {
+                    let mut sum = 0u32;
+                    for dy in 0..sy {
+                        for dx in 0..sx {
+                            sum += level[((y * sy + dy) * w + x * sx + dx) * 4 + c] as u32;
+                        }
+                    }
+                    next[(y * nw + x) * 4 + c] = (sum / (sx * sy) as u32) as u8;
+                }
+            }
+        }
+        chain.extend_from_slice(&next);
+        level = next;
+        (w, h) = (nw, nh);
+        count += 1;
+    }
+    (chain, count)
+}
+
+/// The town frames as the shader takes them: three lanes a town, the
+/// count in the return's second half, and a warning for any past the
+/// array, which are mapped in their nearest neighbour's frame.
+pub(crate) fn frame_lanes(frames: &[Frame]) -> ([Vec4; FRAMES * 3], f32) {
+    let mut lanes = [Vec4::ZERO; FRAMES * 3];
+    if frames.len() > FRAMES {
+        warn!(
+            "{} town frames and room for {}: the rest are mapped in a neighbour's",
+            frames.len(),
+            FRAMES
+        );
+    }
+    for (i, f) in frames.iter().take(FRAMES).enumerate() {
+        lanes[i * 3] = f.dir.as_vec3().extend(f.base as f32);
+        lanes[i * 3 + 1] = f.east.as_vec3().extend(0.0);
+        lanes[i * 3 + 2] = f.north.as_vec3().extend(0.0);
+    }
+    (lanes, frames.len().min(FRAMES) as f32)
+}
+
+/// The ground's material, with the sets loaded and the towns' frames set.
+/// The three array textures the sets are stacked into, in the order the
+/// shader binds them. The dual contoured ground and both hex tiers wear
+/// the same three, which is why this is a function and not a line inside
+/// one material's constructor.
+pub fn terrain_maps(images: &mut Assets<Image>) -> [Handle<Image>; 3] {
+    let dir = textures_dir();
+    [
+        images.add(stack(dir.as_ref(), "albedo", true)),
+        images.add(stack(dir.as_ref(), "normal", false)),
+        images.add(stack(dir.as_ref(), "orm", false)),
+    ]
+}
+
+/// Metres a tile, for anything that wears the sets.
+pub fn tiles() -> (f32, f32) {
+    (GROUND_TILE, CONCRETE_TILE)
+}
+
 pub fn terrain_material(
     images: &mut Assets<Image>,
     materials: &mut Assets<TerrainMaterial>,
+    frames: &[Frame],
+    sea: f32,
 ) -> Handle<TerrainMaterial> {
     let dir = textures_dir();
     match &dir {
         Some(d) => info!("terrain sets from {}", d.display()),
         None => warn!("no baked sets found: flat colours"),
     }
-    let albedo = images.add(stack(dir.as_ref(), "albedo", true));
-    let normal = images.add(stack(dir.as_ref(), "normal", false));
-    let orm = images.add(stack(dir.as_ref(), "orm", false));
+    let (lanes, count) = frame_lanes(frames);
+    let [albedo, normal, orm] = terrain_maps(images);
     materials.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE,
@@ -155,8 +277,11 @@ pub fn terrain_material(
             ..default()
         },
         extension: Terrain {
-            params: Vec4::new(GROUND_TILE, CONCRETE_TILE, 0.0, 0.0),
+            params: Vec4::new(GROUND_TILE, CONCRETE_TILE, count, sea),
             centre: Vec4::ZERO,
+            frames: lanes,
+            fog: Vec4::ZERO,
+            haze: Vec4::ZERO,
             albedo,
             normal,
             orm,

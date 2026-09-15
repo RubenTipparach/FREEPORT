@@ -1,19 +1,55 @@
 {
  "connections": [
   {
-   "from": "blades",
+   "from": "strands",
    "from_port": 0,
-   "to": "tips",
+   "to": "bent",
    "to_port": 0
   },
   {
-   "from": "tips",
+   "from": "swirl",
+   "from_port": 0,
+   "to": "bent",
+   "to_port": 1
+  },
+  {
+   "from": "strands2",
+   "from_port": 0,
+   "to": "crossed",
+   "to_port": 0
+  },
+  {
+   "from": "swirl",
+   "from_port": 0,
+   "to": "bent2",
+   "to_port": 1
+  },
+  {
+   "from": "bent",
+   "from_port": 0,
+   "to": "hay",
+   "to_port": 0
+  },
+  {
+   "from": "bent2",
+   "from_port": 0,
+   "to": "hay",
+   "to_port": 1
+  },
+  {
+   "from": "hay",
+   "from_port": 0,
+   "to": "sharp",
+   "to_port": 0
+  },
+  {
+   "from": "sharp",
    "from_port": 0,
    "to": "height",
    "to_port": 0
   },
   {
-   "from": "clumps",
+   "from": "blades",
    "from_port": 0,
    "to": "height",
    "to_port": 1
@@ -33,17 +69,17 @@
   {
    "from": "height",
    "from_port": 0,
+   "to": "straw",
+   "to_port": 0
+  },
+  {
+   "from": "height",
+   "from_port": 0,
    "to": "green",
    "to_port": 0
   },
   {
-   "from": "clumps",
-   "from_port": 0,
-   "to": "dry",
-   "to_port": 0
-  },
-  {
-   "from": "dry",
+   "from": "straw",
    "from_port": 0,
    "to": "albedo",
    "to_port": 0
@@ -53,6 +89,12 @@
    "from_port": 0,
    "to": "albedo",
    "to_port": 1
+  },
+  {
+   "from": "clumps",
+   "from_port": 0,
+   "to": "albedo",
+   "to_port": 2
   },
   {
    "from": "albedo",
@@ -89,6 +131,18 @@
    "from_port": 0,
    "to": "Material",
    "to_port": 6
+  },
+  {
+   "from": "crossed",
+   "from_port": 0,
+   "to": "seamless",
+   "to_port": 0
+  },
+  {
+   "from": "seamless",
+   "from_port": 0,
+   "to": "bent2",
+   "to_port": 0
   }
  ],
  "label": "Graph",
@@ -99,58 +153,156 @@
  },
  "nodes": [
   {
-   "name": "blades",
-   "type": "voronoi",
+   "name": "strands",
+   "type": "fbm2",
    "parameters": {
-    "scale_x": 30,
-    "scale_y": 30,
-    "intensity": 1,
-    "randomness": 1,
-    "stretch_x": 1,
-    "stretch_y": 1
+    "noise": 1,
+    "folds": 0,
+    "iterations": 3,
+    "persistence": 0.6,
+    "scale_x": 9,
+    "scale_y": 420,
+    "offset": 0
    },
    "node_position": {
     "x": 0,
-    "y": -220
+    "y": -400
    },
    "seed": 6201,
    "seed_locked": true
   },
   {
-   "name": "tips",
-   "type": "colorize",
+   "name": "strands2",
+   "type": "fbm2",
    "parameters": {
-    "gradient": {
-     "interpolation": 1,
-     "type": "Gradient",
-     "points": [
-      {
-       "pos": 0.0,
-       "r": 1,
-       "g": 1,
-       "b": 1,
-       "a": 1
-      },
-      {
-       "pos": 0.5,
-       "r": 0.35,
-       "g": 0.35,
-       "b": 0.35,
-       "a": 1
-      },
-      {
-       "pos": 1.0,
-       "r": 0.1,
-       "g": 0.1,
-       "b": 0.1,
-       "a": 1
-      }
-     ]
-    }
+    "noise": 1,
+    "folds": 0,
+    "iterations": 3,
+    "persistence": 0.6,
+    "scale_x": 8,
+    "scale_y": 360,
+    "offset": 0
+   },
+   "node_position": {
+    "x": 0,
+    "y": -200
+   },
+   "seed": 6206,
+   "seed_locked": true
+  },
+  {
+   "name": "crossed",
+   "type": "transform2",
+   "parameters": {
+    "translate_x": 0,
+    "translate_y": 0,
+    "rotate": 34,
+    "scale_x": 1,
+    "scale_y": 1,
+    "mode": 0
    },
    "node_position": {
     "x": 220,
-    "y": -220
+    "y": -200
+   }
+  },
+  {
+   "name": "swirl",
+   "type": "fbm2",
+   "parameters": {
+    "noise": 1,
+    "folds": 0,
+    "iterations": 3,
+    "persistence": 0.5,
+    "scale_x": 3,
+    "scale_y": 3,
+    "offset": 0
+   },
+   "node_position": {
+    "x": 0,
+    "y": 0
+   },
+   "seed": 6202,
+   "seed_locked": true
+  },
+  {
+   "name": "bent",
+   "type": "warp",
+   "parameters": {
+    "mode": 0,
+    "amount": 0.08,
+    "eps": 0.02
+   },
+   "node_position": {
+    "x": 220,
+    "y": -400
+   }
+  },
+  {
+   "name": "bent2",
+   "type": "warp",
+   "parameters": {
+    "mode": 0,
+    "amount": 0.08,
+    "eps": 0.02
+   },
+   "node_position": {
+    "x": 440,
+    "y": -200
+   }
+  },
+  {
+   "name": "hay",
+   "type": "blend",
+   "parameters": {
+    "blend_type": 9,
+    "amount": 1.0
+   },
+   "node_position": {
+    "x": 660,
+    "y": -300
+   }
+  },
+  {
+   "name": "sharp",
+   "type": "brightness_contrast",
+   "parameters": {
+    "brightness": -0.05,
+    "contrast": 1.8
+   },
+   "node_position": {
+    "x": 880,
+    "y": -300
+   }
+  },
+  {
+   "name": "blades",
+   "type": "scratches",
+   "parameters": {
+    "length": 0.16,
+    "width": 0.005,
+    "layers": 10,
+    "waviness": 0.2,
+    "angle": 0,
+    "randomness": 1
+   },
+   "node_position": {
+    "x": 660,
+    "y": 100
+   },
+   "seed": 6203,
+   "seed_locked": true
+  },
+  {
+   "name": "height",
+   "type": "blend",
+   "parameters": {
+    "blend_type": 9,
+    "amount": 0.8
+   },
+   "node_position": {
+    "x": 1100,
+    "y": -200
    }
   },
   {
@@ -159,42 +311,30 @@
    "parameters": {
     "noise": 1,
     "folds": 0,
-    "iterations": 5,
+    "iterations": 4,
     "persistence": 0.5,
-    "scale_x": 5,
-    "scale_y": 5,
+    "scale_x": 4,
+    "scale_y": 4,
     "offset": 0
    },
    "node_position": {
-    "x": 440,
-    "y": 0
-   },
-   "seed": 6202,
-   "seed_locked": true
-  },
-  {
-   "name": "height",
-   "type": "blend",
-   "parameters": {
-    "blend_type": 2,
-    "amount": 0.7
-   },
-   "node_position": {
     "x": 660,
-    "y": -120
-   }
+    "y": 320
+   },
+   "seed": 6204,
+   "seed_locked": true
   },
   {
    "name": "normal",
    "type": "normal_map",
    "parameters": {
     "param0": 10,
-    "param1": 0.9,
+    "param1": 0.8,
     "param2": 0,
     "param4": 0
    },
    "node_position": {
-    "x": 880,
+    "x": 1320,
     "y": -300
    }
   },
@@ -203,11 +343,48 @@
    "type": "occlusion",
    "parameters": {
     "param0": 10,
-    "param2": 1.6
+    "param2": 1.4
    },
    "node_position": {
-    "x": 1100,
+    "x": 1540,
     "y": -200
+   }
+  },
+  {
+   "name": "straw",
+   "type": "colorize",
+   "parameters": {
+    "gradient": {
+     "interpolation": 1,
+     "type": "Gradient",
+     "points": [
+      {
+       "pos": 0.0,
+       "r": 0.1,
+       "g": 0.14,
+       "b": 0.03,
+       "a": 1
+      },
+      {
+       "pos": 0.5,
+       "r": 0.42,
+       "g": 0.52,
+       "b": 0.14,
+       "a": 1
+      },
+      {
+       "pos": 1.0,
+       "r": 0.74,
+       "g": 0.8,
+       "b": 0.34,
+       "a": 1
+      }
+     ]
+    }
+   },
+   "node_position": {
+    "x": 1320,
+    "y": 40
    }
   },
   {
@@ -220,23 +397,23 @@
      "points": [
       {
        "pos": 0.0,
-       "r": 0.08,
-       "g": 0.13,
-       "b": 0.05,
+       "r": 0.05,
+       "g": 0.12,
+       "b": 0.02,
        "a": 1
       },
       {
        "pos": 0.5,
-       "r": 0.2,
-       "g": 0.32,
-       "b": 0.09,
+       "r": 0.22,
+       "g": 0.44,
+       "b": 0.08,
        "a": 1
       },
       {
        "pos": 1.0,
-       "r": 0.42,
-       "g": 0.5,
-       "b": 0.16,
+       "r": 0.52,
+       "g": 0.74,
+       "b": 0.22,
        "a": 1
       }
      ]
@@ -244,36 +421,6 @@
    },
    "node_position": {
     "x": 1320,
-    "y": 40
-   }
-  },
-  {
-   "name": "dry",
-   "type": "colorize",
-   "parameters": {
-    "gradient": {
-     "interpolation": 1,
-     "type": "Gradient",
-     "points": [
-      {
-       "pos": 0.0,
-       "r": 0.16,
-       "g": 0.22,
-       "b": 0.07,
-       "a": 1
-      },
-      {
-       "pos": 1.0,
-       "r": 0.5,
-       "g": 0.48,
-       "b": 0.2,
-       "a": 1
-      }
-     ]
-    }
-   },
-   "node_position": {
-    "x": 1540,
     "y": 180
    }
   },
@@ -281,19 +428,19 @@
    "name": "albedo",
    "type": "blend",
    "parameters": {
-    "blend_type": 4,
-    "amount": 0.4
+    "blend_type": 0,
+    "amount": 0.45
    },
    "node_position": {
     "x": 1760,
-    "y": 40
+    "y": 100
    }
   },
   {
    "name": "rough",
    "type": "uniform_greyscale",
    "parameters": {
-    "color": 0.92
+    "color": 0.88
    },
    "node_position": {
     "x": 1980,
@@ -307,7 +454,7 @@
     "color": 0.0
    },
    "node_position": {
-    "x": 2200,
+    "x": 1980,
     "y": 380
    }
   },
@@ -334,6 +481,17 @@
    "node_position": {
     "x": 2420,
     "y": 0
+   }
+  },
+  {
+   "name": "seamless",
+   "type": "make_tileable",
+   "parameters": {
+    "w": 0.12
+   },
+   "node_position": {
+    "x": 330,
+    "y": -200
    }
   }
  ],

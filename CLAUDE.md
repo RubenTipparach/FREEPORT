@@ -44,8 +44,11 @@ it, and marching cubes cannot make a corner.
 `crates/freeport_core` is the game's own reasoning and depends on nothing but
 `std` and `glam` (at Bevy's own version, so a `DVec3` here is a `DVec3` there
 with no conversion at the boundary): world positions and the floating origin,
-the cube sphere and its quadtree, density fields, the mesher, and everything
-that comes after them (orbits, the economy, the star map, the damage model).
+the lattice at every level and the rings of chunks round an eye, the cube
+sphere and its quadtree, density fields, the mesher and its audit, the sea,
+towns and the recipes their buildings are built from with the JSON reader
+that reads them, the walker, and everything that comes after them (orbits,
+the economy, the star map, the damage model).
 `crates/freeport_app` is the Bevy harness: it draws what the core says, runs
 the physics, streams the chunks and collects input. This is swarm-demo's
 boundary between `swarm_core` and `swarm_app`, and tenebris's between
@@ -65,8 +68,11 @@ GPU, how the camera eases, what a button looks like: app.
 | --- | --- | --- |
 | engine | Bevy 0.18.1 | ECS that proves systems disjoint from their filters; wgpu, so one shader language on every platform; what swarm-demo already runs and what this toolchain (Rust 1.94) builds. Bevy 0.19 needs Rust 1.95 and neither physics nor floating origin has followed it yet; the engine moves when all three do, in one commit that carries nothing else |
 | physics | avian3d 0.6 | ECS native, `f64` build available, deterministic enough for a client authoritative game; Rapier through a plugin is the alternative and the extra layer is the reason not |
-| floating origin | our own `pos::Origin` in the core, `big_space` 0.12 evaluated for the app side | the RULE (f64 world, f32 render frame, rebase past a radius, snap to a grid) lives in the core where a test holds it; whether the app's transforms are rebased by hand or by big_space's grid cells is an app decision, and big_space is the one to beat because it has already met the traps |
-| terrain | a density field dual contoured in the core (`dc.rs`) on one lattice at two levels, chunked on a cube sphere quadtree | overhangs, caves, arches and craters with lips, and a corner that is a corner wherever something is built; marching cubes (`march.rs`) is the reference the surface table is derived from, tenebris's Goldberg hex prisms the alternative, and `docs/mockups` is where the two were compared on the same seed |
+| floating origin | our own `pos::Origin` in the core, applied by hand in the app (`rebase_origin` in `stream.rs`) | the RULE (f64 world, f32 render frame, rebase past a radius, snap to a grid) lives in the core where a test holds it; the app has one system that moves anything, every chunk, every lamp and the planet's centre in both materials, and that was small enough that `big_space` (evaluated at 0.12) would have been a dependency for one function |
+| a hex world | Goldberg columns near and sp4cerat's Planet-LOD far, both made in the VERTEX stage (`tiers.wgsl`, `hex.rs`, `lod.rs`), beside the dual contoured world rather than instead of it | the owner's ask, and Planet-LOD because its split test is per EDGE, so two triangles sharing one always agree and the mesh is crack free with no neighbour lookup: every triangle decides alone, which is what a shader can do; leifnode's chunked cube sphere quadtree is the alternative and it wants a patch cache, quantises detail to patches and papers its cracks with skirts |
+| terrain | a density field dual contoured in the core (`dc.rs`), a chunk at a time on one lattice at every level (`lattice.rs`), the chunks in rings round the eye and streamed by the app (`stream.rs`) | overhangs, caves, arches and craters with lips, and a corner that is a corner wherever something is built; marching cubes (`march.rs`) is the reference the surface table is derived from, tenebris's Goldberg hex prisms the alternative, and `docs/mockups` is where the two were compared on the same seed; the cube sphere quadtree (`sphere.rs`) is kept for the far tier, where a planet is patches on a sphere and not cells in a lattice |
+| water | a finite sea in the core (`water.rs`), its surface contoured by the same mesher, tenebris's water shader ported to WGSL on Bevy's own transmission | a hole dug away from the sea is dry and one dug from the shore floods, by a rule and not a second field, because two surfaces contoured in one cell pinch |
+| buildings | recipes of brushes (`assets/buildings/*.json`), read and compiled by the core (`recipe.rs`, `json.rs`), evaluated in the ground's field | the mockup's kit, so a city is the same field the ground is, walked by the same walker and edited by the same tool |
 | planets from far off | a baked equirect impostor per body, tenebris's `distant.fs` ported to WGSL | the whole disk from a texture and an icosphere, with the rim fresnel and the terminator faded normal detail that made tenebris's planets read |
 | atmosphere | single scatter ray march, tenebris's `atmosphere.fs` ported, with the CPU mirror | sky and distance fog agree by construction when the same march runs on both sides |
 | orbits | closed form on rails (`orbit.rs` ported) | a solar system that cannot drift, blow up or need integrating; a player's ship is the one body that integrates, in a patched conic frame |
@@ -82,7 +88,10 @@ Ported from swarm-demo's `CLAUDE.md`, which ported it from redux-tribes'
 
 - **A file is under 900 lines and a function under 100.** `python3
   tools/shape.py --check` fails on either. The list it prints is work, never a
-  reason to raise the limit.
+  reason to raise the limit. It counts braces from a `fn` line, so a brace in
+  a byte or a string literal is a constant (`json.rs` writes `OPEN` and
+  `CLOSE`) and never a literal, or the count is wrong for the rest of the
+  file.
 - **rustfmt is the format**, `cargo fmt --all -- --check` in the suites. A
   formatting commit carries nothing else and goes in `.git-blame-ignore-revs`.
 - **clippy is clean at `-D warnings` in the core**, and its count in the app
@@ -186,6 +195,28 @@ The rules tenebris paid for, kept here in the same words:
   and `far_shell` is the fallback if either costs more than it buys; either
   way the sky's bodies are drawn where they LOOK, and the number that decides
   is measured in a picture.
+- **The DEPTH buffer needed neither, and that was measured rather than
+  assumed.** Bevy's perspective is INFINITE REVERSE Z: the near plane maps to
+  one, infinity to nought, and an `f32`'s mantissa is dense exactly where the
+  precision is wanted. At a near plane of a tenth of a metre the step at ten
+  metres is a hundredth of a millimetre and at a thousand kilometres it is
+  under a tenth of a metre, which is finer than anything this world draws
+  there. A logarithmic depth buffer is what a program with a FINITE far plane
+  needs and this one has none, so the owner's ask for one is answered by
+  saying which problem it would have solved. What a thousand kilometres
+  actually costs is the VERTEX, not the depth, and the next rule is that.
+- **A vertex is an OFFSET from an anchor, so the shader never forms a planet
+  scale unit vector.** `pos::unit_offset(anchor, step)` is
+  `normalize(anchor + step) - anchor` in closed form: `s = 2 a.step +
+  step.step` and then `anchor * (-s / (root (1 + root))) + step / root`, which
+  is algebraically the same thing and never differences two numbers near one.
+  The naive form in `f32` loses a vertex 6.5 cm at a thousand kilometres
+  (`a_small_step_keeps_its_metres_at_a_thousand_kilometres` prints both: 0.0650 m
+  naive against 0.000018 m stable), which is a hex tile visibly out of place
+  under the feet. Every tier's vertex is built this way now: one anchor
+  differenced in `f64` on the CPU, and a small offset added in `f32` on the
+  GPU. The same rule sends Planet-LOD's leaves as offsets from the anchor
+  rather than as directions.
 
 ## The ground is a field, sampled where the eye is
 
@@ -220,27 +251,27 @@ rather than the mesher: `dc.rs` is what the game draws with, and it derives
 which crossings are one surface from `march.rs`'s tables. The section on
 the two levels below is the whole of it.
 
-**Still to build, and the order it comes in:**
+**What streams is decided here, and what is still to build:**
 
-1. **The chunk streamer.** `select` gives a leaf set; the app diffs it against
-   last frame's, samples and contours new leaves on a worker, and despawns
-   the rest with hysteresis (tenebris held a chunk to one and a half times
-   its load distance for three seconds, because a full reload was a two
-   second stall and the boundary flaps). One cached verdict per body per
-   frame that every pass reads, so terrain, water and the impostor cannot
-   disagree mid flap. LOD is anchored to the PLAYER, not the camera: a map
-   view that pulls the eye to twenty kilometres must not unload the ground
-   under the ship. A leaf beside a leaf one level up joins it by the rule
-   `dc.rs` already applies between the two levels of one lattice: the seam
-   is polygons whose corners are cells of both sizes, and nothing is
-   skirted. The skirt was the first answer here and the mockup's picture
-   retired it before the streamer existed.
-2. **The impostor tier.** Past the streaming radius a body is tenebris's
-   baked equirect on an icosphere, lit per body from its own star.
+1. **The chunk streamer is built**, and the section on the rings below is
+   the whole of it: `select` and the quadtree are not what it streams. A
+   planet's near field is one lattice at every level and the chunks round
+   the eye are boxes at each level, one inside the next, so a chunk beside
+   a chunk one level up joins it by the rule `dc.rs` applies between any
+   two levels: the seam is polygons whose corners are cells of both sizes,
+   and nothing is skirted. The quadtree stays for the far tier, where a
+   planet is patches on a sphere and not cells in a lattice, and `select`'s
+   nearest point rule is the one that tier will need.
+2. **The impostor tier.** Past the rings a body is tenebris's baked equirect
+   on an icosphere, lit per body from its own star. It is DUE: on the 10 km
+   planet the coarsest ring was 32 km across and held the whole world, and
+   at 1,000 km it is a patch 16 km either side of the eye, so `--chunks`
+   from the air ends at the box with nothing behind it. The hex world has
+   no such edge, since Planet-LOD's far tier is the rest of the planet.
 3. **The rest of the materials.** The sets are on the field in the harness
-   (the section on the sets below); what is left is the sand band by height
-   once there is a sea, concrete panels in a building's own frame rather
-   than the planet's, and mipmaps for the array textures.
+   (the section on the sets below), concrete is in the town's frame, the
+   array textures carry their mip chains and the sand band is on the shore;
+   what is left is a second rock by latitude and ice at the poles.
 
 ## A town is where a mesher is judged, and the walker is the judge
 
@@ -553,7 +584,7 @@ region and the same collision, and the export is one recipe a site, its
 brushes in the site's frame, which is a recipe somebody has not written
 down yet.
 
-## The two levels are one dual contour, and the core proves it closed
+## Every level is one lattice, and a chunk is contoured against the levels round it
 
 The mockup's join was a skirt: the fine mesh's rim sunk three centimetres
 under the coarse surface so the crack between the two could not show. The
@@ -571,36 +602,57 @@ coarse above the fine, by up to 7.5 cm; with a pad built on a slope, 850,
 exempted the rim, which is exactly why it read nought while the join leaked.
 
 **The answer is the octree one, and it is in the core.** `lattice.rs` is one
-lattice at two levels: a coarse grid of cells, a mask of the cells that are
-subdivided `sub` ways, and every position computed from a FINE index through
-one function, so a coarse corner and the fine point under it are the same
-bits and two chunks agree on every sample. `dc.rs` contours it a chunk at a
-time: a MINIMAL edge is a fine edge wherever a subdivided cell is round it
-and a coarse edge everywhere else, and the polygon on a crossing minimal
-edge joins the vertices of the LEAVES round it, which are fine cells on one
-side of a join and the coarse cell on the other. Nothing dives under
-anything and nothing is sunk: the seam is polygons whose corners are cells
-of two sizes, every mesh edge is shared by exactly two polygons, and the
-mesh is closed by construction. The rules that make that hold:
+lattice at every level: a cell at level L is 2^L fine cells a side, a
+lattice point at any level is a fine point, and every position is computed
+from a FINE index through one function (`point`), so a coarse corner and the
+fine point under it are the same bits and two chunks at two levels agree on
+every sample they share (`a_coarse_corner_is_the_fine_point_under_it_to_the_bit`).
+A chunk (`ChunkId`) is `CH` (sixteen) cells of its own level a side, and the
+chunks round an eye are RINGS: a box of `2 * HALF` (eight) chunks a side at
+each level, each box inside the next coarser's, snapped to the coarser's
+chunks and kept a whole coarser chunk inside it, so no two chunks that touch
+differ by more than one level (`a_box_is_a_whole_chunk_inside_the_next`
+measures it); a box moves only when the eye is `DRIFT` (one and a quarter)
+chunks from its middle, so a boundary does not flap under a walker. The first
+cut was one coarse grid with a MASK of subdivided cells, grown until every
+coarse cell the fine surface crossed had a vertex; that is a planetoid's
+answer and it does not scale to a planet, because the mask is the size of
+the planet and every chunk read all of it. There is no mask now, and no
+growing: a level is a set of boxes and a chunk reads its own neighbours.
+
+`dc.rs` contours one chunk at a time against the levels round it (`Levels`,
+which the rings implement): a MINIMAL edge is an edge of the finest level
+round it, and the polygon on a crossing minimal edge joins the vertices of
+the LEAVES round it, which are this chunk's cells on one side of a join and
+a coarser neighbour's cell on the other. Nothing dives under anything and
+nothing is sunk: the seam is polygons whose corners are cells of two sizes,
+every mesh edge is shared by exactly two polygons, and the mesh is closed by
+construction. The rules that make that hold:
 
 - **A leaf's vertex is a function of the field and the leaf alone**, one per
   surface (the marching cubes case's triangles joined where they share an
   edge, `components`), at the least squares point of that surface's
-  crossings, each crossing bisected on the field and given the field's
-  gradient there. Every chunk that needs a leaf's vertex computes it the
-  same way from the same samples, so a shared vertex lands on the same bits
-  from either side and the audit's weld finds it once.
-- **An edge has one owner.** The lowest chunk among the subdivided cells
-  round a fine edge, among the cells round a coarse edge, which every chunk
-  can tell from the mask alone.
-- **The coarse corner of a seam polygon** is the coarse cell's vertex for the
-  surface of the coarse edge the fine edge lies on, else for the one surface
-  crossing the face it lies in, else the nearest of the cell's. And the mask
-  is GROWN first (`Lattice::grow`): an unsubdivided cell whose face toward a
-  subdivided one has four coarse corners of one sign while a fine point on
-  it has the other is subdivided too, and again until nothing changes, so a
-  coarse cell the fine surface crosses always has a vertex to end on. The
-  count of corners that had none is reported and is nought.
+  crossings, each crossing bisected on the field (`BISECT`, eight halvings)
+  and given the field's gradient there, stepped at the EDGE's own scale and
+  never the chunk's: stepped by the chunk's cell, a fine edge and the coarse
+  edge over it gave one crossing two normals, two chunks solved a shared
+  vertex to two places, and the seam leaked open edges. Every chunk that
+  needs a leaf's vertex computes it the same way from the same fine points,
+  so a shared vertex lands on the same bits from either side and the audit's
+  weld finds it once.
+- **An edge has one owner.** A chunk skips every edge with a finer chunk's
+  cell round it, because that chunk owns it, and among chunks of one level
+  the lowest owns an edge they share, which every chunk can tell from the
+  levels alone. The finer chunk owns the seam, so the seam's polygons are in
+  the mesh with the fine detail and a coarse chunk is never rebuilt for a
+  fine neighbour arriving.
+- **A coarse cell the fine surface crosses only on a face** has no crossing
+  on any edge of its own and so no vertex, and the seam polygons on that
+  face would have nothing to end on. It is given one at the least squares
+  point of the fine crossings on its faces, which every fine chunk beside it
+  computes alike (`seam_vertex`), so the seam closes on it
+  (`a_coarse_cell_the_fine_surface_crosses_only_on_a_face_still_closes`).
+  The mask was grown for this case before; the vertex is synthesised now.
 - **The least squares point is the pseudo inverse from the crossings'
   middle** (`qef.rs`), constraining only the directions the planes
   constrain: onto a face, onto an edge, into a corner, and never off the
@@ -617,58 +669,343 @@ mesh is closed by construction. The rules that make that hold:
   The rule is that what is built snaps to half a metre and the lattice's
   corner sits half a fine cell off that grid, so no face ever lies on a
   lattice plane, and `a_face_on_a_lattice_plane_pinches_and_half_a_cell_of_offset_does_not`
-  holds it: the same pad pinches on a lattice it coincides with and is
-  clean on one offset by half a cell.
+  holds it. The test spheres learned the same rule from the other side: a
+  sphere whose radius put its surface through lattice points pinched, and
+  the test lattices sit half a fine cell off.
+- **A chunk with no surface in it is never sampled.** `Density::solid` rules
+  a box wholly rock or wholly air, for a planet from the band its surface
+  stays in (`Planet::band`) and for a built field from its structures'
+  boxes, and where the field cannot rule, `Density::slope` bounds how fast
+  it can change, so a few samples across the chunk rule it out anyway
+  (`a_box_is_ruled_rock_or_air_only_where_the_band_allows`). An answer must
+  hold on the box's closed boundary, because the chunk beside a skipped one
+  relies on the shared face having no crossing. That is why the planet was
+  2,245 chunks and not the rings' 5,632 when it was ten kilometres across.
+  `Density::slope` is what `town::surface_radius` sphere traces on too,
+  which is how a march down to the ground stopped costing one step per half
+  metre of relief. The bound counts a site's
+  skirt too, where the relief blends to the town's level over eleven
+  metres: without it a chunk on the apron whose surface fell between two
+  samples could be ruled empty and left a hole at the town's edge
+  (`the_slope_bound_holds_across_a_sites_skirt` measures the field's
+  gradient across one against the bound).
 - **`audit.rs` measures what the construction claims.** The chunks welded by
   position (half a millimetre, searching the neighbouring bins too, because
   two chunks place a shared vertex a float's rounding apart and a rounding
   that straddles a bin edge read as four holes), every edge counted, every
-  triangle tested against the field's gradient at its middle. A sphere at
-  one level, a sphere with a blob of fine cells over its top, and a planet
-  with a slab and a wall built on it all come out with nought open edges,
-  nought pinches and nought triangles facing in, and the slab's top is a
-  plane to two millimetres, which is what dual contouring is for.
+  triangle tested against the field's gradient at its middle, and the area
+  of what faces in (`facing_area`), because six slivers in the gap under a
+  slab's overhang face wherever they like and are nothing, and one triangle
+  of any size facing in is a hole. A sphere at one level, a sphere across
+  four levels, a sphere the water's level cuts and a planet with a slab and
+  a wall built on it all come out with nought open edges and nought
+  pinches, and the slab's top is a plane to two millimetres, which is what
+  dual contouring is for.
 
-`freeport_app` draws it: a 40 m planetoid on 96 cells of a metre, a site of
-fine cells at a quarter under a pad, a wall and a step, a fly camera (click
-takes the mouse, Escape gives it back, WASD and Q E, Shift, Tab for the
-wireframe, `--fly` to start in the air) and `--shot out.png` for a picture
-taken headless under Xvfb and lavapipe, which is how the join was looked at
-here from the owner's angle before anybody flew round it; the first cut
-coloured coarse vertices sand and fine ones blue so a seam polygon blended
-the two, and those pictures are the design page's. Vertices are split per
-triangle for Bevy, and a corner whose smooth normal disagrees with its
-triangle's face by more than a crease takes the face's, so a box is shaded
-flat on each face, the ground stays round, and where the ground meets a
-wall only the corner on the crease changes. A first cut flattened the whole
-triangle and the shading jumped along every crease.
+`freeport_app` draws it: vertices are split per triangle for Bevy, and a
+corner whose smooth normal disagrees with its triangle's face by more than a
+crease takes the face's, so a box is shaded flat on each face, the ground
+stays round, and where the ground meets a wall only the corner on the crease
+changes. A first cut flattened the whole triangle and the shading jumped
+along every crease. The pictures the design page carries of a planetoid with
+its coarse vertices sand and its fine ones blue are from the mask's day, and
+the seam they show is the same polygon rule.
 
+## The dual contoured world is streamed in rings round the eye
+
+`stream.rs` is the streamer this file used to say was still to build. Every
+frame the rings follow the eye (`Rings::follow`; the eye is the walker's or
+the fly camera's, whichever is driving) and, when a box moves, the wanted
+set is recomputed: every chunk of every level's box that the field cannot
+rule wholly rock or air, each with the SIGNATURE of its twenty six
+neighbours' levels (`Rings::signature`, two bits each: finer, the same,
+coarser), which is everything its mesh depends on besides the field. The
+ruling is against the field in the chunk's own box (`World::field_in`),
+which tests a box a town (`World::groups`, a town's structures contiguous
+and the box round them) and only then the structures in it: the first cut
+built one field of every structure on the planet and asked it about every
+chunk, which was eight thousand box tests a chunk for five thousand
+chunks every time a box moved, a hitch every five metres of walking. A
+wanted chunk that is not loaded with that signature is a job, nearest first
+and new before rebuilt, contoured on a worker thread (three here, one fewer
+than the cores) from the same field and the same rings, and drawn when it
+comes back if it is still wanted as it was. A loaded chunk the rings no
+longer want stays drawn until whatever now covers its ground has arrived,
+and for `LINGER` (three seconds) at most, so the ground never has a hole
+where a level changes and nothing stays for ever; tenebris held a chunk to
+one and a half times its load distance for three seconds for the same
+reason, and the rule here is the cover rather than the distance.
+
+- **Draining is by time, not by count.** The main thread takes finished
+  meshes off the workers for `DRAIN_MS` (six milliseconds) a frame and at
+  least `DRAIN_LEAST` (thirty two) whatever they cost. The first cut took a
+  dozen a frame, which throttled the first load to the frame rate: two
+  thousand chunks at a dozen a frame is a hundred and seventy frames, and
+  under lavapipe a frame is most of a second. `AHEAD` (sixty four) jobs are
+  in flight beyond the workers, so a worker never waits for the main thread
+  and a stale job is never far down the queue. What is left is still the
+  frame rate: the same planet settles in 17 s from the air and 77 s on the
+  street on lavapipe, with 16 to 21 s of work on the workers either way,
+  because every frame on the street draws eight hundred thousand triangles
+  on four cores before it can drain.
+- **A mesh is chunk local and placed through the origin.** A chunk's
+  vertices are `f32` metres from the chunk's own `f64` corner, and its
+  entity is placed from that corner through `pos::Origin`. `rebase_origin`
+  is the one system that moves anything: every chunk, every lamp, the ghost
+  of an edit, and the planet's centre in the terrain and the water
+  materials, which reason in planet local coordinates from it, the tenebris
+  rule, so a rebase is a frame in which nothing on screen moves.
+- **An edit dirties a box** (`Streamer::dirty`): every drawn chunk reaching
+  into it, margins included, is contoured again on the world as it is now,
+  and whatever is in flight on the old world is dropped when it lands (a
+  generation on every job, and a result from before the edit touches no
+  bookkeeping either, or the chunk it named was contoured a third time).
+A block sculpted on the port's main street dirties eight
+  chunks and they are contoured again in 30 to 39 ms of work, a five
+  hundredth of the seventeen seconds the first load spends; they are drawn
+  five seconds later on lavapipe, and that wait is the frame rate of a city
+  at eight hundred thousand triangles on a software rasteriser rather than
+  the mesher, which is why the number that matters is the work and not the
+  clock.
+- **The harness is `--chunks` now**, because the hex world is what the
+  binary opens on. `freeport_app --chunks` is the same planet the tiers
+  draw (`RADIUS` 1,000,000 m, the sea 400 m under the mean radius, eleven
+  levels of 0.25 m to 256 m cells), eight towns of 80 m, and the walker on
+  a street of the port facing the middle of town. F swaps to the fly camera
+  from wherever the walker is and back, Tab wires, Esc frees the mouse, B
+  builds; `--fly` starts in the air, `--eye` and `--look` place the camera,
+  `--levels` sets the count, `--frames N --shot out.png` takes a picture
+  once the streamer is idle and N frames have run and quits, `--sculpt
+  KIND` places a shape the frame after the first load settles and holds the
+  picture until the chunks it remade are drawn, and `--wire` starts in
+  wireframe. The port's first lot is a hangar, and the log says where its
+  door is so a picture can be taken from it.
+- **The coarsest box no longer holds the planet, and that is the impostor
+  tier coming due.** At 5,000 m of radius the 32 km box held the whole
+  world; at 1,000,000 m it is a patch 16 km either side of the eye. On foot
+  that is still far past the horizon, which is `sqrt(2 R h)` and 1.8 km
+  from an eye 1.7 m up, so a walker sees no edge; from the air the world
+  ends at the box and there is nothing behind it. The hex world has no such
+  edge, because Planet-LOD's far tier IS the rest of the planet, and that
+  is the strongest argument yet for the tiers being what the binary opens
+  on.
+
+## Water is finite, and the sea's surface is clipped by what is under it
+
+The owner's ask was voxel water: dig below the sea's level away from the sea
+and the hole is dry, dig from the shore and the sea comes in. `water.rs` is
+the answer, and the first cut was not: a water VOLUME, a field of its own
+positive in water, contoured as a second surface, met the ground's surface
+along every shoreline in the same cells, and two dual contoured surfaces in
+one cell put two vertices a rounding apart, which the audit counts as a
+pinch and the eye sees as a flicker along the whole shore.
+
+**The sea is a level and its surface is the sphere at that radius**,
+contoured by the same `dc.rs` as the ground, at the same levels, in the same
+chunks, so the two meet at a shore with the same cells. What clips it is the
+MATERIAL, per triangle: a triangle of the sphere whose middle stands in the
+ground's rock is `BURIED` and never drawn, and one over air is `SURFACE`; the
+depth test settles the shoreline to the pixel, since the ground is drawn
+first. That alone would put water in any hole dug below the level, wherever
+it was dug, so water is FINITE by a rule rather than by a field: a cut is
+DRY unless it touched water when it was made (`Water::touches`: any point of
+a grid over its box, grown by half a metre, that is under the level, in the
+ground's air and outside every dry cut), the surface is buried inside a dry
+cut, and a cut that touches water and reaches a dry one wets it, and every
+dry cut that one reaches (`Water::flood`), so a channel dug from the shore
+floods the basin at its end the moment it breaks through and never before.
+`a_cut_in_the_dry_stays_dry_until_a_wet_one_reaches_it` holds it, and
+`the_sea_contours_to_a_closed_shell_and_only_the_surface_over_air_is_drawn`
+audits the sheet: the whole sphere closed, the drawn part the part over
+air. Water is not in the ground's field and takes nothing off a chunk: a
+chunk's sea is a second mesh from the same lattice, and a box the level
+does not cross has none (`Density::solid` on the sea), so a chunk of dry
+land pays nothing for the sea.
+
+**The walker wades.** The sea holds the feet no deeper than `WADE` (1.2 m)
+under its level: past that the body floats, standing on nothing, and walks
+(`Walker::float`, `Bounds.sea`, and
+`the_sea_holds_a_walker_at_wading_depth_and_it_walks_on`).
+
+**The sheet is tenebris's water shader on Bevy's own transmission.**
+`water.rs` in the app and `water.wgsl`: a material extension on the standard
+material with screen space specular transmission on, so what is seen through
+the sheet is the ground behind it refracted and attenuated over the
+THICKNESS of water the view ray crosses, which the fragment stage reads off
+the depth prepass (the camera carries `DepthPrepass`, one transmission step,
+and the sheet opts out of the prepass so it never reads its own depth as the
+sea floor). The extension adds tenebris's: the swell in the vertex stage
+along the radial (`water.vs.glsl`), the ripples as the gradient of its `fbm`
+of its gradient noise bending the radial normal, the fresnel sky and the
+foam on the crests (`water.fs.glsl`, named in the WGSL line by line), the
+numbers `water.yaml`'s, and every coordinate PLANET LOCAL from a centre the
+material is handed and `rebase_origin` moves, which is the Sequoia lesson
+kept where it was learned.
+
+## Cities are recipes in the core, planned on the planet and built in the field
+
+The mockup's towns were where a mesher was judged; the game's are the reason
+to land. `town.rs` is `planTowns` ported and grown: candidates come off a
+golden angle spiral round the planet (`CANDIDATES`, four thousand), a
+candidate qualifies on land between three and forty metres over the sea,
+nearly level across the town's width, and apart from every town already
+placed, and the first that qualifies is the port, because a port is the town
+this game is about. A town is a local grid, blocks of `BLOCK` (10 m) on a
+`PITCH` of 14 with `STREET` (4 m) between, a lot per block, taller near the
+middle, a few blocks left as plazas, and every street in `PIECE` (3.5 m)
+pieces, each on its own patch of the sphere, which is the mockup's chord
+lesson at the game's radius: on a 5 km planet a fifty six metre chord sags
+8 cm, and a piece never has to. The ground under a town is LEVELLED to its
+height by the planet's own field (`Planet.sites`: one right across the town
+and nought past an `APRON` of 12 m, the relief the site's height and the
+noise not asked), so a plateau has a smooth skirt cut by the same field, and
+every building stands plumb on its own lot's frame (`lot_frame`: the lot's
+direction, east and north there keeping the town's heading, the town's level
+as its base). `towns_stand_on_level_land_over_the_sea_and_apart` and
+`a_levelled_site_flattens_the_ground_to_the_towns_height` hold it.
+
+**A building is a recipe, and the core reads it itself.** `recipe.rs` is
+`kit.js` line for line: a list of signed distance brushes in the building's
+frame (a box, a cylinder on any axis, a sphere, a flight), added or cut in
+list order, `blend`, `clip`, `each` and `alternate`, rooms, and a window as
+an OPENING, compiled for a lot's storeys and seed into a `Building` that
+answers a density and a material at a point (`the_distances_are_the_kits`
+holds the numbers to the kit's). `json.rs` is the reader, objects, arrays,
+strings, numbers and the three words, and the writer, because the core
+depends on nothing but `std` and `glam` and a recipe is a JSON file. Eight
+ship in `assets/buildings`: the mockup's house, cottage, tower, hangar, dome
+and dugout, and two for a city, `block`, a rectangular tower of four to
+eight storeys with a ramp up the west wall then the east, a window on every
+face of every storey but where a ramp climbs, plate corner pillars and a
+parapet, and `bungalow`, a one storey house with wide windows and a flat
+roof. `choose` puts the towers in the middle, the one floor houses at the
+edge and the odd hangar, dome or dugout among them, and
+`every_shipped_recipe_reads_and_compiles_without_a_warning` reads every one
+off the checkout.
+
+**A window is never beside a flight.** The owner's rule: a window whose
+opening would meet a flight is DROPPED (`drop_windows_on_flights`, the
+flight's box grown by `FLIGHT_CLEAR`, ten centimetres, so a pane a hand from
+a ramp goes too), so no flight's slab runs across a pane and no window is
+cut where a ramp climbs the wall;
+`a_window_that_would_meet_the_flight_is_dropped_and_the_others_stay` counts
+them on the house.
+
+**A building is in the field where it is near, and its massing where it is
+far.** `Structure` is a building in a lot's frame with its box in the
+world, `World::field_in` hands a chunk the ground and every structure
+reaching into the chunk's box, and `Built` evaluates them in their own
+frames: the deepest solid wins and the material with it (the mockup's rule,
+asked a hand inside every triangle's middle). Past `DETAIL` (a half metre
+cell) a structure is its MASSING (`Building::massing`): its added brushes no
+thinner than the cell, nothing cut, so a house is a block and a tower a drum
+on a lattice that could not hold its walls, and a city at a kilometre is
+roofs and not noise (`a_tower_is_round_and_its_massing_is_a_drum`).
+
+**A lamp is a light near the eye and a number everywhere else.** Every
+building's lamps are known to the world (2,132 of them on this seed), and
+`lamps.rs` makes point lights of the nearest `MOST` (forty eight) within
+`REACH` (60 m), spawned as the eye comes within reach, despawned as it
+leaves, placed through the origin like a chunk. A city of thousands of lamps
+is not thousands of lights.
+
+**Concrete is mapped in the town's frame, and the owner saw why.** The first
+render put panel seams across every wall at the angle between the building
+and the planet's axes, because the triplanar mapping was in the planet's
+frame, and the owner read it off the picture as UVs out of alignment.
+`terrain.wgsl` is handed every town's frame (`FRAMES`, sixteen, three lanes
+each: the direction with the ground's radius in w, east, north) and maps
+concrete, plate and a street in the nearest one: east and north measured on
+the sphere the town's ground is at, from the town's centre, and height off
+that sphere, so a wall plumb on its lot has constant east or north up its
+height and a floor constant height, and a panel is level and plumb whatever
+the planet's axes do. From the town's CENTRE and never the fragment's own
+foot, because a point on a sphere projected on its own tangent plane is
+nought everywhere, which was the mockup's float noise. The ground stays in
+the planet's frame, where a seam in grass is nothing.
+
+Measured: eight towns planned in 1.23 s, 699 buildings from eight recipes
+and 7,744 pieces of street built in 14 to 20 ms, 2,132 lamps; the walker
+starts on the port's main street with 807,367 triangles round it.
+
+## Building on foot, in Bevy
+
+`edit.rs` is the mockup's builder ported. B, then build: a brush at the
+point the crosshair meets the field (a march along the look ray to `REACH`,
+7 m, at `STRIDE`, 8 cm, and the field's gradient there for the face),
+snapped to `SNAP` (half a metre) in its SITE's frame, added with the left
+button and cut with the right, `[` and `]` for the shape, `,` and `.` for
+the material, R and F lifting where it lands by half a metre, Z taking the
+last edit back, P writing everything built to `freeport_edits.json`. The
+shapes are the mockup's ten: a block, a slab, a pillar, a ball, a ramp, a
+wall laid from one click to the next with its foot sunk so it keeps its foot
+in the ground where the ground curves away, a pad of flat ground (a fill of
+terrain up to the aimed height and a clearing above it, so a hill is cut and
+a dip is filled), a room, a door and a window; the materials concrete,
+plate, glass, lamp and terrain. A ghost box is drawn where the brush would
+land, and the line of text at the bottom says what is armed and how many
+edits stand. An edit is a `Structure` like any other, evaluated in the same
+field the walker walks and the mesher contours, so what is built is
+walkable the frame it lands and the chunks it touches are contoured again
+(`Streamer::dirty`). Sites are the mockup's: the first edit on a spot fixes
+a frame, its patch of the sphere, plumb, with its base at the ground, and
+every edit within `SITE_REACH` (8 m) of it is placed in that frame, because
+two edits on their own patches lean against each other. A cut below the sea
+that touches no water within `WET_REACH` (half a metre) is dry, and stays so
+until a wet cut reaches it. The export is one recipe a site through the
+core's own `Value::write`, so the app never spells a recipe's format a
+second time, and it is a recipe somebody has not written down yet.
+`--sculpt KIND` places one for a headless picture, looking down at the
+street a few metres on, because the walker starts looking along the street
+and a level look meets nothing within reach, which is how the first two
+pictures of the builder came back with nought edits in them. It is placed
+the frame after the first load SETTLES and the picture waits for the chunks
+it remade, so the edit is measured on its own and is in the picture: on a
+fixed frame it went in while two thousand chunks were still landing, and
+its own remesh was among them.
 ## The sets on the field, and the walker on it, in Bevy
 
 **A triangle is made of what the field says a hand inside its middle.**
-`Density::material` answers `TERRAIN` or `CONCRETE` at a point, `Built`
-says concrete wherever a block's density beats the ground's (the deepest
-solid, the mockup's rule), and `dc.rs` asks it half a fine cell inside every
+`Density::material` answers one of seven (`TERRAIN`, `CONCRETE`, `PLATE`,
+`GLASS`, `LAMP`, `LIT` for a glowing pane, `STREET`), `Built` says a
+building's material wherever its density beats the ground's (the deepest
+solid, the mockup's rule), and `dc.rs` asks half a fine cell inside every
 triangle's middle (`HAND`) and carries the answer per triangle; the built
 planet test holds the slab's top concrete and the ground terrain. The app
 puts it in the vertex colour's red, every corner of the triangle the same,
 so no driver's choice of provoking vertex can change it, which is the
-mockup's hatched walls not happening twice.
+mockup's hatched walls not happening twice. The sea's two, `SURFACE` and
+`BURIED`, are the same channel on the other mesh.
 
-**The shader is the mockup's, transcribed.** `terrain.wgsl` is an
-extension on Bevy's standard material: `tri` and `triN` line for line
-(three planes weighted by the normal's fourth power, a normal map read on
-each and turned into the world), rock on the steep and grass on the flat
-by the same smoothstep, concrete where the triangle says so, and Bevy's
-own PBR lighting after. Every sample is taken whatever the material and
-blended by weight, because a texture sample under a branch is not in
-uniform control flow and the compiler refuses it; the mockup's GLSL was
-allowed the branch. The sets are three array textures, a layer a set,
-which is the mockup's answer to a real GPU's sixteen samplers, decoded
-straight off the checkout at startup (`terrain.rs`; `FREEPORT_ASSETS` or
-the checkout the binary was built from), and a missing map is a flat layer
-with a warning so the harness runs anywhere. Every coordinate the shader
-reasons in is planet local, from a centre it is handed.
+**The shader is the mockup's, transcribed.** `terrain.wgsl` is an extension
+on Bevy's standard material: `tri` and `triN` line for line (three planes
+weighted by the normal's fourth power, a normal map read on each and turned
+into the world), rock on the steep and grass on the flat by the same
+smoothstep, concrete, plate and street where the triangle says so and mapped
+in the nearest town's frame (the section on the cities above), glass, lamp
+and lit as flat colours with an emissive, because what they are is a colour
+and a glow and not a surface, and Bevy's own PBR lighting after. Sand is
+the mockup's band by height, all sand to 1.3 m over the sea and all grass
+past 2.8, measured off the sea's own radius, so a beach is what a walker
+wades out onto. Every
+sample is taken whatever the material and blended by weight, because a
+texture sample under a branch is not in uniform control flow and the
+compiler refuses it; the mockup's GLSL was allowed the branch. The sets are
+five, basalt, dunes, grass, concrete and hull plate, as three array
+textures of five layers each (`terrain.rs`; `FREEPORT_ASSETS` or the checkout the
+binary was built from), and a missing map is a flat layer with a warning so
+the harness runs anywhere. Every layer carries its MIP CHAIN, built at load
+by a box filter down to one texel and laid out layer major, which is the
+order wgpu reads, with eight samples of anisotropy: without the chain a
+four metre tile of grass seen from seventy metres up is one texel a pixel
+picked at random, which is the noise the far ground read as, and without
+the anisotropy a street looked along is a stripe of one texel. The
+ground's tile is two metres and not four, because a strand of the hay is a
+quarter of a tile and at four a blade was a metre long, which read as a
+ploughed field at a grazing angle; and the grass set's own normal is worn
+at `GRASS_BUMP` (0.45) toward the surface's, because a hay normal at full
+strength on ground seen at a grazing angle speckles, which is swarm-demo's
+finishes at a fifth on a field.
 
 **The walker is the mockup's, in the core.** `walker.rs` is the `Walker`
 class and the marched page's three rules ported number for number: an eye
@@ -678,21 +1015,512 @@ clears a metre; `ground` (the highest solid no more than a step over the
 feet, else the first solid going down, else the first crossing from space
 when the feet are not yet known), `ceiling`, `resolve` (a ring of twelve
 points at three heights pushed out along the field's gradient, sideways
-only, three passes) and `can_stand` (fifty degrees, unless it tops out
-within a step two body widths on). The field it walks is the same `Built`
-the mesher contoured, so the picture is the collider. The harness is
-`walk.rs`: WASD, Shift, Space, the mouse, F to swap with the fly camera
-from wherever it is, and a line of text saying where the feet are and what
-they stand on. Four walks are the tests: two seconds on a ball walks 8 to
-10 m and running further; a jump peaks between 1.0 and 1.6 m and lands
-inside 1.3 s; a 0.4 m kerb is walked up and a 1.2 m wall stops the body
-its own radius short; a wall walked into diagonally is slid along, and a
-lintel a stride ahead holds a jump under it to 0.6 m. One lesson from
-writing them: on a 20 m ball a flat block three metres from the pole stood
-0.22 m higher than the curving ground, so a 0.4 kerb was a 0.63 wall and a
-wall's far end stood clear of the ground; the test ball is two kilometres,
-and a real block on a planet is built plumb on its own patch, which is the
-mockup's lot frame and the streets in pieces again.
+only, three passes), `can_stand` (fifty degrees, unless it tops out within
+a step two body widths on) and `float` (the sea, above). The field it walks
+is the same `Built` the mesher contoured, with every structure within reach
+(`World::field_near`), so the picture is the collider and a city is walked
+into. The harness is `walk.rs`: WASD, Shift, Space, the mouse, F to swap
+with the fly camera from wherever it is, and a line of text saying where
+the feet are and what they stand on. Five walks are the tests: two seconds
+on a ball walks 8 to 10 m and running further; a jump peaks between 1.0 and
+1.6 m and lands inside 1.3 s; a 0.4 m kerb is walked up and a 1.2 m wall
+stops the body its own radius short; a wall walked into diagonally is slid
+along, and a lintel a stride ahead holds a jump under it to 0.6 m; and the
+sea holds the feet at wading depth. One lesson from writing them: on a
+20 m ball a flat block three metres from the pole stood 0.22 m higher than
+the curving ground, so a 0.4 kerb was a 0.63 wall and a wall's far end
+stood clear of the ground; the test ball is two kilometres, and a real
+block on a planet is built plumb on its own patch, which is the lot frame
+and the streets in pieces again.
+## A hex world is two tiers, and both are made in the vertex stage
+
+The owner's ask: hex terrain, but the hexes do not go on for ever, they
+give way to a planet tessellation, and the geometry runs on the GPU. What
+is built is what the binary now OPENS on: a disc of Goldberg columns round
+the eye, sp4cerat's Planet-LOD past it, and not one triangle of either
+built on the CPU or uploaded. It stands beside the dual contoured world
+rather than replacing it; the two share the planet's field, the five baked
+sets and the same shader, and `--chunks` is how the other one is asked
+for.
+
+**Planet-LOD was chosen over the cube sphere quadtree for one property,
+and it is the one that makes a shader possible.** sp4cerat's rule is that
+a triangle splits an EDGE when the eye is within `size * ratio` of that
+edge's MIDDLE, so two triangles sharing an edge always agree about it:
+the mesh is crack free with NO neighbour lookup, no patch cache, no
+skirts, no streaming, and every triangle decides alone. An unsplit edge
+collapses its midpoint onto a corner and drops one of the four children.
+leifnode's scheme (a cube sphere of chunked quadtrees with GPU
+heightmaps) is the alternative, and it needs a patch cache, quantises
+detail to patch sizes, and leaves cracks that are usually papered over
+with skirts. `lod.rs` is the f64 port and
+`the_mesh_is_closed_wherever_the_eye_is` welds it and counts every edge
+at four eye positions. It shares the icosahedron with the Goldberg tiles,
+so both tiers stand on one solid.
+
+Measured, the whole planet, eye on the ground and at three radii:
+
+| ratio | on the ground | at three radii |
+| --- | --- | --- |
+| 1 | 110 | 12 |
+| 2 | 474 | 14 |
+| 4 | 1,632 | 44 |
+| 8 | 5,572 | 148 |
+| 16 | 18,300 | 568 |
+| 32 | 57,770 | 2,240 |
+
+The stop detail barely moves the count (110 against 146 for a five times
+finer stop) because the refinement is a funnel: `ratio` is the quality
+knob and ratio 32 is still nothing for a GPU.
+
+**A tile is an ADDRESS, never a row of a list.** Tenebris builds its
+Goldberg polyhedron whole, 163,842 tiles for a three hundred metre planet,
+and walks it. A thousand kilometre planet at one metre tiles is
+12,257,789,082,012 tiles, which is neither a list nor an allocation, so `hex.rs` computes
+everything about a tile from `(face, i, j)` on the subdivided icosahedron:
+where it is, what is round it, its hexagon's corners, the disc of them
+under an eye. A step off a face is carried across by UNFOLDING the two
+triangles flat, which is exact and not near enough, since an icosahedron's
+faces are flat equilateral triangles and the lattice on them is linear in
+their corners. The first cut extrapolated the barycentric coordinates past
+the edge and asked which tile the direction fell in, and at a corner that
+put two of the five neighbours on one tile. **A corner is the one place
+the unfolding is defective** (five triangles meet, not six), so it is
+walked as the five edges that leave it.
+
+**What the shader is handed is `Grid::basis`, not an address.** The eye's
+tile and the two lattice steps there, in the FACE's own plane, so the tile
+`(u, v)` away is `normalize(mid + u * e1 + v * e2)` with no face table, no
+canonical and no unfolding. On the anchor's face that is not an
+approximation at all: a lattice point is linear in the face's corners and
+only the normalise is not, so stepping before the normalise IS `point`.
+Measured over a 24 tile window of one metre tiles
+(`a_window_of_steps_is_the_grids_own_tiles`): exact inside a face, 8.4 cm
+off the tile middles once the window crosses onto the next face and still
+one step to a tile, and at an icosahedron corner 65 steps of 1,825 share a
+tile, because five faces meet there and a square window is six ways round.
+That last is drawn wrong, and it is written down rather than hidden.
+
+**The vertex stage, and the number that decides.** A compute pass writing
+this geometry would write it to memory, wait on a barrier and read it back
+as a vertex buffer, and the only thing that buys is the geometry being
+READABLE afterwards: an indirect count, a second pass, a physics query.
+Nothing here wants that. What a compute pass WOULD save is measured: a
+prism's forty eight vertices each evaluate the same field sample, so the
+hex tier does 48 times the field work a dispatch a tile would. On this
+planet that is 452,000 evaluations a frame against 9,409, 36 million
+hashes against three quarters of a million, which is about a tenth of a
+millisecond on real silicon and most of four seconds on a software
+rasteriser. So it stays in the vertex stage, and the day the tile count
+or the field grows it moves, which is why `field.wgsl` is written to be
+called from either. The far tier has no such redundancy: its vertices are
+distinct points.
+
+**What is on the CPU is one `select` a frame.** Planet-LOD's recursion
+picks the leaves, 3,059 of them in 1.38 ms from the ground, and the vertex
+stage cuts each into `sub * sub` triangles: 48,944 triangles out of 3,059
+uploaded. The recursion cannot BE a vertex shader, because a vertex shader
+emits one vertex and not a variable number of triangles, and a compute
+recursion (breadth first over levels, ping pong buffers, indirect
+dispatch) is what this becomes when `select` stops being free.
+
+**Both tiers are watertight by an argument about floats, not about
+topology.** A vertex two triangles share is computed from the SAME inputs
+in the same order on both sides, so it lands on the same bits. A hex
+corner is `normalize(a + b + c)` of the three tiles round it whichever of
+the three is asking, and floating point addition is commutative, so the
+three orders agree exactly. A point on a leaf's edge has nought weight on
+the third corner, and Planet-LOD's own rule is that two leaves sharing an
+edge share the WHOLE edge, so both cut it into the same `sub` pieces with
+the same weights: that is what makes a uniform sub tessellation legal
+across levels at all, and it is the whole reason the far tier can be one
+draw. What the float costs is about a millimetre at five kilometres, the
+same on every vertex that shares a place, so it opens no crack.
+
+**The seam is an OVERLAP, and the picture found it.** The far tier is
+given the near tier's disc as a HOLE (`select`'s last two arguments: a
+triangle wholly inside it is dropped, one straddling the rim is kept
+whole), and the hex disc reaches `OVERLAP` tiles past that hole, so the
+far tier is drawn UNDER the rim columns rather than meeting them. A tile
+of overlap was not enough: at a grazing angle the rim was a band of SKY,
+because the two tiers carry the same height differently, a column's top
+flat at its middle's height and a leaf's linear between its corners, and
+wherever the far tier stood higher the line of sight went under it, over
+the ground behind and out. Six tiles costs a few hundred triangles drawn
+under the columns and closes it for good. No number would have found it.
+
+**Three defects, and two of them drew nothing with no error anywhere.**
+
+- **A shader that is REGISTERED is not a shader that is LOADED**, and an
+  import that is not in the asset system is a pipeline Bevy quietly
+  retries for ever. `tiers.wgsl` imports `freeport::field` and nothing had
+  ever asked for it: an empty sky, no error, no pipeline in the log. A
+  handle held in a resource is the load.
+- **`@builtin(vertex_index)` is where a vertex sits in Bevy's SHARED
+  vertex slab**, not in its own mesh. The tier allocated first counted
+  from nought and drew; the one after it counted from 1,152,000 and every
+  vertex of it worked out a tile outside the window. The number rides the
+  mesh now (`counted_mesh`), which is the mesh's own.
+- **A WGSL struct longer than the buffer it names is a pipeline wgpu
+  refuses** with two sizes and no field name (880 against 80): the vertex
+  shader had copied `terrain.wgsl`'s own lanes into its binding 110. A
+  shader may name the START of a buffer and stop, which is what it does
+  now, and a struct that grows past its buffer fails the pipeline rather
+  than reading rubbish.
+
+**One material, two entry points.** `Tier` is a `MaterialExtension` whose
+`specialize` sets `descriptor.vertex.entry_point` off its own bind group
+data, so the two tiers differ in exactly one thing: which entry point of
+`tiers.wgsl` makes their vertices. Its bindings 100 to 106 are
+`terrain::Terrain`'s to the field, because the fragment shader IS
+`terrain.wgsl`, and a bind group layout is what a shader is compiled
+against: if the two ever drift the pipeline fails to build rather than
+drawing something wrong. Neither tier is in the depth prepass or the
+shadow pass, because both of those draw with Bevy's own vertex shader and
+would draw the undisplaced counting mesh: a depth buffer of a point at the
+origin and a shadow map of nothing. Putting them back means transcribing
+the prepass vertex stage too, and that is what it will take.
+
+**The sea is COLUMNS inside the disc and a sheet past it**, which is the
+owner's ask: "hex based water similar to what we have in tenebris, so we
+can have voxel water". A tile whose ground stands under the sea's level
+gets a prism of water on it, flat at that level, with the ground tier's
+own skirt hanging below, so a shore is a wall of water down to the beach
+and a puddle in a hollow is the tiles of that hollow and no others. Past
+the disc the sheet rides the same Planet-LOD leaves the far ground tier
+does, at the sea's radius instead of the ground's and with the same hole
+cut in it. A sub triangle whose three corners all stand on ground above
+the sea is not drawn, and that is where a coastline comes from. One
+material, one extension, two entry points, and the columns win the depth
+test where the two overlap for the reason the ground's own overlap has.
+
+**A column of water is FLAT and its ripples are the shader's**, which is
+what tenebris's water is and what the first cut was not. The sheet's swell
+is `water_lib.wgsl`'s, metres of wavelength, and a tile is a metre: asked
+at the tile's MIDDLE it ALIASES, every column came out at its own height,
+and the sea read as a field of cracked slabs. The swell stays on the sheet,
+where a leaf is wider than a wave, and is faded out toward the hole so the
+two seas meet at the rim without a step in them. The water's own COLUMN,
+which `water.wgsl` attenuates over, is one number for the whole prism
+rather than a corner's: a column of water is as deep as its tile and not
+as deep as the slope under its corner. The fragment shader is `water.wgsl` unchanged, tenebris's
+own. What differs is where the THICKNESS comes from: the tiers are not in
+the depth prepass at all (Bevy's own vertex stage would draw their
+counting mesh), and a depth buffer measures to whatever is behind, which
+at a shore is the beach BESIDE the water rather than the floor under it.
+The sea's vertex stage knows the water's own column (`sea - ground(dir)`)
+and hands it down, and the fragment turns it into a path length by how
+steeply the view leaves the surface; `WATER_COLUMN` is the define, and the
+prepass path is still there for the dual contoured sheet. `water_lib.wgsl`
+is the swell and its gradient noise lifted out of `water.wgsl`, because
+two things raise a sea surface now and a swell written twice is a sheet
+that would meet itself at a step.
+
+**The far tier shades on the FIELD's own gradient, not on its face.** A
+leaf cut four ways is a metre of ground at the feet and a kilometre at the
+horizon, and a face normal made every one of them a facet. The gradient is
+continuous and is measured over the sub triangle's OWN size, so the ground
+is smooth at every distance and the sub triangles stop showing.
+
+**The bump maps are worn out with distance**, 25 m to 140 m on the ground
+and 30 m to 160 m on the sea's ripples. A bump map is detail at the size
+of its own tile, two metres on the ground, and past a few dozen metres a
+tile is under a pixel: what it adds there is not detail, it is the noise
+left over once the mip chain has done albedo's share. The owner asked for
+this off a picture of a hillside that read as static.
+
+**The hex tier wins the depth test where the two overlap** (`HEX_BIAS`),
+because the overlap exists so the columns cover the far tier and not the
+other way about.
+
+**A tier hands its height over the sea DOWN as a varying** (`TIER_HEIGHT`
+in `terrain.wgsl`), rather than letting the fragment work it out from its
+own position. `terrain.wgsl` picks sand or grass off a band a metre and a
+half wide, and a fragment's position is INTERPOLATED across its triangle,
+which on a far leaf is a CHORD: from four radii up the whole planet is 44
+leaves, a sub triangle is 75 km across, and a 75 km chord on a thousand
+kilometre sphere sags 703 m under it against a sea 400 m down. So the
+middle of every sub triangle read as UNDER the sea and the continents came
+out sand, while the sea itself, which is clipped on the true field at the
+corners, stayed exactly where it belonged: a planet of beaches with
+oceans in the right places. A height interpolated between three corners
+has no sphere in it to sag. The dual contoured world keeps the length,
+because a chunk's triangles are metres across and their position IS the
+surface, so there the varying would cost something and buy nothing.
+
+**The walker stands on a COLUMN, and nothing about the walker changed.**
+The owner's ask was that walking respect the hexagons, "a rigid collision
+system where I snap to the hex surface instead of some curved
+interpolation". The smooth field is what `tiers.wgsl` DISPLACES a column
+by and not what it draws: a column's top is flat at its middle's height
+and its sides are vertical, so a walker on the smooth field floats over a
+tile's low corner, sinks into its high one, and walks through a step
+between two tiles as though it were not there. `columns.rs` is that
+picture as a DENSITY, and the walker's ground, ceiling, wall and stand
+rules are the same functions reading the same trait, because "the picture
+is the collider" is a rule about the FIELD and not about the mesher.
+`World::underfoot` is the one place the two worlds are told apart, and
+`walk.rs` does not know which it got.
+
+What the field answers is the way OUT and not the drop to the top, which
+is what makes a step a wall: the walker pushes out along the gradient by
+the density over the slope, so a field that only measured the drop would
+push a body pressed against a step four centimetres a pass (the gradient's
+own step) and leave it standing in the rock. Inside a column the answer is
+the least of the drop to its top and the distance sideways through any
+face whose neighbour's top is UNDER this height, and the cheap half of
+that test comes first, so a body standing on a top, where the depth is
+nought, never asks the field about its six neighbours at all. A tile's
+boundary is taken as the perpendicular bisector of the two middles, which
+is the Voronoi edge, where the mesh's corner is the CENTROID of the three
+middles round it: on a lattice this close to equilateral the two are the
+same point to well under a tile.
+
+**And on this planet a hex world has no walls in it at all, which is
+measured rather than assumed** (`columns::sizes::the_steepest_step_between_two_tiles`).
+A fractal's slope is about `4 * relief * octaves / (2 pi R / lumps)`
+whatever the tile size, so whether two neighbouring tiles differ by more
+than the walker's 0.6 m stride is a property of the RELIEF: at one metre
+tiles the steepest step between neighbours is 0.24 m and the mean 0.06,
+at half a metre 0.12 and 0.03, and at four metres 0.95 and 0.22. So the
+harness at one metre tiles is a staircase a walker climbs without ever
+stopping, and a wall arrives when the tiles are four metres or the relief
+is steeper. `--walk N` drives the walker forward N frames at a fixed
+sixtieth and says how far it has come and how far the feet ever stood off
+the ground, because a headless run has nobody to press W.
+
+**Building on the hex world is raising a COLUMN, and there is nothing to
+remesh.** The dual contoured builder cuts shapes out of a field; a hex
+world has no shape to cut, because what a column stands at IS the ground.
+So `stack.rs` in the core is the whole of what is built: how much higher
+than the relief a tile's column stands, a tile at a time, as sorted pairs
+of a key and a height with a binary search over them, which is this
+project's rule for anything replayed rather than a `HashMap`. A key is
+`face * (n+1)^2 + i * (n+1) + j`, which at one metre tiles on a thousand
+kilometre planet is under 3 * 10^13 and well inside a `u64`, and a tile
+back at nought is REMOVED, so an edit taken back leaves the store as it
+was found and two worlds built to the same shape are the same list.
+
+**One store, read by the walker and by the shader.** `columns::Columns::top`
+adds it to the relief, so the walker stands on what was built the frame it
+lands; `tiers::send_raised` fills the window at binding 112 that the `hex`
+and `hexsea` entry points index with the tile number they have already
+worked out, so the picture is the same number. Nothing is remeshed and
+nothing is streamed, which is the one thing a hex world is plainly better
+at than a field: a dual contoured edit dirties eight chunks and costs 30 to
+39 ms of contouring, and this costs a write of one `f32`. The window is
+filled from the STACKS rather than by walking it, because a window is a few
+thousand tiles and what is built is a handful: `hex::Grid::steps` is
+`basis` INVERTED, so a built tile is asked where it sits in the window and
+written there if it sits in it at all. It is refilled when the anchor moves
+or an edit lands and not once a frame, and a tile that is built and missed
+the window says so, because that would be an edit the walker stands on and
+the picture has not got.
+
+`raise.rs` is the harness: B arms it, the left button raises the tiles under
+the crosshair by `SNAP` (half a metre), the right lowers them, `[` and `]`
+pick the brush (a tile, seven, nineteen: rings walked off the grid and
+never a list of the planet), and Z takes the last patch back whole. The
+crosshair is the dual contoured builder's own `aim`, marching the field the
+walker walks, so the tile it picks is the tile the picture has.
+
+**A mesa re-aimed at grows TOWARD the eye, and that is what made the first
+picture a picture of nothing.** `--sculpt` re-aimed between each of its
+eight clicks, so the crosshair walked down its own new near face a tile a
+click: it raised 39 tiles where the brush covers 19, every one of them
+within two tiles of the anchor, the last click landed on the tile under the
+feet, the walker rode up on it, and the shot came back with the ground at
+eye level and no edit in it. The picture was the only thing that said so:
+the log said 39 tiles raised 4.0 m and the window said all 39 were in it,
+both true. It aims ONCE and raises that same patch now, which is what a
+player holding the crosshair on one tile does.
+
+**And a 1.5 m wall two metres from an eye 1.7 m up is a wall and not a
+picture.** At eight clicks the mesa's face filled the frame edge to edge;
+at three the eye sees over its top and the top is edge on, which is a thin
+strip. So `--sculpt` works from the fly camera too, where `--eye` and
+`--look` aim the crosshair and the picture is taken from wherever the patch
+reads. The walker is still what proves it: a patch of nineteen tiles raised
+1.5 m four metres ahead stops the walker 1.11 m along, which is its near
+face 1.5 m out less a body of 35 cm, and the walker never gets onto it
+because 1.5 m is well over a 0.6 m stride
+(`a_patch_raised_a_metre_and_a_half_ahead_is_a_wall_the_walker_stops_at`).
+A tile raised UNDER the feet carries the walker up with it in one frame
+(`a_tile_raised_under_the_feet_carries_the_walker_up_with_it`), which is
+the same claim from the other side: the store the shader reads is the field
+the walker walks.
+
+**A town on the hex world is a levelled site and columns, and neither is a
+brush.** The dual contoured world's cities are recipes of signed distance
+brushes cut into the ground's own field; a column world has nothing to cut,
+because a wall, a floor, a lintel and a step are all the same thing there,
+a run of blocks in a column, which is tenebris's rule and the hex mockup's.
+So the same `town::plan` puts the towns on the planet for both worlds, and
+what differs is what happens after:
+
+- **The SITE is in the shader now**, which is the thing this file used to
+  name as the gap. `field.wgsl` owns binding 113, two lanes a site, and its
+  `surface` applies them exactly as `Planet::surface` does, so a levelled
+  plateau is in the picture and in the walker's field at once and
+  `ground_normal` shades a town flat rather than as the hill it replaced.
+  A site's DIRECTION goes up as an OFFSET from the tier's anchor,
+  differenced in f64 like every other vertex here, because the weight is a
+  function of how far a point is from the site's middle and that distance
+  is metres: `acos(dot(dir, site))` in `f32` near one resolves 3.5e-4
+  radians, which on a thousand kilometre planet is 346 m, so a town 80 m
+  across would fall inside ONE STEP of the arithmetic. The two skirt arcs
+  come up precomputed off the core's own `field::site_band`, so the pair of
+  constants is written once.
+- **A building is `grow.rs`**: a lot's ring of tiles raised to its parapet
+  and tagged concrete, its inside left at the town's level, a gap in the
+  street wall where the door is, and a street tagged and not raised at all,
+  which is the whole reason `Stacks` holds a tile that stands at nought.
+  A tile is classified by where its own MIDDLE stands in the town's frame
+  (`grow::where_in`, the inverse of `lot_frame` to the small angle) and
+  never by which sampled rectangles it turned up in: the first cut took the
+  ring as the footprint's tiles less the room's, and a walk at half a tile
+  puts a tile that straddles the line in BOTH sets, so every one of them
+  was dropped and the wall came out with holes wherever it was under two
+  tiles thick, which at `WALL` on this grid is everywhere.
+- **The store carries a MATERIAL as well as a height**, because a street is
+  a tag with no rise and a wall is both. `Stacks` is sorted pairs of a key
+  with the two, a tile is removed when it carries neither, and the window
+  at binding 112 is a `vec2` a tile: the rise in x and the material in y.
+  A tier's mesh is a vertex COUNT and has no vertex colours, so the
+  material rides the same varying the height over the sea does, and every
+  vertex of one of its triangles carries the same number, which makes the
+  interpolation a constant and `terrain.wgsl`'s own half unit test never
+  sees a value between two materials.
+- **The far tier draws no buildings**, and that is not a defect to hide: a
+  column raised on a tile is only ever drawn where the tiles are, so past
+  the hex disc a town is its levelled plateau and nothing more. That is the
+  dual contoured world's massing rule arrived at from the other side, and
+  it is why the disc's own span is what decides how much of a city is in a
+  picture.
+
+**What is still to build on the tiers, named so the gap is visible:**
+FLOORS, because a column has one top and a storey over a storey is not a
+thing one can hold (the hex mockup gave every tile a list of RUNS, which is
+a change to the store rather than to the growing), lamps, an EXPORT of what
+was built, the shadow and prepass stages, and the twelve pentagons.
+
+Measured on the harness, which is the 1,000 km planet: one metre tiles
+(12,257,789,082,012 round it), a disc of 48 tiles and 48 m, 9,409 prisms
+of 150,544 triangles; Planet-LOD at ratio 6 cut 4 ways, which is ratio 24
+of detail for the cost of selecting at 6. From the ground 8,120 leaves in
+1.2 to 1.7 ms and 129,920 triangles, from 30 km up 2,100 and 33,600, and
+from four radii up the whole planet is 44 leaves and 704 triangles with no
+streaming and no seam. A frame on lavapipe is seconds and nearly all of it
+is the field in the vertex stage, which is a tenth of a millisecond of
+real silicon and most of four seconds of software rasteriser.
+
+## The air is one march, and the sky is what lights the world
+
+`atmos.rs` is tenebris's `atmosphere.fs.glsl` in `f64`, which is a GPU Gems
+2 single scatter march under that: eight samples along the view ray, four
+out to the sun from each, Rayleigh and Mie with their own phase functions,
+and tenebris's two dusk terms (a glow along the sun and a band on the
+horizon). It is in the CORE rather than in a shader alone because the sky
+and the FOG have to agree and tenebris says why: the fog's colour is its
+own sky sampled at the horizon every frame (`atmos::horizon`, averaged
+over four bearings so a sun on one side does not glow behind the eye), so
+the two match at noon, at dusk and at night rather than by a pair of
+numbers somebody tuned to look alike. `atmos.wgsl` is the transcription
+the dome runs, named function for function; the one deliberate difference
+is that the GPU dithers the march by a hash of the pixel, because a fixed
+offset bands a gradient across a screen, and the CPU takes the middle of
+each step because it has no pixel and wants the same answer twice.
+
+**The sky LIGHTS the world.** `sky::bake_env` marches the same function
+into a 64 pixel cubemap at startup and the camera wears it as a
+`GeneratedEnvironmentMapLight`, so a face turned away from the sun is the
+colour of the air above it. The flat ambient is gone: what fills a shadow
+is the sky, and what is left under it is a floor so a face with no sky over
+it is the colour of the gap between two stars rather than a hole, which is
+swarm-demo's own lesson.
+
+**Ground fog POOLS.** The haze is measured at the MIDDLE of the view ray
+and is `pooled` times thicker down at the sea, falling off over `pool`
+metres, so a valley seen from a ridge is hazy and the ridge seen from the
+valley is not, and a distant range reads as distant. `Air::round(radius,
+relief)` is where tenebris's numbers are carried to another planet's size:
+the shell is a multiple of the radius already, and the fog's lengths are
+the GROUND's, so its density falls as the square root of the radius (how
+far an eye sees is `sqrt(2 R h)`) and how deep the air pools is the relief,
+because that is what the weather has to fill.
+
+**Three whites and a black, each a different mistake.**
+
+- **The sky drew BLACK**, because the march's nought to one answer was
+  multiplied by the camera's own exposure (5.75e-4) as though it were a
+  radiance. It is a SHARE, so it is scaled into candela (`atmos::NITS`,
+  1,400) first and then taken through the exposure beside everything else.
+- **The sky drew WHITE**, three times over. The Mie sum was collapsed to
+  one channel, so the haze lost the per wavelength attenuation the Rayleigh
+  sum has and washed the hue out. Tenebris's own last line is
+  `1 - exp(-x)`, which is right for a shader writing an eight bit buffer
+  and wrong here, because Bevy tone maps downstream and running BOTH
+  compresses every channel toward one at the same rate exactly where the
+  air is thickest: the horizon came out blue by a factor of 1.3 compressed
+  and 2.0 uncompressed, and 1.3 is a white sky. And tenebris's lengths are
+  shares of a three hundred metre planet, which is what `Air::round` is
+  for. The coefficients were then SWEPT (`atmos::sizes::sky_colours`
+  prints it) and taken at the setting where the zenith is blue by a factor
+  of two and a half and the horizon is still the pale band it ought to be.
+- **A BLACK sky, looking down from under the mean radius.** The march
+  skipped every sample under `Air::ground` on the reasoning that under the
+  planet's radius is inside the planet. It is not: the sea is four hundred
+  metres under the mean radius on this world, so a walker on a beach is
+  under it, and every sample of a ray that walker casts DOWNWARD is under
+  it too. All eight were skipped, the march came back nought with an alpha
+  of one, and the sky over a lit shore was pure black. It skips on
+  `Air::floor` now, which is the lowest the ground goes, and `alt`'s own
+  clamp already says that the air in a valley is the densest there is.
+  `an_eye_under_the_mean_radius_has_a_sky_when_it_looks_down` holds it.
+- **A dark stripe along the horizon**, which the owner's own eye would have
+  caught and a picture did. `Air::floor` is the answer and the field's own
+  doc comment is the long form: what stops a view ray going DOWN is the
+  lowest the real ground reaches and never the mean radius, because
+  wherever the terrain is lower than the mean the dome cut its ray short,
+  marched fifteen hundred metres of air instead of two hundred kilometres,
+  and drew a black band between the sky and the horizon that no terrain
+  covered. Measured on the thousand kilometre planet: 2.93 at four tenths
+  of a milliradian under the horizontal and 0.034 at eight, a factor of
+  eighty seven across two pixels. It is also the only conditioning the test
+  has, since in `f32` the difference of two squares at 10^12 is quantised
+  to 131 km^2, which at twelve metres over the mean radius is half a per
+  cent of the whole term and at eight kilometres over the floor is eight
+  millionths.
+
+**The dome is BEHIND everything, and how far behind is a function of where
+the eye is.** It rides the eye, is drawn inside out, writes no depth and is
+never culled, and its colour is a DIRECTION, so growing it costs nothing.
+A fixed five hundred kilometres was enough while the planet was ten
+kilometres across and is not at a thousand: from four radii up the eye is
+three thousand kilometres off, so the dome stood IN FRONT of the planet and
+painted it out, a pale blue disc with no ground in it at all. `dome_radius`
+is `(|eye| + top) * 2` now, which is the far limb of the shell with the
+margin doubled.
+
+**The sun stands over where the WORLD starts, not along a world axis.**
+`SUN_UP` (32 degrees over the local horizon) and `SUN_BEARING` (40 round
+from local north) are the numbers, and `sun_over` turns them into a world
+direction at the harness's own starting point. It was a fixed world
+vector whose comment claimed it stood "a little over the horizon at the
+harness's start", which is a thing a world vector cannot promise: it is
+true of one spot and the towns are placed by the ground. On the thousand
+kilometre planet the port came out 56 degrees into its own NIGHT and the
+picture of its main street was black with speckle, which reads as a
+shading defect and is a clock. It is measured from the WORLD's start and
+never from `--eye`, so two pictures from two places are lit alike and only
+the camera moved.
+
+**A frame cap, swarm-demo's.** `--fps`, 144 by default and nought to lift
+it: vsync is the MONITOR's cap and not a cap at all, and a scene this cheap
+to simulate draws at the refresh rate and holds the card at full clock for
+frames nobody asked for. It is a DEADLINE rather than a fixed sleep, so the
+cap does not drift, and a frame that has already overrun resyncs to now
+rather than running the next few flat out.
 
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
@@ -746,7 +1574,11 @@ time it was broken.
   says (measured), and puts them in `assets/textures/terrain`. `--check`
   re-exports and holds the committed maps within half a percent of pixels,
   a tolerance rather than `cmp` because a GPU render is not bit exact across
-  drivers. `tools/get_material_maker.sh` fetches the tool; it runs headless
+  drivers, and `tools/pngdiff.py` is what measures it: its `--max` left
+  the limit's own value in the positional list, so every call with one
+  exited on the usage text and the check reported every map as drifted,
+  which is a check that cannot pass reading as a check that always fails.
+  `tools/get_material_maker.sh` fetches the tool; it runs headless
   under Xvfb and lavapipe with the forward_plus renderer, and only that one:
   the mobile and GL renderers crash under lavapipe while this one exports
   cleanly, which took an afternoon to find and is written here so nobody
@@ -754,6 +1586,18 @@ time it was broken.
   plate, grass and concrete, all authored SHALLOW, because a normal map at
   full strength on a flat quad reads as gravel (swarm-demo runs its finishes
   at a fifth).
+- **Grass is hay.** The first grass graph was noise coloured green, and on
+  the ground it read as dots. The owner's brief was green hay with its
+  stems flattened on the ground, and the graph is that now: two fields of
+  strands, each an `fbm2` stretched fifty to one along one axis, the second
+  turned thirty four degrees from the first, made tileable, each warped by
+  a swirl so the hay lies in whorls, `scratches` over them for blades
+  standing proud, a height off the strands, straw and green colorized off
+  the same height and blended by a clump noise, the normal and the
+  occlusion off the height. Material Maker's `noise_anisotropic` node is
+  the obvious tool for a strand and it crashes the loader under lavapipe at
+  every setting tried, so the stretch is a transform on `fbm2`. It took
+  five bakes, and the tile was looked at before the planet was each time.
 - **Models are Blender's, or a generator's, never hand edited in a text
   editor.** A baked model is a `.blend` beside its glTF export in
   `assets/models/<thing>/`, metres, Y up, origin at the pivot the game will
@@ -777,17 +1621,30 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 39, the core
+cargo test -p freeport_core                       # 103, the core, about 4 s
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
+cargo clippy -p freeport_app                      # the app's count never rises: it is nought
 tools/bake_materials.sh --check                   # the maps match their graphs
 python3 tools/bundle_buildings.py --check         # the mockup's recipes match assets/buildings
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
-./target/release/freeport_app                     # a window: on foot at the site, the pad, the wall and the step in the baked sets; F flies, Tab wires, Esc frees the mouse
-./run.sh --test                                   # the core suite and the shape and recipe checks, then the build and the window; run.bat is the Windows twin, --shot out.png takes the picture below with no display
-./target/release/freeport_app --fly --sub 6 --wire --eye 9.5,41.6,0.5 --look 0,40.6,0 --shot join.png   # a picture, headless under xvfb-run with VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+./target/release/freeport_app                     # a window on the HEX world: a disc of columns round the eye and Planet-LOD past it, both made in the vertex stage; F flies, Tab wires, Esc frees the mouse
+./target/release/freeport_app --chunks            # the dual contoured world instead: on foot on a street of the port, B builds
+./run.sh --test                                   # the core suite and the shape and recipe checks, then the build and the window; run.bat is the Windows twin, --shot out.png takes a picture with no display
+# Every headless run below is under xvfb-run with
+# VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json, and `--span` and
+# `--octaves` are what a picture on a software rasteriser is bought down
+# with, since the field in the vertex stage is nearly all of a frame there.
+./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,1000012,-14 --look 0,1000012,60 --shot graze.png   # the horizon dead level, which is where the dark band was
+./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,1030000,0 --look 0,1000000,120000 --shot high.png  # 30 km up: the curve, the sea and the haze
+./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,4000000,0 --look 0,1000000,0 --shot orbit.png      # the whole planet in 44 leaves and 704 triangles
+./target/release/freeport_app --span 20 --octaves 14 --walk 600 --frames 620 --shot walked.png   # ten seconds of walking on the columns, the distance and the feet's own gap said every second
+./target/release/freeport_app --chunks --octaves 14 --levels 9 --frames 20 --shot chunks.png   # the dual contoured world on the same planet, on the port's main street
+./target/release/freeport_app --chunks --frames 50 --sculpt block --shot sculpt.png            # a block placed on the street once the ground has settled, and the chunks it remade
+./target/release/freeport_app --fly --span 20 --octaves 14 --sculpt tile --eye 0,999736,-8.5 --look 0,999731.3,-6 --frames 8 --shot tile-build.png   # a patch of nineteen tiles raised 1.5 m, from above: on foot the same patch is a wall two metres from the eye
+./target/release/freeport_app --span 48 --octaves 14 --frames 8 --shot hextown.png   # the port on the tiles: a levelled site, its streets tagged and its lots raised, the walker on a street of it
 ```
 
 The mockups are `docs/mockups/marching-cubes.html` and
@@ -806,31 +1663,127 @@ because a reader cannot tell which.
 A headless Bevy run needs a Vulkan device; on a box with no GPU that is
 `mesa-vulkan-drivers` for lavapipe and Xvfb, the same rig Material Maker
 bakes on here. Numbers from lavapipe are not GPU numbers and are for
-correctness and A/B only.
-
+correctness and A/B only: a frame of the port on it is most of a second,
+and one render at a time, because two share the four cores and both their
+settle times lie.
 ## Measure, then decide
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 39 tests in 0.27 s. A 6 m sphere on a 32^3 lattice at half
-  a metre marches to 5,288 triangles, a closed shell within 3% of the
-  sphere's area, and dual contours to one at both one level and two.
-- The harness's planetoid, in release: 96^3 cells of a metre, 1,283 of them
-  subdivided four ways under the site and 2 grown, 1,835 chunks with
-  triangles in them, 69,682 triangles of which 248 polygons are seams,
-  contoured in 836 ms of which 208 is the coarse samples, audited in 142 ms:
-  nought open edges, nought pinches, nought facing in, nought missing
-  corners, 21,154 m^2 of surface; the three sets decoded and stacked at
-  startup, 1024 a side, three layers each.
+- `freeport_core`: 103 tests in about 4 s. A 6 m sphere on a 32^3 lattice at
+  half a metre marches to 5,288 triangles, a closed shell within 3% of the
+  sphere's area, and dual contours to one at one level and across four.
+- The planet is 1,000,000 m of radius, two thousand kilometres across, with
+  8,000 m of relief on 18 octaves and the sea 400 m under the mean radius.
+- The two tiers on it: one metre hex tiles (12,257,789,082,012 round the
+  planet, which is why a tile is an address and never a list), a disc of 48
+  tiles, 9,409 prisms of 150,544 triangles; Planet-LOD at ratio 6 cut 4
+  ways picks 8,120 leaves in 1.2 to 1.7 ms from the ground and the vertex
+  stage makes 129,920 triangles of them, 2,100 and 33,600 from 30 km up,
+  and 44 leaves and 704 triangles for the whole planet from four radii. The
+  hex tier evaluates its field 48 times a prism where a compute pass would
+  do it once, which is the measured argument for moving it there the day
+  the count grows.
+- What a bigger planet costs the far tier, at ratio 6 from the ground
+  (`lod::sizes::the_cost_of_a_bigger_planet`): 4,147 leaves in 0.65 ms at
+  5 km, 6,035 at 50 km, 7,172 at 200 km and 8,396 in 0.71 ms at 1,000 km,
+  19 levels deep. A leaf count is an ANGLE's and not a length's, so the
+  planet grew two hundred times for a factor of two. `MOST_LEAVES` is
+  12,288 for it, half again over the worst measured, and a truncation says
+  so rather than leaving a hole in the ground.
+- What it costs instead is PRECISION and OCTAVES. A vertex at a thousand
+  kilometres is 6.5 cm out of place the naive way and 18 microns through
+  `pos::unit_offset`; `log2(2 pi R / lumps / 2 m)` is 18 octaves against
+  11 on a five kilometre world.
+- The hex world's steps, on the harness's planet
+  (`columns::sizes::the_steepest_step_between_two_tiles`): at one metre
+  tiles the steepest step between two neighbouring tiles is 0.24 m and the
+  mean 0.06, at half a metre 0.12 and 0.03, at four metres 0.95 and 0.22,
+  against the walker's own 0.6 m stride. So there is no WALL in a one metre
+  hex world on this relief, only a staircase, and the walker's feet stay
+  within half a millimetre of the column under them
+  (`--walk`, which drives the walker forward at a fixed sixtieth). A frame
+  of the walker on that world costs 0.1 ms and a sample of its field 1.7
+  microseconds (`columns::sizes::what_a_frame_of_the_walker_costs`), and
+  setting a walker down costs 7 ms, which is the scan from the top of the
+  band that `Walker::enter` does once.
+- The towns on the hex world: the same eight `town::plan` places, 175,912
+  tiles built on in 2.8 s at startup (the walls, the floors and the
+  streets), of which 7,475 fall inside a 48 m window at once. The cost is
+  `hex::Grid::at` once a sample and the walk is at half a tile, so it is
+  875,000 of those; walking the LATTICE rather than the rectangle is the
+  fix the day it is worth one. The whole of a town is paved, and that is
+  the PLAN rather than the growing: `PITCH` is `BLOCK` plus `STREET`
+  exactly, so every tile of a town is a lot or a street and the few blocks
+  left as plazas are the only grass in one.
+- The port from the air read as concrete islands in a blue void, and the
+  blue is the SEA, which is the picture being right rather than wrong. The
+  port is placed on a shore, its site levels 172 m of ground to 3.1 m over
+  the sea, and past the skirt the relief takes over: at 0.24 m of step
+  between neighbouring tiles the ground is twenty metres under the sea a
+  hundred metres out, so the town is a mesa on a shore with water round
+  three sides of it. A picture from sixteen metres up reads it as a shore;
+  one from thirty four reads it as a void, and the difference is the
+  angle the sheet is seen at.
+- The tile builder: a patch of nineteen tiles (two rings of the widest
+  brush) raised three clicks of half a metre, which is one write of an
+  `f32` a tile into the window at binding 112 and nothing remeshed, against
+  the dual contoured builder's eight dirty chunks and 30 to 39 ms of
+  contouring for one block. On foot that patch four metres ahead stops the
+  walker 1.11 m along, which is its near face 1.5 m out less a body of
+  35 cm, and it never climbs on, because 1.5 m is well over a 0.6 m stride;
+  a tile raised under the feet carries the walker up with it in one frame.
+  The first scripted edit re-aimed between its clicks and raised 39 tiles
+  where the brush covers 19, every one of them within two tiles of the
+  anchor, which is a mesa walking back to the eye.
+- The far tier's chord, at four radii up: 44 leaves over the planet, a sub
+  triangle 75 km across, and a 75 km chord on a 1,000 km sphere sags 703 m
+  under the sphere against a sea 400 m down, which is why a tier hands its
+  height over the sea down as a varying. 8.25% of the picture moved when it
+  did: sand continents to green ones on the same frame.
+- The dark band, as a picture rather than as a march: the same frame before
+  and after the floor, 0.361% of pixels over 8 of 255 and a worst of 232.
+- The sky under the horizon, measured on this planet with an eye 12 m up:
+  2.93 at four tenths of a milliradian under the horizontal and 0.034 at
+  eight with the ray stopped at the MEAN radius, a factor of 87 across two
+  pixels and a black stripe along the whole horizon; stopped at the lowest
+  the ground reaches it stays within a tenth of the horizontal's to sixteen
+  milliradians down.
+- `town::surface_radius` sphere traced on the field's own slope bound
+  rather than stepped a fixed half metre: 400 directions in 15 ms against
+  1,760 on the big planet and 9 against 15 on a five kilometre one, the
+  same answer to the last bit (nought of 400 differ). `town::plan` is 190
+  ms against 15 s, and 579 ms against 1.2 s on the small planet.
+- The dual contoured world, measured when the planet was 10 km, in release
+  on lavapipe: eleven levels of 0.25 m to 256 m cells, 2,245 to 2,521
+  chunks wanted of the rings' 5,632, the rest ruled rock or air without a
+  sample; 387,308 triangles from 70 m over the port and 807,367 on its main
+  street; 7.3 to 8.5 ms a chunk on three workers, 16 to 21 s of work,
+  settled in 17 s from the air and 56 to 77 s on the street, the difference
+  the frame rate of a software rasteriser drawing a city. An edit on that
+  street: a block dirties eight chunks, 30 to 39 ms of work to contour them
+  again, drawn 4.7 s later at that frame rate; the walker stands on it the
+  frame it lands.
+- The towns: eight planned in 190 ms (four thousand candidates on a golden
+  spiral, the port first), 699 buildings from eight recipes and 7,744 pieces
+  of street built in 14 to 20 ms, 2,132 lamps of which the nearest 48 are
+  lights. They plan on the thousand kilometre planet too, and 65 of the four
+  thousand candidates land in the 3 to 40 m band over the sea there against
+  3,676 on a five kilometre one, which is the margin a bigger planet leaves
+  and is worth watching if the relief grows again.
+- The sets: five on the ground (basalt, dunes, grass, concrete and hull
+  plate), at 1024 a side, three array textures of five layers, each layer
+  with an eleven level mip chain built at load.
 - The walker, headless in the core, on a 2 km ball: 8 to 10 m in two
   seconds walking and over 14 running, a jump to between 1.0 and 1.6 m
   landing inside 1.3 s, a 0.4 m kerb climbed, a 1.2 m wall stopping the
-  body 35 cm short, a diagonal walk sliding over 4 m along it, and a jump
-  under a lintel held to under 0.6 m.
+  body 35 cm short, a diagonal walk sliding over 4 m along it, a jump
+  under a lintel held to under 0.6 m, and the feet held 1.2 m under the sea.
 - The mockup's join, measured at every fine crossing on it: 622 of 6,542
   with the fine surface over a centimetre above the coarse, 139 with the
   coarse above the fine, by up to 7.5 cm; a pad on a slope makes those 850,
-  236 and 16 cm. A skirt hides the first and cannot close the second.
+  236 and 16 cm. A skirt hides the first and cannot close the second, which
+  is why the seam is a polygon rule in the core.
 - The cube sphere's corner to centre cell area ratio: 1.42 warped, 5.2
   plain, on a 16 by 16 grid.
 - The marching cubes mockup: a 64 m planet with a sea and three towns on a
@@ -851,42 +1804,33 @@ Numbers in the commit message. What is measured so far:
   up the ramp to floor one (3.39 m over the base) and the second to floor
   two (6.38 m), the page naming the recipe, the building and the floor at
   every stage, and never a fall through the opening over either ramp.
-- The towns in the field: 284 structures (twenty buildings, the streets in
-  pieces) in 33,466 coarse cells replaced by 0.22 m ones over 929 chunks,
-  dual contoured from 17.4 million samples into 885,862 triangles in 8.2 to
-  9.9 s over three runs
-  (marched, the same cells were 11.5 million samples, 908,807 triangles and
-  5.5 s: the crossings are bisected now, and a quad per crossing edge is
-  about as many triangles as marching cubes' one to five per cell), against
-  84,174 triangles and 0.9 s for the rest of the planet. The join between
-  the lattices: 9,404 vertices on it, 5 mm apart on average, 108 mm at the
-  worst. A sculpted slab remarches the eight chunks it touches or borders
-  in 335 ms and a cut doorway its eight in 545 ms, and the walker steps up
-  onto the slab (49 cm) or walks through the doorway into the house, the
-  same frame; taking both back is 859 ms. (A chunk's neighbours are remeshed
-  with it since border edges have one owner, which is why a slab that
-  touched one chunk now touches eight.) The fine mesh with its vertices welded by position: edges
-  shared by more than two triangles, which is where a quad is twisted
-  through a cell holding two surfaces, were 905 with one vertex a cell and
-  are 11 with one a surface, on 898,432 triangles, since a quad is one per
-  crossing edge either way; open edges off the skirt's rim, which are
-  holes, 7,093 before the chunks agreed on a shell cell's normal, 655
-  before a border edge had one owner, nought since, and one triangle in
-  898,432 facing into the rock, before and after a house is built. The
-  towns load in 13.0 s now against 9.9, the gradient at the middle of every
-  half quad being most of the difference.
-- The builder, headless: a 6 m pad of flat ground remarches 48 chunks in
-  1.4 s, a wall from two clicks 1.3 s, a room cut, a door and a lamp about
-  0.3 s each, and the walker walks up onto the pad and in through the door
-  the same frame; the export is one recipe of nine brushes at the site.
+- The towns in the mockup's field: 284 structures (twenty buildings, the
+  streets in pieces) in 33,466 coarse cells replaced by 0.22 m ones over
+  929 chunks, dual contoured from 17.4 million samples into 885,862
+  triangles in 8.2 to 9.9 s over three runs, against 84,174 triangles and
+  0.9 s for the rest of the planet. The join between the lattices: 9,404
+  vertices on it, 5 mm apart on average, 108 mm at the worst. A sculpted
+  slab remarches the eight chunks it touches or borders in 335 ms and a cut
+  doorway its eight in 545 ms, and the walker steps up onto the slab (49 cm)
+  or walks through the doorway into the house, the same frame; taking both
+  back is 859 ms. Welded by position, edges shared by more than two
+  triangles were 905 with one vertex a cell and are 11 with one a surface,
+  on 898,432 triangles; open edges off the skirt's rim 7,093 before the
+  chunks agreed on a shell cell's normal, 655 before a border edge had one
+  owner, nought since, and one triangle in 898,432 facing into the rock.
+- The builder in the mockup, headless: a 6 m pad of flat ground remarches 48
+  chunks in 1.4 s, a wall from two clicks 1.3 s, a room cut, a door and a
+  lamp about 0.3 s each, and the walker walks up onto the pad and in through
+  the door the same frame; the export is one recipe of nine brushes at the
+  site.
 - Material Maker under lavapipe: seven graphs, twenty eight maps at 2048,
   exported in about six minutes on four cores, and byte identical on a
-  re-export of the same graphs on the same machine (five sets unchanged when
-  two were added), so `--check`'s half a percent is slack for another driver
-  and not for this one. Handed a single graph the command line stalls, and
-  two of the new graphs' first settings (a voronoi with a stretch, a bricks
-  with no rounding) crashed it at load; every graph is on settings the
-  working ones already use, and the bake is always the whole set.
+  re-export of the same graphs on the same machine, so `--check`'s half a
+  percent is slack for another driver and not for this one. Handed a single
+  graph the command line stalls, and two of the new graphs' first settings
+  (a voronoi with a stretch, a bricks with no rounding) crashed it at load,
+  as `noise_anisotropic` does at any; every graph is on settings the working
+  ones already use, and the bake is always the whole set.
 - Tenebris, for scale: 300 m planets, 163,842 hex tiles a body, 21 MB of
   voxels and a 2.7 s full remesh, one flat 5 km detail cutoff and an impostor
   past it. Every number in that project's LOD is a number this one replaces,
