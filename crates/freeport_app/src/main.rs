@@ -103,9 +103,10 @@ pub(crate) struct Args {
     /// settled, so a headless run can photograph an edit and the chunks it
     /// remade.
     sculpt: Option<String>,
-    /// Draw the hex tiers rather than the dual contoured chunks: a disc of
-    /// Goldberg columns round the eye and Planet-LOD past it, both made in
-    /// the vertex stage.
+    /// Draw the hex tiers: a disc of Goldberg columns round the eye and
+    /// Planet-LOD past it, both made in the vertex stage. It is the
+    /// DEFAULT, because the hex world is what this harness is; `--chunks`
+    /// is how the dual contoured one is asked for.
     tiers: bool,
 }
 
@@ -119,7 +120,7 @@ fn parse_args() -> Args {
         shot: None,
         frames: 30,
         sculpt: None,
-        tiers: false,
+        tiers: true,
     };
     let mut it = std::env::args().skip(1);
     let vec3 = |s: &str| -> Option<DVec3> {
@@ -145,12 +146,18 @@ fn parse_args() -> Args {
             // The tiers are flown over: the walker stands on the dual
             // contoured field, and a hex column's ground is a question
             // `freeport_core::walker` has not been asked yet.
-            "--tiers" => {
-                args.tiers = true;
-                args.fly = true;
-            }
+            "--tiers" => args.tiers = true,
+            // The dual contoured world: chunks, a sea of its own, the
+            // towns and the builder, and the walker on foot in them.
+            "--chunks" => args.tiers = false,
             other => warn!("unknown argument {other}"),
         }
+    }
+    // The hex world is flown over: a hex column's ground is a question
+    // `freeport_core::walker` has not been asked yet, so there is nothing
+    // for the walker to stand on that agrees with the picture.
+    if args.tiers {
+        args.fly = true;
     }
     args
 }

@@ -17,6 +17,7 @@
     view_transformations::{position_world_to_clip, depth_ndc_to_view_z},
     prepass_utils::prepass_depth,
 }
+#import freeport::water::{fbm3, swell}
 
 struct Water {
     // The planet's centre in the render frame; w the sea's radius.
@@ -37,66 +38,19 @@ struct Water {
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> water: Water;
 
-fn gn_fade(t: f32) -> f32 {
-    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
-}
+// How far the ripples are worn out over, metres, which is `terrain.wgsl`'s
+// own bump fade on the other surface.
+const RIPPLE_NEAR: f32 = 30.0;
+const RIPPLE_FAR: f32 = 160.0;
 
-fn gn_hash(x: i32, y: i32, z: i32) -> u32 {
-    let h = (u32(x + 1073741824) * 374761393u) ^ (u32(y + 1073741824) * 668265263u) ^ (u32(z + 1073741824) * 1274126177u);
-    let g = (h ^ (h >> 13u)) * 1103515245u;
-    return g ^ (g >> 16u);
-}
-
-fn gn_grad(hash: u32, x: f32, y: f32, z: f32) -> f32 {
-    let h = hash & 15u;
-    let u = select(y, x, h < 8u);
-    var v: f32;
-    if (h < 4u) {
-        v = y;
-    } else {
-        v = select(z, x, h == 12u || h == 14u);
-    }
-    let a = select(u, -u, (h & 1u) != 0u);
-    let b = select(v, -v, (h & 2u) != 0u);
-    return a + b;
-}
-
-// Gradient noise, tenebris's gnoise3.
-fn gnoise3(p: vec3<f32>) -> f32 {
-    let f = floor(p);
-    let xi = i32(f.x);
-    let yi = i32(f.y);
-    let zi = i32(f.z);
-    let d = p - f;
-    let u = gn_fade(d.x);
-    let v = gn_fade(d.y);
-    let w = gn_fade(d.z);
-    let n000 = gn_grad(gn_hash(xi, yi, zi), d.x, d.y, d.z);
-    let n100 = gn_grad(gn_hash(xi + 1, yi, zi), d.x - 1.0, d.y, d.z);
-    let n010 = gn_grad(gn_hash(xi, yi + 1, zi), d.x, d.y - 1.0, d.z);
-    let n110 = gn_grad(gn_hash(xi + 1, yi + 1, zi), d.x - 1.0, d.y - 1.0, d.z);
-    let n001 = gn_grad(gn_hash(xi, yi, zi + 1), d.x, d.y, d.z - 1.0);
-    let n101 = gn_grad(gn_hash(xi + 1, yi, zi + 1), d.x - 1.0, d.y, d.z - 1.0);
-    let n011 = gn_grad(gn_hash(xi, yi + 1, zi + 1), d.x, d.y - 1.0, d.z - 1.0);
-    let n111 = gn_grad(gn_hash(xi + 1, yi + 1, zi + 1), d.x - 1.0, d.y - 1.0, d.z - 1.0);
-    return mix(
-        mix(mix(n000, n100, u), mix(n010, n110, u), v),
-        mix(mix(n001, n101, u), mix(n011, n111, u), v),
-        w,
-    );
-}
-
-// Three octaves drifting three ways, tenebris's fbm3.
-fn fbm3(p: vec3<f32>, t: f32) -> f32 {
-    var q = p * 0.9 + vec3(t * 0.35, t * 0.18, t * -0.42);
-    var h = gnoise3(q) * 0.5;
-    q = q * 2.1 + vec3(t * -0.22, t * 0.33, t * 0.17);
-    h += gnoise3(q) * 0.28;
-    q = q * 2.3 + vec3(t * 0.19, t * -0.27, t * 0.11);
-    h += gnoise3(q) * 0.15;
-    return h;
-}
-
+// The sheet over the dual contoured chunks, whose vertices ARE a mesh.
+// Guarded, because the hex world's sheet has no mesh to read: its vertex
+// stage is `tiers.wgsl`'s `sea` entry point and its counting mesh carries
+// a position and nothing else, so `Vertex` here would have no `normal` to
+// name. A module is compiled whole, entry points it will never run
+// included, so an entry point that cannot type check under a caller's
+// shader defs has to be absent under them.
+#ifdef VERTEX_NORMALS
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
@@ -104,12 +58,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var wp = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
     let q = wp.xyz - water.centre.xyz;
     let radial = normalize(q);
-    let t = globals.time * water.wave.x;
-    let f = water.deep.w;
-    let swell = (sin(t * 0.9 + q.x * 1.4 * f + q.z * 0.6 * f) * 0.18
-        + sin(t * 1.3 - q.x * 0.7 * f + q.z * 1.2 * f) * 0.12
-        + sin(t * 1.7 + q.x * 2.3 * f - q.z * 1.9 * f) * 0.06) * water.wave.w;
-    wp = vec4<f32>(wp.xyz + radial * swell, 1.0);
+    wp = vec4<f32>(wp.xyz + radial * swell(q, water.wave, water.deep.w, globals.time), 1.0);
     out.world_position = wp;
     out.position = position_world_to_clip(wp.xyz);
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
@@ -118,6 +67,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #endif
     return out;
 }
+#endif
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -138,7 +88,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if (steep > water.zenith.w) {
         bent = grad * (water.zenith.w / steep);
     }
-    let n = normalize(radial - bent * water.wave.z);
+    // The ripples are worn out with distance, as the ground's normal maps
+    // are and for the same reason: a ripple is detail at its own size, and
+    // past a hundred metres one is under a pixel, so what it adds is not
+    // a sheet of water, it is a sheet of NOISE. Faded, the far sea is the
+    // swell's own shape and the sky on it.
+    let away = length(in.world_position.xyz - view.world_position);
+    let near = 1.0 - smoothstep(RIPPLE_NEAR, RIPPLE_FAR, away);
+    let n = normalize(radial - bent * water.wave.z * near);
 
     var out: FragmentOutput;
     if (!is_front) {
@@ -150,14 +107,26 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         return out;
     }
 
-    // How much water the view ray crosses before the ground behind: the
-    // prepass holds the ground's depth, this fragment its own.
+    // How much water the view ray crosses before the ground behind.
+#ifdef WATER_COLUMN
+    // The hex world hands the water's own COLUMN under this vertex down in
+    // `uv.x` (`tiers.wgsl`, the `sea` entry point), because the field
+    // knows exactly how deep the sea is there. It is the better answer:
+    // the depth buffer measures to whatever is behind, which at a shore is
+    // the beach BESIDE the water rather than the floor under it, and the
+    // tiers are not in the depth prepass at all. The path through the
+    // water is that column over how steeply the view leaves the surface,
+    // and the view is clamped off the grazing angle where that diverges.
+    let to_eye = normalize(view.world_position - in.world_position.xyz);
+    let thickness = max(in.uv.x / max(dot(to_eye, radial), 0.2), 0.02);
+#else
 #ifdef DEPTH_PREPASS
     let scene_z = depth_ndc_to_view_z(prepass_depth(in.position, 0u));
     let here_z = depth_ndc_to_view_z(in.position.z);
     let thickness = max(here_z - scene_z, 0.02);
 #else
     let thickness = 2.0;
+#endif
 #endif
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
@@ -179,7 +148,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let foam = max(
         smoothstep(water.band.x, water.band.y, h) * 0.55,
         smoothstep(water.band.z, water.band.w, steep) * 0.26,
-    ) * water.foam.w;
+    ) * water.foam.w * near;
     color = vec4<f32>(mix(color.rgb, water.foam.rgb * view.exposure, foam), color.a);
 
     out.color = main_pass_post_lighting_processing(pbr_input, color);

@@ -63,9 +63,21 @@ impl MaterialExtension for WaterExt {
 
 pub struct WaterPlugin;
 
+/// A handle held so `water_lib.wgsl` is LOADED and not merely registered,
+/// which is what an import needs to resolve: a shader nobody has asked for
+/// is a pipeline Bevy retries in silence.
+#[derive(Resource)]
+struct WaterLib(#[allow(dead_code)] Handle<Shader>);
+
 impl Plugin for WaterPlugin {
     fn build(&self, app: &mut App) {
+        embedded_asset!(app, "water_lib.wgsl");
         embedded_asset!(app, "water.wgsl");
+        let lib = app
+            .world()
+            .resource::<AssetServer>()
+            .load("embedded://freeport_app/water_lib.wgsl");
+        app.insert_resource(WaterLib(lib));
         app.add_plugins(MaterialPlugin::<WaterMaterial>::default());
     }
 }
@@ -74,32 +86,45 @@ impl Plugin for WaterPlugin {
 #[derive(Component)]
 pub struct Sheet;
 
+/// The sheet's numbers, tenebris's `water.yaml`, in one place: the dual
+/// contoured sea and the hex world's both wear these, and neither spells
+/// them itself.
+pub fn sheet_ext(sea: f64) -> WaterExt {
+    WaterExt {
+        centre: Vec4::new(0.0, 0.0, 0.0, sea as f32),
+        wave: Vec4::new(0.75, 1.5, 0.65, 0.5),
+        deep: Vec4::new(0.02, 0.10, 0.22, 2.0),
+        horizon: Vec4::new(0.85, 0.92, 0.98, 0.5),
+        zenith: Vec4::new(0.35, 0.55, 0.85, 1.6),
+        foam: Vec4::new(0.95, 0.97, 1.0, 0.10),
+        band: Vec4::new(0.35, 0.60, 0.50, 1.20),
+    }
+}
+
+/// The standard material under the sheet, likewise shared: transmissive,
+/// smooth, and attenuating over the water it is looked through.
+pub fn sheet_base() -> StandardMaterial {
+    StandardMaterial {
+        base_color: Color::srgb(0.55, 0.8, 0.9),
+        perceptual_roughness: 0.06,
+        metallic: 0.0,
+        reflectance: 0.35,
+        specular_transmission: 0.92,
+        ior: 1.33,
+        thickness: 2.0,
+        attenuation_distance: 6.0,
+        attenuation_color: Color::srgb(0.02, 0.30, 0.45),
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    }
+}
+
 /// The sea's material, on tenebris's numbers: `sea` is its radius.
 pub fn water_material(materials: &mut Assets<WaterMaterial>, sea: f64) -> Handle<WaterMaterial> {
     materials.add(WaterMaterial {
-        base: StandardMaterial {
-            base_color: Color::srgb(0.55, 0.8, 0.9),
-            perceptual_roughness: 0.06,
-            metallic: 0.0,
-            reflectance: 0.35,
-            specular_transmission: 0.92,
-            ior: 1.33,
-            thickness: 2.0,
-            attenuation_distance: 6.0,
-            attenuation_color: Color::srgb(0.02, 0.30, 0.45),
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        },
-        extension: WaterExt {
-            centre: Vec4::new(0.0, 0.0, 0.0, sea as f32),
-            wave: Vec4::new(0.75, 1.5, 0.65, 0.5),
-            deep: Vec4::new(0.02, 0.10, 0.22, 2.0),
-            horizon: Vec4::new(0.85, 0.92, 0.98, 0.5),
-            zenith: Vec4::new(0.35, 0.55, 0.85, 1.6),
-            foam: Vec4::new(0.95, 0.97, 1.0, 0.10),
-            band: Vec4::new(0.35, 0.60, 0.50, 1.20),
-        },
+        base: sheet_base(),
+        extension: sheet_ext(sea),
     })
 }
 

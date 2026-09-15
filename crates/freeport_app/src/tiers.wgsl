@@ -24,9 +24,10 @@
 
 #import bevy_pbr::{
     forward_io::VertexOutput,
-    mesh_view_bindings::view,
+    mesh_view_bindings::{view, globals},
 }
 #import freeport::field
+#import freeport::water
 
 // What the tiers add to `terrain.wgsl`'s own bindings, which are the
 // hundreds and which this file never reads: the planet, where the eye
@@ -36,6 +37,13 @@
 // with a size in bytes and no name (880 against 80, which was this file
 // carrying the hundreds' fields as well).
 struct Tier {
+    // The planet's centre in the render frame.
+    centre: vec4<f32>,
+    // Where the hex disc's middle is, as a UNIT direction, w: the cosine
+    // of the angle the far tier's hole reaches. It is not the anchor
+    // below: an anchor is a point in its FACE's plane and is shorter than
+    // one, so it cannot be the axis of an angle.
+    disc: vec4<f32>,
     // x: mean radius, y: the sea's radius, z: the relief, w: the lumps.
     shape: vec4<f32>,
     // x: octaves, y: seed, z: pieces a leaf's edge is cut into, w: the hex
@@ -49,20 +57,19 @@ struct Tier {
     lat1: vec4<f32>,
     // Its second step, w: how many tiles the window reaches.
     lat2: vec4<f32>,
+    // The sheet's own two lanes, `water::WaterExt`'s `wave` and `deep`, so
+    // the sea tier lifts its vertices by the same swell the dual contoured
+    // sheet does. Nought on a ground tier, which never asks.
+    wave: vec4<f32>,
+    deep: vec4<f32>,
 }
 
-// The first lanes of `terrain.wgsl`'s own uniform, named here because the
-// vertex stage needs the planet's centre out of it. A shader may name the
-// START of a buffer and stop, so this is two lanes of a struct that is
-// fifty five, and a struct LONGER than its buffer is a pipeline wgpu
-// refuses outright with a size and no name, which is the guard on this
-// being spelled in two files.
-struct Ground {
-    params: vec4<f32>,
-    centre: vec4<f32>,
-}
-
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> ground: Ground;
+// Binding 100 is NOT named here, and that is deliberate: it is
+// `terrain.wgsl`'s uniform under the ground tiers and `water.wgsl`'s under
+// the sea, two different structs at one number, and a vertex shader shared
+// by all three cannot name either. The planet's centre this stage needs
+// therefore rides the tier's own lane, which costs one vec4 written twice
+// in `tiers::feed_tiers` and buys one vertex shader for three materials.
 @group(#{MATERIAL_BIND_GROUP}) @binding(110) var<uniform> tier: Tier;
 @group(#{MATERIAL_BIND_GROUP}) @binding(111) var<storage, read> leaves: array<vec4<f32>>;
 
@@ -96,7 +103,7 @@ fn nowhere(vertex: Vertex) -> VertexOutput {
 // A point of the ground in the render frame: the direction out, the field
 // along it, and the planet's centre.
 fn place(p: field::Planet, dir: vec3<f32>) -> vec3<f32> {
-    return dir * field::ground(p, dir) + ground.centre.xyz;
+    return dir * field::ground(p, dir) + tier.centre.xyz;
 }
 
 // One vertex, given where it is, the normal its triangle stands on and
@@ -140,6 +147,35 @@ fn leaf_dir(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, p: i32, q: i32, sub: i32) 
     return normalize(a * (f32(sub - p) / n) + b * (f32(p - q) / n) + c * (f32(q) / n));
 }
 
+// Which three lattice points of a leaf's sub triangle `s` is. Row `r`
+// holds `2r + 1` triangles, so the rows before it hold `r * r`: the row is
+// the square root and the rest is the place in it, an even one pointing
+// the leaf's way and an odd one the other. The root is mended either way,
+// because a float's root of a square is not always the square's own root.
+fn sub_triangle(s: i32, sub: i32) -> array<vec2<i32>, 3> {
+    var r = i32(sqrt(f32(s)));
+    if ((r + 1) * (r + 1) <= s) {
+        r = r + 1;
+    }
+    if (r * r > s) {
+        r = r - 1;
+    }
+    let m = s - r * r;
+    let j = m / 2;
+    if (m - j * 2 == 1) {
+        return array<vec2<i32>, 3>(
+            vec2<i32>(r, j),
+            vec2<i32>(r + 1, j + 1),
+            vec2<i32>(r, j + 1),
+        );
+    }
+    return array<vec2<i32>, 3>(
+        vec2<i32>(r, j),
+        vec2<i32>(r + 1, j),
+        vec2<i32>(r + 1, j + 1),
+    );
+}
+
 @vertex
 fn lod(vertex: Vertex) -> VertexOutput {
     let sub = max(i32(tier.counts.z), 1);
@@ -155,39 +191,90 @@ fn lod(vertex: Vertex) -> VertexOutput {
     let a = leaves[u32(leaf * 3)].xyz;
     let b = leaves[u32(leaf * 3 + 1)].xyz;
     let c = leaves[u32(leaf * 3 + 2)].xyz;
-    // Row `r` of the sub lattice holds `2r + 1` triangles, so the rows
-    // before it hold `r * r`: the row is the square root and the rest is
-    // the place in it, an even one pointing the leaf's way and an odd one
-    // the other. The square root is mended either way, because a float's
-    // root of a square is not always the square's own root.
-    var r = i32(sqrt(f32(s)));
-    if ((r + 1) * (r + 1) <= s) {
-        r = r + 1;
-    }
-    if (r * r > s) {
-        r = r - 1;
-    }
-    let m = s - r * r;
-    let j = m / 2;
-    var pq = array<vec2<i32>, 3>(
-        vec2<i32>(r, j),
-        vec2<i32>(r + 1, j),
-        vec2<i32>(r + 1, j + 1),
-    );
-    if (m - j * 2 == 1) {
-        pq = array<vec2<i32>, 3>(
-            vec2<i32>(r, j),
-            vec2<i32>(r + 1, j + 1),
-            vec2<i32>(r, j + 1),
-        );
-    }
+    let pq = sub_triangle(s, sub);
     let p = planet();
-    var at = array<vec3<f32>, 3>();
+    var dir = array<vec3<f32>, 3>();
     for (var k = 0; k < 3; k = k + 1) {
-        at[k] = place(p, leaf_dir(a, b, c, pq[k].x, pq[k].y, sub));
+        dir[k] = leaf_dir(a, b, c, pq[k].x, pq[k].y, sub);
     }
-    let up = normalize(at[0] + at[1] + at[2] - 3.0 * ground.centre.xyz);
-    return emit(vertex, at[corner], face_normal(at[0], at[1], at[2], up));
+    // The HOLE the hex disc stands in, cut here rather than by `select` on
+    // the CPU: a sub triangle wholly inside the disc is not drawn, which
+    // resolves the rim at the sub triangle's own size instead of a whole
+    // leaf's, and leaves the CPU one `select` a frame to serve both the
+    // ground and the sea.
+    if (dot(dir[0], tier.disc.xyz) > tier.disc.w
+        && dot(dir[1], tier.disc.xyz) > tier.disc.w
+        && dot(dir[2], tier.disc.xyz) > tier.disc.w) {
+        return nowhere(vertex);
+    }
+    // The normal is the FIELD's gradient at this vertex, not its
+    // triangle's face: a leaf cut four ways is a metre of ground at the
+    // feet and a kilometre at the horizon, and a face normal makes every
+    // one of them a facet. The gradient is continuous, so the ground is
+    // smooth at every distance and the sub triangles stop showing. It is
+    // measured over the sub triangle's OWN size, which is the leaf's edge
+    // over `sub`, so the normal is as coarse as the triangle carrying it
+    // and no coarser.
+    let step = length(a - b) * p.radius / f32(sub);
+    let d = dir[corner];
+    return emit(vertex, place(p, d), field::ground_normal(p, d, step));
+}
+
+// ---------------------------------------------------------------- the sea
+
+// The sheet is ONE surface for both tiers, because a sea is flat whatever
+// the ground under it is made of: it rides the same Planet-LOD leaves the
+// far tier does, at the sea's radius instead of the ground's, with no hole
+// cut in it, so it lies over the hex columns at a shore exactly as it lies
+// over the far tier's triangles. A sub triangle whose three corners all
+// stand on ground above the sea is not drawn, which is where a coastline
+// comes from.
+//
+// It carries the water's own COLUMN in `uv.x`, which is what
+// `water.wgsl` turns into the thickness Beer's law attenuates over: the
+// field knows how deep the sea is here, and that is a better answer than a
+// depth buffer, which measures to whatever is behind rather than to the
+// floor underneath.
+@vertex
+fn sea(vertex: Vertex) -> VertexOutput {
+    let sub = max(i32(tier.counts.z), 1);
+    let per = sub * sub;
+    let id = i32(vertex.position.x);
+    let leaf = id / (per * 3);
+    let rest = id - leaf * per * 3;
+    let s = rest / 3;
+    let corner = rest - s * 3;
+    if (leaf >= i32(tier.eye.w)) {
+        return nowhere(vertex);
+    }
+    let a = leaves[u32(leaf * 3)].xyz;
+    let b = leaves[u32(leaf * 3 + 1)].xyz;
+    let c = leaves[u32(leaf * 3 + 2)].xyz;
+    let pq = sub_triangle(s, sub);
+    let p = planet();
+    var depth = array<f32, 3>();
+    var dry = 0;
+    var dir = array<vec3<f32>, 3>();
+    for (var k = 0; k < 3; k = k + 1) {
+        dir[k] = leaf_dir(a, b, c, pq[k].x, pq[k].y, sub);
+        depth[k] = p.sea - field::ground(p, dir[k]);
+        if (depth[k] <= 0.0) {
+            dry = dry + 1;
+        }
+    }
+    if (dry == 3) {
+        return nowhere(vertex);
+    }
+    let d = dir[corner];
+    let q = d * p.sea;
+    // The swell is `water_lib.wgsl`'s, the same function the dual
+    // contoured sheet's vertex stage calls, so the two seas are one sea.
+    let lift = water::swell(q, tier.wave, tier.deep.w, globals.time);
+    var out = emit(vertex, q + d * lift + tier.centre.xyz, d);
+#ifdef VERTEX_UVS_A
+    out.uv = vec2<f32>(max(depth[corner], 0.0), 0.0);
+#endif
+    return out;
 }
 
 // ---------------------------------------------------------------- the near tier
@@ -260,7 +347,7 @@ fn hex(vertex: Vertex) -> VertexOutput {
         // The top, as a fan from the first corner.
         var idx = array<i32, 3>(0, tri + 1, tri + 2);
         let d = corner[idx[which]];
-        let world = d * top + ground.centre.xyz;
+        let world = d * top + tier.centre.xyz;
         return emit(vertex, world, mid);
     }
     // A side: the quad from one corner to the next, down to the skirt.
@@ -282,5 +369,5 @@ fn hex(vertex: Vertex) -> VertexOutput {
     if (dot(across, across) > 1.0e-12) {
         n = normalize(across);
     }
-    return emit(vertex, at[which] + ground.centre.xyz, n);
+    return emit(vertex, at[which] + tier.centre.xyz, n);
 }

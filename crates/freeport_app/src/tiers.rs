@@ -39,13 +39,14 @@ use bevy::pbr::{
 };
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
 };
 use bevy::render::storage::ShaderStorageBuffer;
 use bevy::shader::ShaderRef;
 use freeport_core::{hex, lod};
 
 pub type TierMaterial = ExtendedMaterial<StandardMaterial, Tier>;
+pub type SeaMaterial = ExtendedMaterial<StandardMaterial, SeaTier>;
 
 /// Which tier a material draws. It is the whole of the pipeline key,
 /// because the two tiers differ in exactly one thing: which entry point of
@@ -56,13 +57,62 @@ pub enum Which {
     #[default]
     Lod,
     Hex,
+    /// The sheet, which is neither tier and both: one surface at the sea's
+    /// radius over the far tier's leaves, with no hole cut in it, so it
+    /// lies over the hex columns at a shore exactly as it lies over the
+    /// far tier's triangles. A sea is flat whatever the ground under it is
+    /// made of.
+    Sea,
 }
 
-/// What the tiers' shaders are handed. Bindings 100 to 106 are
-/// `terrain::Terrain`'s to the field, because the fragment shader IS
-/// `terrain.wgsl` and a bind group layout is what a shader is compiled
-/// against: if the two ever drift, the pipeline fails to build rather than
-/// drawing something wrong.
+/// The lanes every tier's VERTEX stage reads, as one uniform at binding
+/// 110. It is a `ShaderType` of its own rather than eight fields on each
+/// material, because the sea wears `water.wgsl`'s bindings at 100 and the
+/// ground wears `terrain.wgsl`'s, so the two materials cannot be one type
+/// and their shared half must not be written twice: this is the half, in
+/// one place, and `tiers.wgsl`'s `Tier` struct is its transcription.
+#[derive(Clone, Copy, Debug, Default, Reflect, ShaderType)]
+pub struct Lanes {
+    /// The planet's centre in the render frame, w: the cosine of the angle
+    /// the hex disc reaches less its overlap, which is the hole the far
+    /// tier cuts in itself. The centre is here as well as in binding 100
+    /// because one vertex shader serves three materials and binding 100 is
+    /// a different struct under each, so it can name none of them.
+    pub at: Vec4,
+    /// Where the hex disc's middle is, as a UNIT direction, w: the cosine
+    /// of the angle the far tier's hole reaches. It is a lane of its own
+    /// rather than the anchor below, because the anchor is a point in its
+    /// FACE's plane and is shorter than one by up to a fifth: normalising
+    /// it to serve as the hole's axis shrank the hex window by that fifth,
+    /// the disc came out inside its own hole, and the seam was a band of
+    /// sky again. Two jobs, two lanes.
+    pub disc: Vec4,
+    /// x: mean radius, y: the sea's radius, z: peak to trough of the
+    /// relief, w: how many relief features fit round the planet.
+    pub shape: Vec4,
+    /// x: octaves of relief, y: the seed, z: how many pieces a leaf's edge
+    /// is cut into, w: tiles along an icosahedron edge, the hex grid's `n`.
+    pub counts: UVec4,
+    /// The hex anchor: the eye's own tile in its face's own plane, which
+    /// is `hex::Grid::basis`'s first answer, w: how many leaves of the
+    /// storage buffer are live.
+    pub eye: Vec4,
+    /// The lattice's first step off that anchor, w: how deep a column's
+    /// skirt hangs, metres.
+    pub lat1: Vec4,
+    /// Its second step, w: how many tiles the hex window reaches.
+    pub lat2: Vec4,
+    /// `water::WaterExt`'s `wave` and `deep`, so the sea tier lifts its
+    /// vertices by the same swell the dual contoured sheet does. Nought on
+    /// a ground tier, which never asks.
+    pub wave: Vec4,
+    pub deep: Vec4,
+}
+
+/// A GROUND tier: bindings 100 to 106 are `terrain::Terrain`'s to the
+/// field, because the fragment shader IS `terrain.wgsl` and a bind group
+/// layout is what a shader is compiled against: if the two ever drift, the
+/// pipeline fails to build rather than drawing something wrong.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[bind_group_data(Which)]
 pub struct Tier {
@@ -85,32 +135,89 @@ pub struct Tier {
     #[texture(105, dimension = "2d_array")]
     #[sampler(106)]
     pub orm: Handle<Image>,
-    /// x: mean radius, y: the sea's radius, z: peak to trough of the
-    /// relief, w: how many relief features fit round the planet.
     #[uniform(110)]
-    pub shape: Vec4,
-    /// x: octaves of relief, y: the seed, z: how many pieces a leaf's edge
-    /// is cut into, w: tiles along an icosahedron edge, which is the hex
-    /// grid's `n`.
-    #[uniform(110)]
-    pub counts: UVec4,
-    /// The hex anchor: the eye's own tile in its face's own plane, which
-    /// is `hex::Grid::basis`'s first answer, w: how many leaves of the
-    /// storage buffer are live.
-    #[uniform(110)]
-    pub eye: Vec4,
-    /// The lattice's first step off that anchor, w: how deep a column's
-    /// skirt hangs, metres.
-    #[uniform(110)]
-    pub lat1: Vec4,
-    /// Its second step, w: how many tiles the hex window reaches.
-    #[uniform(110)]
-    pub lat2: Vec4,
+    pub lanes: Lanes,
     /// Planet-LOD's leaves, three corners a triangle, as directions.
     #[storage(111, read_only)]
     pub leaves: Handle<ShaderStorageBuffer>,
     /// Which tier: the key, and never read by a shader.
     pub which: Which,
+}
+
+/// The SEA tier: binding 100 is `water::WaterExt`'s, because the fragment
+/// shader is `water.wgsl`, tenebris's own. The terrain's textures are not
+/// here because the sheet samples none of them, and the lanes at 110 are
+/// the same `Lanes` the ground tiers carry, so one vertex shader compiles
+/// against both layouts.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+#[bind_group_data(Which)]
+pub struct SeaTier {
+    #[uniform(100)]
+    pub centre: Vec4,
+    #[uniform(100)]
+    pub wave: Vec4,
+    #[uniform(100)]
+    pub deep: Vec4,
+    #[uniform(100)]
+    pub horizon: Vec4,
+    #[uniform(100)]
+    pub zenith: Vec4,
+    #[uniform(100)]
+    pub foam: Vec4,
+    #[uniform(100)]
+    pub band: Vec4,
+    #[uniform(110)]
+    pub lanes: Lanes,
+    #[storage(111, read_only)]
+    pub leaves: Handle<ShaderStorageBuffer>,
+    /// Always `Which::Sea`, and the key that picks the entry point.
+    pub which: Which,
+}
+
+impl From<&SeaTier> for Which {
+    fn from(tier: &SeaTier) -> Which {
+        tier.which
+    }
+}
+
+impl MaterialExtension for SeaTier {
+    fn vertex_shader() -> ShaderRef {
+        "embedded://freeport_app/tiers.wgsl".into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        "embedded://freeport_app/water.wgsl".into()
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<SeaTier>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.vertex.entry_point = Some("sea".into());
+        // The sheet carries the water's own COLUMN under each vertex in
+        // `uv.x` and `water.wgsl` reads it there, so both stages are told
+        // the varying exists. The mesh has no such attribute and does not
+        // need one: `VertexOutput` is what the define shapes, and what the
+        // vertex stage reads is still position alone.
+        let defs = ["VERTEX_UVS", "VERTEX_UVS_A", "WATER_COLUMN"];
+        for def in defs {
+            descriptor.vertex.shader_defs.push(def.into());
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push(def.into());
+            }
+        }
+        Ok(())
+    }
 }
 
 impl From<&Tier> for Which {
@@ -151,6 +258,7 @@ impl MaterialExtension for Tier {
             match key.bind_group_data {
                 Which::Lod => "lod",
                 Which::Hex => "hex",
+                Which::Sea => "sea",
             }
             .into(),
         );
@@ -178,7 +286,10 @@ impl Plugin for TiersPlugin {
             .resource::<AssetServer>()
             .load("embedded://freeport_app/field.wgsl");
         app.insert_resource(Field(field));
-        app.add_plugins(MaterialPlugin::<TierMaterial>::default());
+        app.add_plugins((
+            MaterialPlugin::<TierMaterial>::default(),
+            MaterialPlugin::<SeaMaterial>::default(),
+        ));
     }
 }
 
@@ -283,6 +394,9 @@ impl Tiers {
 const PRISM_VERTS: usize = 48;
 /// How many tiles of the near tier's disc the far tier is drawn under.
 const OVERLAP: f64 = 6.0;
+/// How far toward the eye the hex tier's depth is nudged, so the columns
+/// beat the far tier's surface wherever the two are drawn over one another.
+const HEX_BIAS: f32 = 2000.0;
 /// Leaves the far tier is built for. Planet-LOD at ratio 6 picks about
 /// three thousand from the ground and forty four from three radii up, so
 /// this is slack rather than a limit; it is not MORE slack than that
@@ -290,80 +404,54 @@ const OVERLAP: f64 = 6.0;
 /// the vertex stage far enough to work out it has nothing to say.
 const MOST_LEAVES: usize = 8_192;
 
+/// The asset stores the tiers write into, as one thing: a system that
+/// reaches for four of them is a system with four arguments, and the
+/// spawn and the feed both want the same four.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Store<'w> {
+    pub images: ResMut<'w, Assets<Image>>,
+    pub materials: ResMut<'w, Assets<TierMaterial>>,
+    pub seas: ResMut<'w, Assets<SeaMaterial>>,
+    pub buffers: ResMut<'w, Assets<ShaderStorageBuffer>>,
+}
+
 /// Both tiers, their meshes, their materials and the buffer the far tier's
 /// leaves ride in.
 #[derive(Resource)]
 pub struct Drawn {
     pub near: Handle<TierMaterial>,
     pub far: Handle<TierMaterial>,
+    pub sea: Handle<SeaMaterial>,
     pub leaves: Handle<ShaderStorageBuffer>,
 }
 
-/// The two entities and everything they need. `frames` is the towns'
-/// (there are none on a tier yet), `sea` the sea's radius.
+/// The three entities and everything they need: the two ground tiers and
+/// the sheet over them.
 pub fn spawn_tiers(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    images: &mut Assets<Image>,
-    materials: &mut Assets<TierMaterial>,
-    buffers: &mut Assets<ShaderStorageBuffer>,
+    assets: &mut Store,
     at: &Tiers,
 ) {
-    let maps = crate::terrain::terrain_maps(images);
-    let (ground_tile, concrete_tile) = crate::terrain::tiles();
-    let leaves = buffers.add(ShaderStorageBuffer::from(vec![
-        Vec4::ZERO;
-        at.most_leaves() * 3
-    ]));
-    let make = |which: Which| Tier {
-        params: Vec4::new(ground_tile, concrete_tile, 0.0, at.sea as f32),
-        centre: Vec4::ZERO,
-        frames: [Vec4::ZERO; FRAMES * 3],
-        albedo: maps[0].clone(),
-        normal: maps[1].clone(),
-        orm: maps[2].clone(),
-        shape: Vec4::new(
-            at.radius as f32,
-            at.sea as f32,
-            at.relief as f32,
-            at.lumps as f32,
-        ),
-        counts: UVec4::new(at.octaves, at.seed, at.sub, at.grid().n),
-        eye: Vec4::ZERO,
-        lat1: Vec4::new(0.0, 0.0, 0.0, at.skirt as f32),
-        lat2: Vec4::new(0.0, 0.0, 0.0, at.span as f32),
-        leaves: leaves.clone(),
-        which,
-    };
-    // Neither tier is culled by its winding: which way round a hexagon's
-    // corners come out depends on the handedness of the lattice basis it
-    // was stepped along, and a normal that points out is cheaper to
-    // guarantee than a winding that does.
-    let base = || StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 0.9,
-        cull_mode: None,
-        double_sided: true,
-        ..default()
-    };
-    let far = materials.add(ExtendedMaterial {
-        base: base(),
-        extension: make(Which::Lod),
-    });
-    let near = materials.add(ExtendedMaterial {
-        base: base(),
-        extension: make(Which::Hex),
-    });
+    let drawn = tier_materials(assets, at);
     spawn_tier(
         commands,
         meshes.add(counted_mesh(at.lod_verts())),
-        far.clone(),
+        drawn.far.clone(),
     );
     spawn_tier(
         commands,
         meshes.add(counted_mesh(at.hex_verts())),
-        near.clone(),
+        drawn.near.clone(),
     );
+    // The sheet rides the far tier's own leaves, so its mesh is the same
+    // size: the sea is drawn on the same triangles at a different radius.
+    commands.spawn((
+        Mesh3d(meshes.add(counted_mesh(at.lod_verts()))),
+        MeshMaterial3d(drawn.sea.clone()),
+        Transform::IDENTITY,
+        NoFrustumCulling,
+    ));
     info!(
         "tiers: hex at {:.2} m tiles ({} of them round the planet), a disc of {} tiles and {:.0} m, {} prisms of {} triangles; Planet-LOD at ratio {} cut {} ways, {} vertices",
         at.grid().spacing(at.radius),
@@ -376,7 +464,100 @@ pub fn spawn_tiers(
         at.sub,
         at.lod_verts(),
     );
-    commands.insert_resource(Drawn { near, far, leaves });
+    commands.insert_resource(drawn);
+}
+
+/// The three materials and the buffer their leaves ride in: two ground
+/// tiers wearing `terrain.wgsl` and the sheet wearing `water.wgsl`, all
+/// three reading one `Lanes` and one vertex shader.
+fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
+    let Store {
+        images,
+        materials,
+        seas,
+        buffers,
+    } = assets;
+    let maps = crate::terrain::terrain_maps(images);
+    let (ground_tile, concrete_tile) = crate::terrain::tiles();
+    let leaves = buffers.add(ShaderStorageBuffer::from(vec![
+        Vec4::ZERO;
+        at.most_leaves() * 3
+    ]));
+    let sheet = crate::water::sheet_ext(at.sea);
+    let lanes = Lanes {
+        at: Vec4::ZERO,
+        disc: Vec4::ZERO,
+        shape: Vec4::new(
+            at.radius as f32,
+            at.sea as f32,
+            at.relief as f32,
+            at.lumps as f32,
+        ),
+        counts: UVec4::new(at.octaves, at.seed, at.sub, at.grid().n),
+        eye: Vec4::ZERO,
+        lat1: Vec4::new(0.0, 0.0, 0.0, at.skirt as f32),
+        lat2: Vec4::new(0.0, 0.0, 0.0, at.span as f32),
+        wave: sheet.wave,
+        deep: sheet.deep,
+    };
+    let make = |which: Which| Tier {
+        params: Vec4::new(ground_tile, concrete_tile, 0.0, at.sea as f32),
+        centre: Vec4::ZERO,
+        frames: [Vec4::ZERO; FRAMES * 3],
+        albedo: maps[0].clone(),
+        normal: maps[1].clone(),
+        orm: maps[2].clone(),
+        lanes,
+        leaves: leaves.clone(),
+        which,
+    };
+    // Neither tier is culled by its winding: which way round a hexagon's
+    // corners come out depends on the handedness of the lattice basis it
+    // was stepped along, and a normal that points out is cheaper to
+    // guarantee than a winding that does.
+    let base = |bias: f32| StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.9,
+        cull_mode: None,
+        double_sided: true,
+        depth_bias: bias,
+        ..default()
+    };
+    let far = materials.add(ExtendedMaterial {
+        base: base(0.0),
+        extension: make(Which::Lod),
+    });
+    // Where the two ground tiers overlap they carry the same height
+    // differently, so which one a pixel gets is a coin toss on a half
+    // metre: the columns must win it every time, or the far tier's
+    // smooth surface pokes through the terraces along the whole rim.
+    // `HEX_BIAS` is what settles it, in the depth test rather than in
+    // the geometry, so nothing has to be moved to say it.
+    let near = materials.add(ExtendedMaterial {
+        base: base(HEX_BIAS),
+        extension: make(Which::Hex),
+    });
+    let sea = seas.add(ExtendedMaterial {
+        base: crate::water::sheet_base(),
+        extension: SeaTier {
+            centre: sheet.centre,
+            wave: sheet.wave,
+            deep: sheet.deep,
+            horizon: sheet.horizon,
+            zenith: sheet.zenith,
+            foam: sheet.foam,
+            band: sheet.band,
+            lanes,
+            leaves: leaves.clone(),
+            which: Which::Sea,
+        },
+    });
+    Drawn {
+        near,
+        far,
+        sea,
+        leaves,
+    }
 }
 
 /// Every frame: where the eye is, which tile it stands on, and which
@@ -387,8 +568,7 @@ pub fn feed_tiers(
     frame: Res<crate::stream::Frame>,
     at: Res<Tiers>,
     drawn: Res<Drawn>,
-    mut materials: ResMut<Assets<TierMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut assets: Store,
     mut said: Local<usize>,
 ) {
     let clock = std::time::Instant::now();
@@ -397,15 +577,18 @@ pub fn feed_tiers(
     let dir = here.normalize_or(DVec3::Z);
     let grid = at.grid();
     let (anchor, e1, e2) = grid.basis(grid.at(dir));
-    // The far tier's hole is the near tier's disc less `OVERLAP` tiles, so
-    // the two OVERLAP at the rim rather than meeting there. A tile of
+    // `select` is asked for the WHOLE planet, with no hole: the far tier
+    // cuts its own in the shader, a sub triangle at a time, and the sea
+    // rides the very same leaves with no hole at all. One walk a frame
+    // serves all three.
+    //
+    // The hole is the near tier's disc less `OVERLAP` tiles, so the two
+    // ground tiers OVERLAP at the rim rather than meeting there. A tile of
     // overlap was not enough and the picture said so: at a grazing angle
-    // the rim was a band of SKY, because the two tiers carry the same
-    // height differently (a column's top is flat at its middle's height, a
-    // leaf's is linear between its corners) and where the far tier stood
-    // higher the line of sight went under it, over the ground behind and
-    // out. Metres of overlap cost a few hundred triangles drawn under the
-    // columns and close it for good.
+    // the rim was a band of SKY, because the two carry the same height
+    // differently (a column's top is flat at its middle's height, a leaf's
+    // is linear between its corners) and where the far tier stood higher
+    // the line of sight went under it, over the ground behind and out.
     let hole = (at.disc() - OVERLAP * grid.spacing(at.radius) / at.radius).cos();
     let picked = lod::select(
         here,
@@ -415,11 +598,11 @@ pub fn feed_tiers(
             detail: 0.0,
             cull: true,
         },
-        hole,
+        0.0,
         dir,
     );
     let live = picked.len().min(at.most_leaves());
-    if let Some(buffer) = buffers.get_mut(&drawn.leaves) {
+    if let Some(buffer) = assets.buffers.get_mut(&drawn.leaves) {
         let mut data: Vec<Vec4> = Vec::with_capacity(live * 3);
         for tri in picked.iter().take(live) {
             for corner in tri {
@@ -440,13 +623,25 @@ pub fn feed_tiers(
         );
         *said = live;
     }
-    for (handle, count) in [(&drawn.far, live), (&drawn.near, 0)] {
-        if let Some(m) = materials.get_mut(handle) {
+    // The anchor doubles as the hex disc's own middle, which is what the
+    // far tier measures its hole against, so the near tier and the hole
+    // are one direction and never two.
+    let step = |count: usize, lanes: &mut Lanes| {
+        lanes.at = centre.extend(0.0);
+        lanes.disc = dir.as_vec3().extend(hole as f32);
+        lanes.eye = anchor.as_vec3().extend(count as f32);
+        lanes.lat1 = e1.as_vec3().extend(at.skirt as f32);
+        lanes.lat2 = e2.as_vec3().extend(at.span as f32);
+    };
+    for handle in [&drawn.far, &drawn.near] {
+        if let Some(m) = assets.materials.get_mut(handle) {
             m.extension.centre = centre.extend(0.0);
-            m.extension.eye = anchor.as_vec3().extend(count as f32);
-            m.extension.lat1 = e1.as_vec3().extend(at.skirt as f32);
-            m.extension.lat2 = e2.as_vec3().extend(at.span as f32);
+            step(live, &mut m.extension.lanes);
         }
+    }
+    if let Some(m) = assets.seas.get_mut(&drawn.sea) {
+        m.extension.centre = centre.extend(m.extension.centre.w);
+        step(live, &mut m.extension.lanes);
     }
 }
 
@@ -454,17 +649,8 @@ pub fn feed_tiers(
 pub fn spawn_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<TierMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut assets: Store,
     at: Res<Tiers>,
 ) {
-    spawn_tiers(
-        &mut commands,
-        &mut meshes,
-        &mut images,
-        &mut materials,
-        &mut buffers,
-        &at,
-    );
+    spawn_tiers(&mut commands, &mut meshes, &mut assets, &at);
 }

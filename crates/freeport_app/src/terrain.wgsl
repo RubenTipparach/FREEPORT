@@ -10,6 +10,7 @@
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
+    mesh_view_bindings::view,
 }
 
 // How many town frames the array can hold, `terrain::FRAMES`.
@@ -47,6 +48,16 @@ const L_PLATE: i32 = 4;
 // metres. The mockup's numbers, which is a beach a walker wades out of.
 const SAND_TO: f32 = 1.3;
 const GRASS_FROM: f32 = 2.8;
+
+// How far the normal maps are worn out over, metres: full strength under
+// the first and gone past the second. A bump map is detail at the size of
+// its own tile, two metres on the ground, and past a few dozen metres a
+// tile is under a pixel: what it adds there is not detail, it is NOISE,
+// and it is the noise that is left once the mip chain has done albedo's
+// share. Faded out, the far ground is shaded by its own shape alone,
+// which is what the eye expects of a hillside a hundred metres off.
+const BUMP_NEAR: f32 = 25.0;
+const BUMP_FAR: f32 = 140.0;
 
 // The materials, as `freeport_core::field` numbers them.
 const M_TERRAIN: f32 = 0.0;
@@ -208,6 +219,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         + vec3<f32>(0.9, 0.8, 0.6) * lit;
     orm = orm * mapped + vec3<f32>(1.0, 0.08, 0.0) * glass + vec3<f32>(1.0, 0.6, 0.0) * (lamp + lit);
     nm = normalize(nm * mapped + n * flat);
+    // Worn toward the surface's own normal with distance.
+    let away = length(in.world_position.xyz - view.world_position);
+    nm = normalize(mix(nm, n, smoothstep(BUMP_NEAR, BUMP_FAR, away)));
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     pbr_input.material.perceptual_roughness = orm.g;
     pbr_input.material.metallic = orm.b;
