@@ -9,7 +9,7 @@
 //! `CLAUDE.md` lays out, each behind its own mockup.
 //!
 //! ```text
-//! freeport_app [--sub N] [--wire] [--fly] [--eye x,y,z] [--look x,y,z]
+//! freeport_app [--planet field|hex] [--sub N] [--wire] [--fly] [--eye x,y,z] [--look x,y,z]
 //!              [--shot out.png] [--frames N]
 //! ```
 //!
@@ -18,9 +18,14 @@
 //! two, Tab toggles the wireframe. `--eye` is where to start (on foot, the
 //! spot under it) and `--look` what to face.
 
+mod args;
+mod hex_config;
+mod hex_mesh;
+mod hex_scene;
 mod terrain;
 mod walk;
 
+use args::{Args, PlanetKind};
 use bevy::camera::Exposure;
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::MouseMotion;
@@ -34,6 +39,8 @@ use freeport_core::dc::{contour, Coarse, DcMesh};
 use freeport_core::field::{Block, Built, Density, Planet};
 use freeport_core::lattice::{Lattice, CH};
 use freeport_core::walker::{Bounds, Walker};
+use hex_config::HexConfig;
+use hex_scene::{spawn_hex_world, stream_hex_patch, HexScene, HexSettings};
 use std::time::Instant;
 use terrain::{terrain_material, to_mesh, TerrainMaterial, TerrainPlugin};
 use walk::{place_camera, toggle_walk, walk, OnFoot, Stat};
@@ -57,56 +64,23 @@ pub(crate) const LOOK: f32 = 0.0022;
 const SPEED: f32 = 4.0;
 const SPRINT: f32 = 4.0;
 
-/// What the command line asked for.
-#[derive(Resource, Clone, Debug)]
-struct Args {
-    sub: usize,
-    wire: bool,
-    fly: bool,
-    eye: Option<Vec3>,
-    look: Option<Vec3>,
-    shot: Option<String>,
-    frames: u32,
-}
-
-fn parse_args() -> Args {
-    let mut args = Args {
-        sub: 4,
-        wire: false,
-        fly: false,
-        eye: None,
-        look: None,
-        shot: None,
-        frames: 30,
-    };
-    let mut it = std::env::args().skip(1);
-    let vec3 = |s: &str| -> Option<Vec3> {
-        let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-        (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
-    };
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--sub" => {
-                args.sub = it
-                    .next()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(4)
-                    .clamp(1, 8)
-            }
-            "--wire" => args.wire = true,
-            "--fly" => args.fly = true,
-            "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
-            "--look" => args.look = it.next().and_then(|v| vec3(&v)),
-            "--shot" => args.shot = it.next(),
-            "--frames" => args.frames = it.next().and_then(|v| v.parse().ok()).unwrap_or(30),
-            other => warn!("unknown argument {other}"),
-        }
-    }
-    args
-}
-
 fn main() {
-    let args = parse_args();
+    let args = match args::startup() {
+        Ok(Some(args)) => args,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("freeport: {error}");
+            std::process::exit(2);
+        }
+    };
+    let config = if args.planet == PlanetKind::Hex {
+        HexConfig::load().unwrap_or_else(|error| {
+            eprintln!("freeport: hex settings: {error}");
+            std::process::exit(2);
+        })
+    } else {
+        HexConfig::default()
+    };
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins((WireframePlugin::default(), TerrainPlugin))
@@ -114,8 +88,15 @@ fn main() {
             global: args.wire,
             default_color: Color::srgb(0.1, 0.1, 0.12),
         })
+        .insert_resource(HexSettings(config))
         .insert_resource(args)
-        .add_systems(Startup, spawn_world)
+        .add_systems(
+            Startup,
+            (
+                spawn_world.run_if(|args: Res<Args>| args.planet == PlanetKind::Field),
+                spawn_hex_world.run_if(|args: Res<Args>| args.planet == PlanetKind::Hex),
+            ),
+        )
         .add_systems(
             Update,
             (
@@ -123,6 +104,7 @@ fn main() {
                 toggle_walk,
                 walk,
                 fly,
+                stream_hex_patch.run_if(resource_exists::<HexScene>),
                 toggle_wireframe,
                 take_shot,
             )
@@ -177,14 +159,38 @@ pub(crate) struct Ground {
     pub planet: Planet,
     pub blocks: Vec<Block>,
     pub bounds: Bounds,
+    pub hex: Option<hex_mesh::HexGround>,
 }
 
 impl Ground {
+    pub fn label(&self) -> &'static str {
+        if self.hex.is_some() {
+            "Hex planet"
+        } else {
+            "Field planet"
+        }
+    }
+
     /// The same field the mesher contoured.
     pub fn field(&self) -> Built<'_> {
         Built {
-            ground: &self.planet,
+            ground: self,
             blocks: self.blocks.clone(),
+        }
+    }
+}
+
+impl Density for Ground {
+    fn at(&self, point: DVec3) -> f64 {
+        match &self.hex {
+            Some(surface) => {
+                let radius = point.length();
+                if radius < f64::EPSILON {
+                    return self.planet.radius;
+                }
+                surface.radius_at(&self.planet, point / radius) - radius
+            }
+            None => self.planet.at(point),
         }
     }
 }
@@ -230,6 +236,7 @@ fn world() -> Ground {
         planet,
         blocks,
         bounds,
+        hex: None,
     }
 }
 
@@ -314,6 +321,13 @@ fn spawn_world(
             Transform::from_translation(corner.as_vec3()),
         ));
     }
+    spawn_lighting(&mut commands);
+    spawn_status(&mut commands, ground.label());
+    spawn_camera(&mut commands, &ground, &args, top);
+    commands.insert_resource(ground);
+}
+
+fn spawn_lighting(commands: &mut Commands) {
     commands.spawn((
         DirectionalLight {
             illuminance: 6_000.0,
@@ -326,8 +340,13 @@ fn spawn_world(
         brightness: 60.0,
         ..default()
     });
+}
+
+fn spawn_status(commands: &mut Commands, planet: &str) {
     commands.spawn((
-        Text::new(""),
+        Text::new(format!(
+            "{planet}: flying   |   F walk, Tab wire, Esc mouse"
+        )),
         TextFont {
             font_size: 15.0,
             ..default()
@@ -341,8 +360,6 @@ fn spawn_world(
         },
         Stat,
     ));
-    spawn_camera(&mut commands, &ground, &args, top);
-    commands.insert_resource(ground);
 }
 
 /// The camera, flying from `--eye` toward `--look`, or on foot at the spot
@@ -372,7 +389,15 @@ fn spawn_camera(commands: &mut Commands, ground: &Ground, args: &Args, top: f64)
         place_camera(&w, &mut tf);
         commands.insert_resource(OnFoot(w));
     }
-    commands.spawn((Camera3d::default(), Exposure { ev100: 10.5 }, tf, fly));
+    let mut projection = PerspectiveProjection::default();
+    projection.far = projection.far.max((ground.bounds.top * 8.0) as f32);
+    commands.spawn((
+        Camera3d::default(),
+        Projection::Perspective(projection),
+        Exposure { ev100: 10.5 },
+        tf,
+        fly,
+    ));
 }
 
 /// Left click takes the mouse, Escape gives it back.
@@ -398,6 +423,7 @@ fn grab_mouse(
 /// taken, and the keys move it in its own frame.
 fn fly(
     mut controls: Controls,
+    ground: Res<Ground>,
     on_foot: Option<Res<OnFoot>>,
     mut cam: Query<(&mut Transform, &mut Fly)>,
 ) {
@@ -418,10 +444,15 @@ fn fly(
     v += tf.forward().as_vec3() * axis(KeyCode::KeyS, KeyCode::KeyW);
     v += tf.right().as_vec3() * axis(KeyCode::KeyA, KeyCode::KeyD);
     v += Vec3::Y * axis(KeyCode::KeyQ, KeyCode::KeyE);
+    let base_speed = ground
+        .hex
+        .as_ref()
+        .map(|h| h.config.fly_speed)
+        .unwrap_or(SPEED);
     let speed = if keys.pressed(KeyCode::ShiftLeft) {
-        SPEED * SPRINT
+        base_speed * SPRINT
     } else {
-        SPEED
+        base_speed
     };
     let step = v.normalize_or_zero() * speed * controls.time.delta_secs().min(0.1);
     if step.is_finite() {

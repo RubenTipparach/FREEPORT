@@ -64,7 +64,8 @@ pub fn walk(
         let w = &walker.0;
         let under = field.material(w.dir * (w.foot - 0.05));
         text.0 = format!(
-            "{:.1} m over the mean radius, {:.1} m/s{}, on {}   |   F fly, Tab wire, Esc mouse",
+            "{}: {:.1} m over the mean radius, {:.1} m/s{}, on {}   |   F fly, Tab wire, Esc mouse",
+            ground.label(),
             w.foot - ground.planet.radius,
             w.vel[0].hypot(w.vel[1]),
             if w.on_ground { "" } else { ", airborne" },
@@ -101,7 +102,10 @@ pub fn toggle_walk(
             fly.pitch = look.y.clamp(-1.0, 1.0).asin();
             commands.remove_resource::<OnFoot>();
             if let Ok(mut text) = stat.single_mut() {
-                text.0 = "flying   |   F walk, Tab wire, Esc mouse".to_string();
+                text.0 = format!(
+                    "{}: flying   |   F walk, Tab wire, Esc mouse",
+                    ground.label()
+                );
             }
         }
         None => {

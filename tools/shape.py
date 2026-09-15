@@ -21,7 +21,7 @@ from pathlib import Path
 
 FILE_LIMIT = 900
 FN_LIMIT = 100
-ROOTS = ["crates/freeport_core/src", "crates/freeport_app/src"]
+ROOTS = ["crates/freeport_core/src", "crates/freeport_app/src", "crates/hex_planet/src"]
 FN = re.compile(r"^\s*(pub(\([^)]*\))? )?(const |async |unsafe )*fn ([A-Za-z_][A-Za-z_0-9]*)")
 
 

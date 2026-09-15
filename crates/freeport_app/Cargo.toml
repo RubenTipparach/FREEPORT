@@ -7,6 +7,7 @@ description = "The Bevy harness: draws what freeport_core says, ticks the world,
 
 [dependencies]
 freeport_core = { path = "../freeport_core" }
+hex_planet = { path = "../hex_planet" }
 # 0.18 rather than 0.19, on purpose: avian3d 0.6 and big_space 0.12 are on
 # 0.18 today and big_space has not followed 0.19 yet. The engine moves when
 # all three do together, in one commit that carries nothing else.

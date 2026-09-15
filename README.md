@@ -25,6 +25,33 @@ near the observer, fades to height-map terrain at distance, reserves stable
 procedural city anchors, uses authored Material Maker terrain sets, and shares a
 ray-marched atmosphere between the sky and ambient-light sampling.
 
+### Choose a planet
+
+Run `run.bat` on Windows or `./run.sh` on Linux/macOS. Before the window opens,
+the launcher asks which planet to create: **Field planet** (the existing 40 m
+building site) or **Hex planet** (the 10 km experiment). Enter `1` or `2`, or
+the name `field` or `hex`. Enter alone selects the field planet.
+
+To skip the picker:
+
+```sh
+run.bat --planet hex
+./run.sh --planet hex
+cargo run --release -p freeport_app -- --planet field
+```
+
+`--list-planets` lists the choices. Screenshots and non-interactive runs default
+to the field planet unless `--planet` is supplied. Both use the same WASD,
+Shift, Space, F, Tab and mouse controls. Hex flight is faster to cover its larger
+distances; `assets/config/hex_planet.yaml` controls terrain and viewing distances.
+The choices are listed in `assets/config/planets.tsv`.
+
+The hex renderer uses the experiment's projected cells, flat terrace caps and
+walls, with matching ground queries, background patch updates and a distant
+height-map sphere. It uses the same baked Material Maker sets as the field
+planet. Global Goldberg pentagons, settlement buildings and the GPU atmosphere
+are still future work; the present chart grid is rebuilt on long journeys.
+
 The two mockups compare the meshers on the same seed, field, sea, towns and
 textures, with a first person walker on each (Walk the port, then WASD,
 Shift, Space and the mouse): open `docs/mockups/marching-cubes.html` and

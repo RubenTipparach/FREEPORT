@@ -1,0 +1,23 @@
+# Numeric settings for the hex harness. Zero uses the default for every key.
+# cell_radius: hex circumradius in metres (default 12).
+# step: terrace height in metres (default 0.5).
+# relief: peak to trough terrain relief in metres (default 160).
+# lumps: base terrain frequency per unit direction (default 12).
+# octaves: terrain noise octaves (default 5).
+# seed: deterministic terrain seed (default 7).
+# hex_end: full hex detail distance in metres (default 900).
+# height_start: smooth surface distance in metres (default 1300).
+# refresh: movement before rebuilding the visible window in metres (default 96).
+# far_subdivisions: cells per cube sphere face edge (default 128).
+# fly_speed: flying speed in metres per second (default 120).
+cell_radius: 0
+step: 0
+relief: 0
+lumps: 0
+octaves: 0
+seed: 0
+hex_end: 0
+height_start: 0
+refresh: 0
+far_subdivisions: 0
+fly_speed: 0

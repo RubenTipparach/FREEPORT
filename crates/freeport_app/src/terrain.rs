@@ -37,6 +37,12 @@ pub struct Terrain {
     /// The planet's centre in the render frame.
     #[uniform(100)]
     pub centre: Vec4,
+    /// Planet-local observer, w disables the hex overlay while a patch loads.
+    #[uniform(100)]
+    pub observer: Vec4,
+    /// Full hex and full distant-surface distances, metres.
+    #[uniform(100)]
+    pub bands: Vec4,
     #[texture(101, dimension = "2d_array")]
     #[sampler(102)]
     pub albedo: Handle<Image>,
@@ -157,6 +163,8 @@ pub fn terrain_material(
         extension: Terrain {
             params: Vec4::new(GROUND_TILE, CONCRETE_TILE, 0.0, 0.0),
             centre: Vec4::ZERO,
+            observer: Vec4::ZERO,
+            bands: Vec4::ZERO,
             albedo,
             normal,
             orm,

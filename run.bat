@@ -21,5 +21,6 @@ if errorlevel 1 (
 echo Left click takes the mouse, Escape gives it back. WASD walks, Shift runs,
 echo Space jumps, F swaps between walking and flying, Tab toggles the wire.
 echo.
+echo Choose Field or Hex when prompted, or pass --planet field / --planet hex.
 target\release\freeport_app.exe %*
 pause

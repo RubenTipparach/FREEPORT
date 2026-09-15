@@ -19,6 +19,8 @@ struct Terrain {
     // planet local, which is the rule for any shader that reasons about a
     // body.
     centre: vec4<f32>,
+    observer: vec4<f32>,
+    bands: vec4<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> terrain: Terrain;
@@ -59,6 +61,17 @@ fn tri_normal(layer: i32, p: vec3<f32>, w: vec3<f32>, n: vec3<f32>) -> vec3<f32>
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    // lod::LodBands::height_weight transcribed from hex_planet. Complementary
+    // screen-space coverage shares the depth buffer without alpha sorting.
+    if terrain.params.z > 0.5 {
+        let distance = length(in.world_position.xyz - terrain.centre.xyz - terrain.observer.xyz);
+        let t = clamp((distance - terrain.bands.x) / max(terrain.bands.y - terrain.bands.x, 0.000001), 0.0, 1.0);
+        let weight = max(t * t * (3.0 - 2.0 * t), terrain.observer.w);
+        let pixel = vec2<u32>(in.position.xy) % vec2<u32>(4u);
+        let threshold = (f32((pixel.x * 2u + pixel.y * 3u) % 4u) * 4.0 + f32(pixel.y) + 0.5) / 16.0;
+        let distant = terrain.params.z > 1.5;
+        if (distant && weight <= threshold) || (!distant && weight > threshold) { discard; }
+    }
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     let n = normalize(in.world_normal);
     let rel = in.world_position.xyz - terrain.centre.xyz;

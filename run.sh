@@ -4,13 +4,14 @@
 #
 #   ./run.sh                                     a window, release profile
 #   ./run.sh --debug                             the dev profile
+#   ./run.sh --planet hex                        create the hex planet without the startup picker
 #   ./run.sh --build-only                        build, do not run
 #   ./run.sh --test                              the suites, then build and run
 #   ./run.sh --shot out.png                      no display needed: a picture under Xvfb and lavapipe, then exit
 #   ./run.sh -- --fly --wire --eye 9.5,41.6,0.5 --look 0,40.6,0
 #
 # Everything after -- goes to freeport_app itself: --sub, --wire, --fly,
-# --eye, --look, --shot, --frames. The first token this script does not know
+# --planet, --list-planets, --eye, --look, --shot, --frames. The first token this script does not know
 # starts the passthrough too.
 
 set -euo pipefail
@@ -85,8 +86,8 @@ esac
 # ------------------------------------------------------------- the suites --
 
 if [ "$suites" = 1 ]; then
-    say "cargo test -p freeport_core"
-    cargo test -p freeport_core
+    say "cargo test -p freeport_core -p hex_planet"
+    cargo test -p freeport_core -p hex_planet
     if command -v python3 >/dev/null 2>&1; then
         say "the shape of the code"
         python3 tools/shape.py --check
