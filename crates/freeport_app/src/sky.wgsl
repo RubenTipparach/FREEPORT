@@ -21,7 +21,8 @@ struct Sky {
     centre: vec4<f32>,
     // Where the sun is, as a direction, w: unused.
     sun: vec4<f32>,
-    // x: the ground's radius, y: the shell's.
+    // x: the ground's radius, y: the shell's, z: the lowest the ground
+    // reaches, which is what stops a view ray going down.
     shell: vec4<f32>,
     // x: the scale height, y: rayleigh, z: mie, w: mie's g.
     coef: vec4<f32>,

@@ -37,8 +37,26 @@ pub const NITS: f64 = 1_400.0;
 /// blue baseline; a body sets what it wants to differ.
 #[derive(Clone, Copy, Debug)]
 pub struct Air {
-    /// Where the march stops going down: the planet's own radius, metres.
+    /// Where the march measures its density from: the planet's own
+    /// radius, metres.
     pub ground: f64,
+    /// Where a view ray is STOPPED going down: the lowest the real
+    /// ground reaches, metres. It is not `ground`, and the difference is
+    /// what a picture found. A dome that cuts its ray at the MEAN radius
+    /// draws a short, dark path wherever the terrain is lower than the
+    /// mean, and since the terrain is not drawn there either that band
+    /// stands between the sky and the horizon as a dark stripe: measured
+    /// on the thousand kilometre planet, the march reads 2.93 at four
+    /// tenths of a milliradian under the horizontal and 0.034 at eight,
+    /// a factor of eighty seven across two pixels. Stopped at the lowest
+    /// ground instead, no ray is cut short of geometry that is actually
+    /// drawn, and the band is the long bright path the fog is already
+    /// the colour of. It is also the only conditioning the test has: in
+    /// `f32` the eye's own square is 10^12 and the difference of two of
+    /// those is quantised to 131 km^2, which at twelve metres over the
+    /// mean radius is half a per cent of the whole term and at eight
+    /// kilometres over the floor is eight millionths.
+    pub floor: f64,
     /// Where it stops going up: the outer shell, metres.
     pub top: f64,
     /// How fast the density falls off, in NORMALISED altitude (nought at
@@ -64,17 +82,20 @@ pub struct Air {
     pub glow: DVec3,
     pub band: DVec3,
     /// Haze on the ground, per metre of view distance, and the altitude
-    /// it has faded out by: climb above the weather and the vista clears.
-    /// In `Default` the two are shares of the SHELL's thickness, and
-    /// `round` turns them into metres; everywhere else they are metres.
+    /// it has faded out by, metres: climb above the weather and the vista
+    /// clears.
+    ///
+    /// `Default`'s three lengths are a THREE HUNDRED METRE planet's, which
+    /// is tenebris's own, and `Air::round` is the one place they are
+    /// carried to another size. Anything that builds an `Air` by hand and
+    /// does not go through `round` is writing metres for its own planet.
     pub fog: f64,
     pub fog_height: f64,
     /// The ground fog: how many metres its density falls off over, and
     /// how many times the plain haze it is down at the sea. Air POOLS in
     /// the low ground, so a valley is hazier than the ridge above it and
     /// a mountain stands out of its own weather, which is the whole of
-    /// what makes a distant range read as distant. Both are shares of the
-    /// shell in `Default`, metres and a factor after `round`.
+    /// what makes a distant range read as distant.
     pub pool: f64,
     pub pooled: f64,
 }
@@ -83,6 +104,7 @@ impl Default for Air {
     fn default() -> Self {
         Air {
             ground: 1.0,
+            floor: 1.0,
             // Tenebris's own shell is a quarter of its planet's radius,
             // which on a five kilometre world is a twelve hundred metre
             // doughnut: from orbit it was a thick opaque white ring
@@ -108,30 +130,28 @@ impl Default for Air {
             tint: DVec3::new(1.3, 1.0, 0.6),
             glow: DVec3::new(1.0, 0.65, 0.25),
             band: DVec3::new(0.8, 0.4, 0.15),
-            // The fog's two lengths are shares of the SHELL, not of the
-            // radius: tenebris's 0.006 a metre and 130 m stand against
-            // its own 72 m of air, so they are written here as that
-            // ratio and `round` gives them their metres.
-            // Tenebris's own is 0.43 of a shell thickness, and with the
-            // pooling on top of it the vista drowned: at twelve metres
-            // over the sea the air was four fifths opaque by three
-            // hundred metres and the hills went white. A tenth of a shell
-            // with two and a half times that down at the water is a range
-            // that reads as far off and a foreground that does not.
+            // Tenebris's own haze is 0.006 a metre on its three hundred
+            // metre planet, and with the pooling on top of it the vista
+            // drowned. These are that, dialled to where a range reads as
+            // far off and a foreground does not, on a planet of THAT size;
+            // `round` is what carries them to another one, and the one
+            // place that arithmetic is written.
             fog: 0.12,
-            fog_height: 1.8,
-            pool: 0.22,
+            fog_height: 480.0,
+            pool: 80.0,
             pooled: 2.5,
         }
     }
 }
 
 impl Air {
-    /// The default air round a planet of `radius`, its shell and its fog
-    /// height scaled to it, which is how tenebris's numbers are written:
-    /// a multiple of the radius, so the same air reads the same on a
-    /// planetoid and on a planet.
-    pub fn round(radius: f64) -> Air {
+    /// The default air round a planet of `radius` with `relief` metres of
+    /// ground between its lowest and its highest: the one place tenebris's
+    /// three hundred metre numbers are carried to another size, so the
+    /// same air reads the same on a planetoid and on a planet. The relief
+    /// is not decoration, it decides two things a radius cannot: how deep
+    /// the fog pools, and where a view ray is stopped (`Air::floor`).
+    pub fn round(radius: f64, relief: f64) -> Air {
         let d = Air::default();
         // Tenebris's numbers are for a three hundred metre planet, and
         // every LENGTH in them is a share of that: the shell is a
@@ -140,13 +160,20 @@ impl Air {
         // at tenebris's on a planet sixteen times the size is a vista
         // sixteen times foggier, which is a white screen and was.
         let top = radius * d.top;
-        let shell = top - radius;
         Air {
             ground: radius,
+            floor: radius - relief,
             top,
-            fog: d.fog / shell,
-            fog_height: d.fog_height * shell,
-            pool: d.pool * shell,
+            // The fog's lengths are the GROUND's, not the shell's. How
+            // far an eye sees is the horizon, `sqrt(2 R h)`, so it grows
+            // as the square root of the radius and the density falls the
+            // same way; how DEEP the air pools is the relief, because
+            // that is what the weather has to fill. Tied to the shell
+            // instead, a shell sixty kilometres thick on a thousand
+            // kilometre planet left a vista with no haze in it at all.
+            fog: d.fog / (radius / 300.0).sqrt() / 300.0,
+            fog_height: relief * 3.0,
+            pool: relief * 0.5,
             ..d
         }
     }
@@ -261,7 +288,8 @@ fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
 /// The sky along a view ray, and how much of it there is: the colour, and
 /// an alpha that is one where the ray meets the ground (the air in front
 /// of a hillside is opaque) and the scatter's own brightness where it
-/// leaves for space, so a faint sky stays clear.
+/// leaves for space, so a faint sky stays clear. What stops the ray going
+/// down is `Air::floor` and never `Air::ground`, and that field says why.
 pub fn sky(air: &Air, eye: DVec3, dir: DVec3, sun: DVec3) -> (DVec3, f64) {
     let dir = dir.normalize_or(DVec3::Y);
     let sun = sun.normalize_or(DVec3::Y);
@@ -270,7 +298,7 @@ pub fn sky(air: &Air, eye: DVec3, dir: DVec3, sun: DVec3) -> (DVec3, f64) {
         return (DVec3::ZERO, 0.0);
     }
     let from = shell.0.max(0.0);
-    let ground = ray_sphere(eye, dir, air.ground).0;
+    let ground = ray_sphere(eye, dir, air.floor).0;
     let hits = ground > 0.0;
     let to = if hits { shell.1.min(ground) } else { shell.1 };
     if from >= to {
@@ -359,9 +387,10 @@ pub fn haze(air: &Air, eye: DVec3, metres: f64) -> f64 {
 mod tests {
     use super::*;
 
-    /// The air round a planetoid, small enough that a test can walk it.
+    /// The air round a planetoid, small enough that a test can walk it,
+    /// with a hundredth of its radius of relief in it.
     fn air() -> Air {
-        Air::round(1000.0)
+        Air::round(1000.0, 10.0)
     }
 
     #[test]
@@ -445,6 +474,37 @@ mod tests {
         assert!(near > 0.0 && far < 1.0, "{near} to {far}");
         assert!(aloft < 1e-6, "the fog followed the eye up: {aloft}");
     }
+
+    #[test]
+    fn the_sky_just_under_the_horizon_is_the_long_path_and_not_a_dark_stripe() {
+        // The thousand kilometre planet and an eye twelve metres up,
+        // which is where the picture showed a dark band between the sky
+        // and the fogged ground. A ray a milliradian under the
+        // horizontal meets the real terrain tens of kilometres off, if
+        // at all, so it carries the same long bright path the horizontal
+        // does; cut at the MEAN radius it carries fifteen hundred metres
+        // of it and comes out black.
+        let air = Air::round(1_000_000.0, 8_000.0);
+        let eye = DVec3::new(0.0, air.ground + 12.0, 0.0);
+        let sun = DVec3::new(0.42, 0.62, -0.66).normalize();
+        let level = sky(&air, eye, DVec3::X, sun).0.length();
+        for milli in [-1.0, -2.0, -4.0, -8.0, -16.0] {
+            let dir = (DVec3::X + DVec3::Y * (milli * 1e-3)).normalize();
+            let got = sky(&air, eye, dir, sun).0.length();
+            assert!(
+                got > level * 0.9,
+                "{milli} mrad under the horizontal came out {got:.4} against {level:.4}"
+            );
+        }
+        // And this is the band, so nobody takes the floor back out.
+        let mean = Air {
+            floor: air.ground,
+            ..air
+        };
+        let dir = (DVec3::X - DVec3::Y * 8e-3).normalize();
+        let dark = sky(&mean, eye, dir, sun).0.length();
+        assert!(dark < level * 0.1, "the mean radius came out {dark:.4}");
+    }
 }
 
 #[cfg(test)]
@@ -458,7 +518,7 @@ mod sizes {
     #[test]
     #[ignore]
     fn sky_colours() {
-        let air = Air::round(5_000.0);
+        let air = Air::round(5_000.0, 50.0);
         let eye = DVec3::new(0.0, air.ground + 12.0, 0.0);
         let sun = DVec3::new(0.42, 0.62, -0.66).normalize();
         // A ray from orbit that grazes the middle of the shell, which is

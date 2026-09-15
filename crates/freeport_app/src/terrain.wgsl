@@ -179,7 +179,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let w_rock = steep * ground;
     // Sand along the shore and under the shallows, grass above it: the
     // mockup's band by height, measured off the sea's own radius.
+    //
+    // A tier hands the height DOWN as a varying (`TIER_HEIGHT`), because
+    // its triangles can be kilometres across and the fragment's own
+    // position is interpolated along a CHORD that sags under the sphere:
+    // `tiers.wgsl`'s `emit` says what that did to the continents. A dual
+    // contoured chunk is metres across and its position IS the surface,
+    // so there the length is the honest answer and costs no varying.
+#ifdef TIER_HEIGHT
+    let over_sea = in.uv.y;
+#else
     let over_sea = length(rel) - terrain.params.w;
+#endif
     let sand = 1.0 - smoothstep(SAND_TO, GRASS_FROM, over_sea);
     let level = (1.0 - steep) * ground;
     let w_sand = level * sand;

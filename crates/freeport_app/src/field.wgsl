@@ -109,14 +109,17 @@ fn planet_of(shape: vec4<f32>, counts: vec4<u32>) -> Planet {
 
 // `field::Planet::surface` with no sites: the relief at a direction, metres
 // over the mean radius.
+//
+// There is deliberately no `ground` beside it, which would be this plus
+// the radius. A caller on a thousand kilometre planet that forms one is a
+// caller holding a number whose f32 step is 6 cm, and every one this file
+// had was a bug: the normal differenced two of them (`ground_normal` says
+// what that cost), the sea measured its own column off one, and a vertex
+// was placed from one instead of from an offset. What a caller wants is
+// the relief, added to a base the CPU worked out in f64.
 fn surface(planet: Planet, dir: vec3<f32>) -> f32 {
     let n = fbm3(dir * planet.lumps, planet.seed, planet.octaves);
     return (n * 2.0 - 1.0) * planet.relief * 0.5;
-}
-
-// Where the ground is along a direction, metres from the planet's centre.
-fn ground(planet: Planet, dir: vec3<f32>) -> f32 {
-    return planet.radius + surface(planet, dir);
 }
 
 // East and north at a direction, for stepping off it. The pole is swapped
@@ -133,14 +136,31 @@ fn frame(up: vec3<f32>) -> mat2x3<f32> {
 // The ground's outward normal at a direction, by central differences over
 // `step` metres of arc. A triangle wide enough to shade smoothly asks for
 // this; a hex column's top is flat and does not.
+//
+// The differences are of `surface` and NEVER of `ground`, which is the
+// same number with the radius added: at a thousand kilometres an f32 step
+// is 6 cm, so two radii differenced carry up to 12 cm of quantisation, and
+// the nearest leaves the far tier draws are cut into sub triangles under a
+// metre across, where the height actually gained over a step is a few
+// centimetres. This is tenebris's own hex shader warning, that a gradient
+// "must exceed planet scale f32 quantisation or the derivative degrades to
+// noise", answered by never forming the planet scale number: the radius
+// cancels out of a difference exactly, so it is left out rather than added
+// and taken away again. The picture barely moved when this changed (0.000%
+// of pixels over 8 of 255 on the grazing shot, worst 1), because the band
+// where a sub triangle is that small is a few metres wide just past the
+// hex disc and everything beyond it steps in metres. It is still the
+// difference between a normal that is right by construction and one that
+// is right because the triangles happen to be big.
 fn ground_normal(planet: Planet, dir: vec3<f32>, step: f32) -> vec3<f32> {
     let f = frame(dir);
     let d = step / planet.radius;
     let east = f[0];
     let north = f[1];
-    let he = ground(planet, normalize(dir + east * d)) - ground(planet, normalize(dir - east * d));
-    let hn = ground(planet, normalize(dir + north * d)) - ground(planet, normalize(dir - north * d));
-    let r = ground(planet, dir);
+    let he = surface(planet, normalize(dir + east * d))
+        - surface(planet, normalize(dir - east * d));
+    let hn = surface(planet, normalize(dir + north * d))
+        - surface(planet, normalize(dir - north * d));
     // The surface is r(dir) along dir, so its tangents are the arc step
     // along each axis plus the height it gained over that step.
     let te = east * (2.0 * step) + dir * he;
@@ -150,10 +170,4 @@ fn ground_normal(planet: Planet, dir: vec3<f32>, step: f32) -> vec3<f32> {
         return -n;
     }
     return n;
-}
-
-// Nought at the sea's surface, positive in the water: what says a column's
-// top is a beach, a shallow or a sea floor.
-fn depth(planet: Planet, p: vec3<f32>) -> f32 {
-    return planet.sea - length(p);
 }

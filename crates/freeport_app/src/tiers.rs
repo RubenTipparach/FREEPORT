@@ -73,30 +73,31 @@ pub enum Which {
 /// one place, and `tiers.wgsl`'s `Tier` struct is its transcription.
 #[derive(Clone, Copy, Debug, Default, Reflect, ShaderType)]
 pub struct Lanes {
-    /// The planet's centre in the render frame, w: the cosine of the angle
-    /// the hex disc reaches less its overlap, which is the hole the far
-    /// tier cuts in itself. The centre is here as well as in binding 100
-    /// because one vertex shader serves three materials and binding 100 is
-    /// a different struct under each, so it can name none of them.
+    /// The planet's centre in the render frame, w: how many leaves of the
+    /// storage buffer are live, which is where the far tier and the sea
+    /// stop. The centre is here as well as in binding 100 because one
+    /// vertex shader serves three materials and binding 100 is a different
+    /// struct under each, so it can name none of them.
     pub at: Vec4,
-    /// Where the hex disc's middle is, as a UNIT direction, w: the cosine
-    /// of the angle the far tier's hole reaches. It is a lane of its own
-    /// rather than the anchor below, because the anchor is a point in its
-    /// FACE's plane and is shorter than one by up to a fifth: normalising
-    /// it to serve as the hole's axis shrank the hex window by that fifth,
-    /// the disc came out inside its own hole, and the seam was a band of
-    /// sky again. Two jobs, two lanes.
+    /// The ANCHOR: one unit direction, the eye's own tile's, that every
+    /// vertex of every tier is an offset from. In w, the far tier's hole,
+    /// as the SQUARED CHORD of the angle it reaches rather than its
+    /// cosine, because a cosine near one is a number an f32 cannot tell
+    /// from one.
     pub disc: Vec4,
+    /// Where the anchor's own ground stands in the RENDER frame,
+    /// `anchor * radius + centre` worked out in f64: the one large
+    /// subtraction in the whole draw, done once and where it can be done
+    /// exactly. Every vertex is this plus a small accurate offset, which
+    /// is how a planet a thousand kilometres across is drawn out of f32
+    /// (`freeport_core::pos::unit_offset`).
+    pub base: Vec4,
     /// x: mean radius, y: the sea's radius, z: peak to trough of the
     /// relief, w: how many relief features fit round the planet.
     pub shape: Vec4,
     /// x: octaves of relief, y: the seed, z: how many pieces a leaf's edge
     /// is cut into, w: tiles along an icosahedron edge, the hex grid's `n`.
     pub counts: UVec4,
-    /// The hex anchor: the eye's own tile in its face's own plane, which
-    /// is `hex::Grid::basis`'s first answer, w: how many leaves of the
-    /// storage buffer are live.
-    pub eye: Vec4,
     /// The lattice's first step off that anchor, w: how deep a column's
     /// skirt hangs, metres.
     pub lat1: Vec4,
@@ -274,30 +275,45 @@ impl MaterialExtension for Tier {
             }
             .into(),
         );
+        // A tier's triangles can be kilometres across, so the height over
+        // the sea rides DOWN from the vertex stage rather than being
+        // worked out again from the fragment's interpolated position,
+        // which on a far leaf is a chord under the sphere. The mesh has no
+        // uv attribute and does not need one: `VertexOutput` is what the
+        // define shapes.
+        let defs = ["VERTEX_UVS", "VERTEX_UVS_A", "TIER_HEIGHT"];
+        for def in defs {
+            descriptor.vertex.shader_defs.push(def.into());
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push(def.into());
+            }
+        }
         Ok(())
     }
 }
 
 pub struct TiersPlugin;
 
-/// A handle held so `field.wgsl` is LOADED rather than merely registered.
-/// A shader nothing has asked for is not in the asset system, and an
-/// import that is not in the asset system is a pipeline Bevy quietly
-/// retries for ever: the first cut of this drew an empty sky with not one
-/// error in the log, because `tiers.wgsl` imports `freeport::field` and
-/// nothing had ever loaded it.
+/// Handles held so the imported libraries are LOADED rather than merely
+/// registered. A shader nothing has asked for is not in the asset system,
+/// and an import that is not in the asset system is a pipeline Bevy
+/// quietly retries for ever: this has now drawn an empty sky twice with
+/// not one error in the log, once for `freeport::field` and once for
+/// `freeport::frame`.
 #[derive(Resource)]
-struct Field(#[allow(dead_code)] Handle<Shader>);
+struct Libraries(#[allow(dead_code)] Vec<Handle<Shader>>);
 
 impl Plugin for TiersPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "field.wgsl");
+        embedded_asset!(app, "frame.wgsl");
         embedded_asset!(app, "tiers.wgsl");
-        let field = app
-            .world()
-            .resource::<AssetServer>()
-            .load("embedded://freeport_app/field.wgsl");
-        app.insert_resource(Field(field));
+        let assets = app.world().resource::<AssetServer>();
+        let held = ["field.wgsl", "frame.wgsl"]
+            .iter()
+            .map(|name| assets.load(format!("embedded://freeport_app/{name}")))
+            .collect();
+        app.insert_resource(Libraries(held));
         app.add_plugins((
             MaterialPlugin::<TierMaterial>::default(),
             MaterialPlugin::<SeaMaterial>::default(),
@@ -409,12 +425,16 @@ const OVERLAP: f64 = 6.0;
 /// How far toward the eye the hex tier's depth is nudged, so the columns
 /// beat the far tier's surface wherever the two are drawn over one another.
 const HEX_BIAS: f32 = 2000.0;
-/// Leaves the far tier is built for. Planet-LOD at ratio 6 picks about
-/// three thousand from the ground and forty four from three radii up, so
-/// this is slack rather than a limit; it is not MORE slack than that
-/// because every vertex the mesh carries past the live count still runs
-/// the vertex stage far enough to work out it has nothing to say.
-const MOST_LEAVES: usize = 8_192;
+/// Leaves the far tier is built for. Planet-LOD at ratio 6 picks 4,147
+/// from the ground of a 10 km planet and 8,396 from a 1,000 km one
+/// (`lod::sizes::the_cost_of_a_bigger_planet`, which is the sweep this
+/// number is read off), so a cap of 8,192 was UNDER the planet the
+/// harness now runs and the overflow is a hole in the ground that says
+/// nothing. Half again over the measured worst is the slack, and it is
+/// not more than that because every vertex the mesh carries past the live
+/// count still runs the vertex stage far enough to work out it has
+/// nothing to say.
+const MOST_LEAVES: usize = 12_288;
 
 /// The asset stores the tiers write into, as one thing: a system that
 /// reaches for four of them is a system with four arguments, and the
@@ -499,6 +519,7 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
     let lanes = Lanes {
         at: Vec4::ZERO,
         disc: Vec4::ZERO,
+        base: Vec4::ZERO,
         shape: Vec4::new(
             at.radius as f32,
             at.sea as f32,
@@ -506,7 +527,6 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
             at.lumps as f32,
         ),
         counts: UVec4::new(at.octaves, at.seed, at.sub, at.grid().n),
-        eye: Vec4::ZERO,
         lat1: Vec4::new(0.0, 0.0, 0.0, at.skirt as f32),
         lat2: Vec4::new(0.0, 0.0, 0.0, at.span as f32),
         wave: sheet.wave,
@@ -576,6 +596,33 @@ fn tier_materials(assets: &mut Store, at: &Tiers) -> Drawn {
     }
 }
 
+/// The leaves Planet-LOD picked, into the buffer the far tier and the sea
+/// both read, as OFFSETS from the anchor: the subtraction is done in f64
+/// here so the shader never has to form a unit vector at a planet's
+/// scale. A far leaf's offset is large and its accuracy does not matter;
+/// a near one's is small and exact. Answers how many went, which is where
+/// the shader is told to stop.
+fn send_leaves(
+    at: &Tiers,
+    drawn: &Drawn,
+    buffers: &mut Assets<ShaderStorageBuffer>,
+    anchor: DVec3,
+    picked: &[lod::Tri],
+) -> usize {
+    let live = picked.len().min(at.most_leaves());
+    if let Some(buffer) = buffers.get_mut(&drawn.leaves) {
+        let mut data: Vec<Vec4> = Vec::with_capacity(live * 3);
+        for tri in picked.iter().take(live) {
+            for corner in tri {
+                data.push((*corner - anchor).as_vec3().extend(0.0));
+            }
+        }
+        data.resize(at.most_leaves() * 3, Vec4::ZERO);
+        buffer.set_data(data.as_slice());
+    }
+    live
+}
+
 /// Every frame: where the eye is, which tile it stands on, and which
 /// leaves Planet-LOD picks from there. This is the whole of what the CPU
 /// does for either tier.
@@ -592,7 +639,17 @@ pub fn feed_tiers(
     let centre = frame.0.local(freeport_core::pos::WorldPos(DVec3::ZERO));
     let dir = here.normalize_or(DVec3::Z);
     let grid = at.grid();
-    let (anchor, e1, e2) = grid.basis(grid.at(dir));
+    // The anchor: the eye's own tile, as a point in its face's plane and
+    // as the unit direction every vertex of every tier is measured off.
+    // The two lattice steps come down DIVIDED by that point's own length,
+    // so what the shader adds to a unit anchor is a small number.
+    let (point, e1, e2) = grid.basis(grid.at(dir));
+    let span = point.length().max(f64::MIN_POSITIVE);
+    let anchor = point / span;
+    let (e1, e2) = (e1 / span, e2 / span);
+    // The one large subtraction, in f64: where the anchor's own ground
+    // stands in the render frame. Everything else is an offset from it.
+    let base = (anchor * at.radius - frame.0.at).as_vec3();
     // `select` is asked for the WHOLE planet, with no hole: the far tier
     // cuts its own in the shader, a sub triangle at a time, and the sea
     // rides the very same leaves with no hole at all. One walk a frame
@@ -605,7 +662,11 @@ pub fn feed_tiers(
     // differently (a column's top is flat at its middle's height, a leaf's
     // is linear between its corners) and where the far tier stood higher
     // the line of sight went under it, over the ground behind and out.
-    let hole = (at.disc() - OVERLAP * grid.spacing(at.radius) / at.radius).cos();
+    // The hole, as the SQUARED CHORD of its angle: `|dir - anchor|^2` is
+    // `2 (1 - cos t)`, and a chord is where an f32 keeps its precision
+    // while a cosine near one is a number it cannot tell from one.
+    let reach = at.disc() - OVERLAP * grid.spacing(at.radius) / at.radius;
+    let hole = 2.0 * (1.0 - reach.cos());
     let picked = lod::select(
         here,
         at.radius,
@@ -617,35 +678,36 @@ pub fn feed_tiers(
         0.0,
         dir,
     );
-    let live = picked.len().min(at.most_leaves());
-    if let Some(buffer) = assets.buffers.get_mut(&drawn.leaves) {
-        let mut data: Vec<Vec4> = Vec::with_capacity(live * 3);
-        for tri in picked.iter().take(live) {
-            for corner in tri {
-                data.push(corner.as_vec3().extend(0.0));
-            }
-        }
-        data.resize(at.most_leaves() * 3, Vec4::ZERO);
-        buffer.set_data(data.as_slice());
-    }
+    let live = send_leaves(&at, &drawn, &mut assets.buffers, anchor, &picked);
     // What the CPU costs, said when it moves by a fifth: the whole of the
     // far tier's work is this one `select`, and the vertex stage makes
     // `sub * sub` triangles out of every leaf it picks.
-    if live * 5 > *said * 6 || live * 6 < *said * 5 {
+    if picked.len() * 5 > *said * 6 || picked.len() * 6 < *said * 5 {
+        // What was PICKED throttles the line, not what was drawn, so a
+        // truncated frame does not pin the count and report itself for
+        // ever. A truncation is a piece of the planet not drawn, so it
+        // says so rather than leaving a hole for somebody to find in a
+        // picture.
+        if picked.len() > live {
+            warn!(
+                "Planet-LOD picked {} leaves and the buffer holds {live}: raise MOST_LEAVES",
+                picked.len(),
+            );
+        }
         info!(
             "Planet-LOD picked {live} leaves in {:.2} ms, drawn as {} triangles",
             clock.elapsed().as_secs_f64() * 1e3,
             live * (at.sub * at.sub) as usize,
         );
-        *said = live;
+        *said = picked.len();
     }
     // The anchor doubles as the hex disc's own middle, which is what the
     // far tier measures its hole against, so the near tier and the hole
     // are one direction and never two.
     let step = |count: usize, lanes: &mut Lanes| {
-        lanes.at = centre.extend(0.0);
-        lanes.disc = dir.as_vec3().extend(hole as f32);
-        lanes.eye = anchor.as_vec3().extend(count as f32);
+        lanes.at = centre.extend(count as f32);
+        lanes.disc = anchor.as_vec3().extend(hole as f32);
+        lanes.base = base.extend(0.0);
         lanes.lat1 = e1.as_vec3().extend(at.skirt as f32);
         lanes.lat2 = e2.as_vec3().extend(at.span as f32);
     };

@@ -14,8 +14,11 @@
 // twice.
 
 struct Air {
-    // Where the march stops going down and where it stops going up.
+    // Where the march measures its density from, where a view ray is
+    // STOPPED going down, and where it stops going up. `atmos::Air`'s
+    // own `floor` says why the second is not the first.
     ground: f32,
+    floor: f32,
     top: f32,
     // The density falloff, in normalised altitude.
     scale_height: f32,
@@ -45,6 +48,7 @@ fn air_of(
     var a: Air;
     a.ground = shell.x;
     a.top = shell.y;
+    a.floor = shell.z;
     a.scale_height = coef.x;
     a.rayleigh = coef.y;
     a.mie = coef.z;
@@ -180,7 +184,10 @@ fn sky(air: Air, eye: vec3<f32>, look: vec3<f32>, sun_at: vec3<f32>, pixel: vec2
         return vec4<f32>(0.0);
     }
     let near = max(shell.x, 0.0);
-    let ground = ray_sphere(eye, dir, air.ground).x;
+    // `air.floor` and never `air.ground`: the core's field says why, and
+    // the conditioning is the other half of it, since in `f32` the
+    // difference of two squares at 10^12 is quantised to 131 km^2.
+    let ground = ray_sphere(eye, dir, air.floor).x;
     let hits = ground > 0.0;
     var far = shell.y;
     if (hits) {

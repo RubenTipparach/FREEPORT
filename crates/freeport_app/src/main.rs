@@ -1,15 +1,20 @@
 //! freeport_app: the Bevy harness. It draws what `freeport_core` says.
 //!
-//! A planet ten kilometres across, dual contoured at eleven levels round
-//! the eye by the streamer (`stream.rs`) on worker threads, a pad, a wall
-//! and a step built at the site the walker starts on, wearing the baked
-//! sets (`terrain.rs`), with the core's walker on it (`walk.rs`), a fly
-//! camera, a wireframe toggle, and a screenshot flag so a picture can be
-//! taken headless under Xvfb and lavapipe. The eye is a world position in
-//! `f64` and the camera is placed from it through the floating origin.
+//! A planet two thousand kilometres across, drawn two ways off one field.
+//! The DEFAULT is the hex world (`tiers.rs`): a disc of Goldberg columns
+//! round the eye and sp4cerat's Planet-LOD past it, both made in the
+//! vertex stage. `--chunks` is the dual contoured world instead, at eleven
+//! levels of rings round the eye streamed on worker threads (`stream.rs`),
+//! with the towns, the builder and the walker on foot in them. Both wear
+//! the baked sets (`terrain.rs`) and stand under one sky (`sky.rs`), and
+//! there is a fly camera, a wireframe toggle, a frame cap and a screenshot
+//! flag so a picture can be taken headless under Xvfb and lavapipe. The
+//! eye is a world position in `f64` and the camera is placed from it
+//! through the floating origin.
 //!
 //! ```text
-//! freeport_app [--wire] [--fly] [--eye x,y,z] [--look x,y,z] [--levels N]
+//! freeport_app [--chunks] [--wire] [--fly] [--eye x,y,z] [--look x,y,z]
+//!              [--levels N] [--fps N] [--span N] [--octaves N]
 //!              [--shot out.png] [--frames N] [--sculpt block|slab|pillar|ball|ramp|pad|room|door|window]
 //! ```
 //!
@@ -19,6 +24,7 @@
 //! the planet's centre (on foot, the spot under it) and `--look` what to
 //! face; both default to the site.
 
+mod args;
 mod edit;
 mod lamps;
 mod sky;
@@ -28,6 +34,7 @@ mod tiers;
 mod walk;
 mod water;
 
+use args::{parse_args, Args};
 use bevy::camera::Exposure;
 use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::ecs::system::SystemParam;
@@ -55,11 +62,27 @@ use terrain::{terrain_material, TerrainMaterial, TerrainPlugin};
 use walk::{toggle_walk, walk, OnFoot};
 use water::{water_material, WaterMaterial, WaterPlugin};
 
-/// The planet: five kilometres of radius, so ten across.
-const RADIUS: f64 = 5_000.0;
-/// The sea's level, metres under the mean radius: with a hundred and sixty
-/// of relief, a little under half the surface is under it.
-const SEA: f64 = RADIUS - 12.0;
+/// The planet: a thousand kilometres of radius, so two thousand across,
+/// which is a small terrestrial world and the scale `CLAUDE.md`'s table
+/// asks for. Nothing about either tier costs more for it: a hex disc is a
+/// fixed count of tiles round the eye and Planet-LOD's leaf count is an
+/// ANGLE's, so the far tier goes from 4,147 leaves to 8,396 and its walk
+/// from 0.65 ms to 0.71 (`lod::sizes::the_cost_of_a_bigger_planet`).
+/// What it costs is PRECISION, which is why every vertex is an offset
+/// from an anchor, and octaves, because the same detail on the ground is
+/// further down a fractal.
+const RADIUS: f64 = 1_000_000.0;
+/// Peak to trough of the relief, metres: eight tenths of a percent of the
+/// radius, which is about what a terrestrial world carries.
+const RELIEF: f64 = 8_000.0;
+/// How many relief features fit round the planet, and how many octaves
+/// take that down to metres: `log2(2 pi R / lumps / 2 m)` is eighteen
+/// here against eleven on a five kilometre world, which is the one real
+/// cost of the bigger planet.
+const LUMPS: f64 = 12.0;
+const OCTAVES: u32 = 18;
+/// The sea's level, metres under the mean radius.
+const SEA: f64 = RADIUS - 400.0;
 /// Towns: how many, and how far across each.
 const TOWNS: usize = 8;
 const TOWN_RADIUS: f64 = 80.0;
@@ -78,11 +101,33 @@ const LEVELS: u8 = 11;
 /// rule, `--fps 0` lifts it.
 const FPS: f64 = 144.0;
 
-/// Where the sun is, as a direction: ONE number, read by the light that
-/// casts the shadows, by the sky dome and by the fog, so the three cannot
-/// point three ways. A little over the horizon at the harness's start,
-/// which is the light a landscape reads best in.
-const SUN: DVec3 = DVec3::new(0.42, 0.62, -0.66);
+/// Where the sun stands over the WORLD's own starting point: degrees over
+/// the local horizon there, and degrees round from local north. A low sun
+/// is the light a landscape reads best in, and the bearing puts it off the
+/// shoulder rather than behind the camera. It is the world's start and
+/// never `--eye`, so two pictures from two places are lit alike.
+///
+/// It was a fixed world direction, and its own comment claimed it stood
+/// "a little over the horizon at the harness's start", which is a thing a
+/// world direction cannot promise: it is true of one spot on the planet
+/// and the towns are placed by the ground. On this planet the port came
+/// out 56 degrees into its own NIGHT, and a picture of a city at midnight
+/// is a picture of nothing. `sun_over` measures it from where the world
+/// starts instead, so the claim is kept by construction on any planet,
+/// any seed and any port.
+const SUN_UP: f64 = 32.0;
+const SUN_BEARING: f64 = 40.0;
+
+/// The sun's world direction for an eye starting at `dir`: ONE number,
+/// read by the light that casts the shadows, by the sky dome and by the
+/// fog, so the three cannot point three ways.
+fn sun_over(dir: DVec3) -> DVec3 {
+    let (east, north) = town::frame_at(dir);
+    let up = SUN_UP.to_radians();
+    let round = SUN_BEARING.to_radians();
+    (dir.normalize_or(DVec3::Y) * up.sin() + (north * round.cos() + east * round.sin()) * up.cos())
+        .normalize_or(DVec3::Y)
+}
 
 /// The hex tier: metres a tile, how many tiles the disc reaches, and how
 /// deep a column's skirt hangs. The skirt has to cover the step between
@@ -102,83 +147,6 @@ pub(crate) const LOOK: f32 = 0.0022;
 /// Flying: metres a second, and the factor Shift puts on it.
 const SPEED: f64 = 6.0;
 const SPRINT: f64 = 8.0;
-
-/// What the command line asked for.
-#[derive(Resource, Clone, Debug)]
-pub(crate) struct Args {
-    wire: bool,
-    fly: bool,
-    eye: Option<DVec3>,
-    look: Option<DVec3>,
-    levels: u8,
-    shot: Option<String>,
-    frames: u32,
-    /// A shape the builder places at the crosshair once the first load has
-    /// settled, so a headless run can photograph an edit and the chunks it
-    /// remade.
-    sculpt: Option<String>,
-    /// Frames a second the loop is held to. Nought lifts it.
-    fps: f64,
-    /// Draw the hex tiers: a disc of Goldberg columns round the eye and
-    /// Planet-LOD past it, both made in the vertex stage. It is the
-    /// DEFAULT, because the hex world is what this harness is; `--chunks`
-    /// is how the dual contoured one is asked for.
-    tiers: bool,
-}
-
-fn parse_args() -> Args {
-    let mut args = Args {
-        wire: false,
-        fly: false,
-        eye: None,
-        look: None,
-        levels: LEVELS,
-        shot: None,
-        frames: 30,
-        sculpt: None,
-        tiers: true,
-        fps: FPS,
-    };
-    let mut it = std::env::args().skip(1);
-    let vec3 = |s: &str| -> Option<DVec3> {
-        let v: Vec<f64> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-        (v.len() == 3).then(|| DVec3::new(v[0], v[1], v[2]))
-    };
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--wire" => args.wire = true,
-            "--fly" => args.fly = true,
-            "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
-            "--look" => args.look = it.next().and_then(|v| vec3(&v)),
-            "--levels" => {
-                args.levels = it
-                    .next()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(LEVELS)
-                    .clamp(1, 16)
-            }
-            "--shot" => args.shot = it.next(),
-            "--frames" => args.frames = it.next().and_then(|v| v.parse().ok()).unwrap_or(30),
-            "--sculpt" => args.sculpt = it.next(),
-            // The tiers are flown over: the walker stands on the dual
-            // contoured field, and a hex column's ground is a question
-            // `freeport_core::walker` has not been asked yet.
-            "--tiers" => args.tiers = true,
-            // The dual contoured world: chunks, a sea of its own, the
-            // towns and the builder, and the walker on foot in them.
-            "--chunks" => args.tiers = false,
-            "--fps" => args.fps = it.next().and_then(|v| v.parse().ok()).unwrap_or(FPS),
-            other => warn!("unknown argument {other}"),
-        }
-    }
-    // The hex world is flown over: a hex column's ground is a question
-    // `freeport_core::walker` has not been asked yet, so there is nothing
-    // for the walker to stand on that agrees with the picture.
-    if args.tiers {
-        args.fly = true;
-    }
-    args
-}
 
 fn main() {
     let args = parse_args();
@@ -407,13 +375,13 @@ fn recipes() -> HashMap<String, Recipe> {
 /// for the hex tiers, which draw the relief alone: `field.wgsl` has no
 /// sites in it yet, so a town's levelled plateau would be in the walker's
 /// field and not in the picture.
-fn world(towns: usize) -> World {
+fn world(towns: usize, octaves: u32) -> World {
     let t0 = Instant::now();
     let mut planet = Planet {
         radius: RADIUS,
-        relief: 160.0,
-        lumps: 10.0,
-        octaves: 10,
+        relief: RELIEF,
+        lumps: LUMPS,
+        octaves,
         overhang: 3.0,
         ledge: 12.0,
         seed: SEED,
@@ -517,12 +485,16 @@ fn start(world: &World) -> (DVec3, DVec3) {
 }
 
 /// The nearest point of the shore to the eye, on rings of directions out
-/// from it, so a picture can be aimed at the sea.
+/// from it, so a picture can be aimed at the sea. The rings are measured
+/// in ANGLE out to a quarter turn and not in metres, because a length
+/// picked on a ten kilometre planet reaches a hundredth of the way round
+/// a thousand kilometre one: twenty five metres a ring found no sea at
+/// all out there and the line printed NaN.
 fn shore(world: &World, eye: DVec3) -> Option<DVec3> {
     let up = eye.normalize_or(DVec3::Y);
     let (east, north) = town::frame_at(up);
     for ring in 1..400 {
-        let a = ring as f64 * 25.0 / RADIUS;
+        let a = ring as f64 * std::f64::consts::FRAC_PI_2 / 400.0;
         for k in 0..(ring * 6) {
             let b = k as f64 / (ring * 6) as f64 * std::f64::consts::TAU;
             let dir = (up * a.cos() + (east * b.cos() + north * b.sin()) * a.sin()).normalize();
@@ -543,7 +515,7 @@ fn spawn_world(
     mut skies: ResMut<Assets<sky::Sky>>,
     args: Res<Args>,
 ) {
-    let world = world(if args.tiers { 0 } else { TOWNS });
+    let world = world(if args.tiers { 0 } else { TOWNS }, args.octaves);
     let (start_eye, start_look) = start(&world);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
@@ -562,27 +534,38 @@ fn spawn_world(
         .collect();
     let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
     let sheet = water_material(&mut waters, SEA);
+    // The shore is only there to aim a picture at the dual contoured sea,
+    // so the hex world does not pay the half million field samples the
+    // hunt costs, and a hunt that finds nothing says so rather than
+    // printing a NaN somebody has to work out the meaning of.
+    let says = if args.tiers {
+        String::new()
+    } else {
+        match shore(&world, eye) {
+            Some(s) => format!(", the shore {:.0} m off at {s:.0}", (s - eye).length()),
+            None => ", no shore within a quarter turn".to_string(),
+        }
+    };
     info!(
-        "planet of {} m, the sea at {} m, {} levels of {} m to {} m cells, the eye at {:.0}, the shore {:.0} m off at {:.0}",
+        "planet of {} m, the sea at {} m, {} levels of {} m to {} m cells, the eye at {:.0}{}",
         RADIUS,
         SEA,
         args.levels,
         lat.cell(0),
         lat.cell(args.levels - 1),
         eye,
-        shore(&world, eye).map_or(f64::NAN, |s| (s - eye).length()),
-        shore(&world, eye).unwrap_or(DVec3::NAN)
+        says,
     );
     if args.tiers {
         commands.insert_resource(tiers::Tiers {
             radius: RADIUS,
             sea: SEA,
-            relief: 160.0,
-            lumps: 10.0,
-            octaves: 10,
+            relief: RELIEF,
+            lumps: LUMPS,
+            octaves: args.octaves,
             seed: SEED,
             tile: HEX_TILE,
-            span: HEX_SPAN,
+            span: args.span,
             skirt: HEX_SKIRT,
             ratio: LOD_RATIO,
             sub: LOD_SUB,
@@ -590,8 +573,38 @@ fn spawn_world(
     } else {
         commands.insert_resource(Streamer::new(lat, eye, args.levels, material, sheet));
     }
-    spawn_light(&mut commands);
+    // The sun, and everything that reads it: the WORLD's own start decides
+    // which way it points and never `--eye`, so two pictures taken from
+    // two places are lit the same and only the camera moved. The light,
+    // the dome and the fog are handed one direction worked out once.
+    let sun = sun_over(start_eye);
+    spawn_light(&mut commands, sun);
     spawn_status(&mut commands);
+    let env = spawn_sky(
+        &mut commands,
+        &mut meshes,
+        &mut skies,
+        &mut images,
+        eye,
+        sun,
+    );
+    spawn_camera(&mut commands, &world, &args, eye, look, env);
+    commands.insert_resource(Eye(WorldPos(eye)));
+    commands.insert_resource(Ground(Arc::new(world)));
+}
+
+/// The sky this world stands under: the air and the sun as one resource,
+/// the dome that draws them, the floor of ambient under it, and the same
+/// march baked into a cubemap for the camera to wear. Answers that
+/// cubemap, which is the one thing a caller needs back.
+fn spawn_sky(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    skies: &mut Assets<sky::Sky>,
+    images: &mut Assets<Image>,
+    eye: DVec3,
+    sun: DVec3,
+) -> Handle<Image> {
     commands.insert_resource(GlobalAmbientLight {
         // Nearly nothing: what fills a shadow is the SKY, through the
         // baked cubemap on the camera, and a flat ambient over the top of
@@ -603,11 +616,11 @@ fn spawn_world(
         ..default()
     });
     let weather = sky::Weather {
-        air: freeport_core::atmos::Air::round(RADIUS),
+        air: freeport_core::atmos::Air::round(RADIUS, RELIEF),
         sea: SEA,
-        sun: SUN.normalize(),
+        sun,
     };
-    sky::spawn_dome(&mut commands, &mut meshes, &mut skies, &weather);
+    sky::spawn_dome(commands, meshes, skies, &weather);
     let lit = Instant::now();
     let env = images.add(sky::bake_env(&weather.air, weather.sun, eye));
     info!(
@@ -615,14 +628,12 @@ fn spawn_world(
         lit.elapsed().as_millis()
     );
     commands.insert_resource(weather);
-    spawn_camera(&mut commands, &world, &args, eye, look, env);
-    commands.insert_resource(Eye(WorldPos(eye)));
-    commands.insert_resource(Ground(Arc::new(world)));
+    env
 }
 
-/// The sun, and the light it casts. The direction is `SUN` and nothing
-/// else, so the shadows fall the way the sky says they should.
-fn spawn_light(commands: &mut Commands) {
+/// The sun, and the light it casts. The direction is the weather's own and
+/// nothing else, so the shadows fall the way the sky says they should.
+fn spawn_light(commands: &mut Commands, sun: DVec3) {
     commands.spawn((
         DirectionalLight {
             illuminance: 8_000.0,
@@ -638,7 +649,7 @@ fn spawn_light(commands: &mut Commands) {
         .build(),
         // The light shines the way the sun is NOT: Bevy's forward is
         // negative Z and a directional light travels along it.
-        Transform::from_translation(Vec3::ZERO).looking_to(-SUN.as_vec3(), Vec3::Y),
+        Transform::from_translation(Vec3::ZERO).looking_to(-sun.as_vec3(), Vec3::Y),
     ));
 }
 

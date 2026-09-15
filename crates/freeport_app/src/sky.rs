@@ -24,11 +24,22 @@ use bevy::render::render_resource::{
 use bevy::shader::ShaderRef;
 use freeport_core::atmos::{self, Air};
 
-/// How far out the dome sits, metres. It rides the eye and is drawn
-/// behind everything, so all it has to be is further than anything else
-/// in the scene: a planet's far side from orbit is tens of kilometres and
-/// this is half a thousand.
+/// The dome MESH's own radius, metres. `dome_radius` is what it is drawn
+/// at, and this is only the size it is built at, so a scale of one is the
+/// common case on a planet of this size.
 const DOME: f32 = 500_000.0;
+
+/// How far out the dome is drawn, metres: further than anything else in
+/// the scene, which is the far limb of the shell, `|eye| + top`. A FIXED
+/// radius was enough while the planet was ten kilometres across and is
+/// not at a thousand: from four radii up the eye is three thousand
+/// kilometres off a dome five hundred wide, so the dome stood IN FRONT of
+/// the planet and painted it out, a pale blue disc with no ground in it
+/// at all. Twice over is the margin, and it is free: the dome's colour is
+/// a DIRECTION, so nothing about it changes when it grows.
+fn dome_radius(here: DVec3, air: &Air) -> f32 {
+    ((here.length() + air.top) * 2.0) as f32
+}
 
 /// What the dome's shader is handed: the planet, the sun and the air.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -39,7 +50,8 @@ pub struct Sky {
     /// Where the sun is, as a direction.
     #[uniform(100)]
     pub sun: Vec4,
-    /// x: the ground's radius, y: the shell's.
+    /// x: the ground's radius, y: the shell's, z: the lowest the ground
+    /// reaches, which is what stops a view ray going down.
     #[uniform(100)]
     pub shell: Vec4,
     /// x: the scale height, y: rayleigh, z: mie, w: mie's g.
@@ -63,7 +75,7 @@ impl Sky {
         Sky {
             centre: Vec4::new(0.0, 0.0, 0.0, DOME),
             sun: sun.as_vec3().extend(atmos::NITS as f32),
-            shell: Vec4::new(air.ground as f32, air.top as f32, 0.0, 0.0),
+            shell: Vec4::new(air.ground as f32, air.top as f32, air.floor as f32, 0.0),
             coef: Vec4::new(
                 air.scale_height as f32,
                 air.rayleigh as f32,
@@ -157,9 +169,17 @@ pub fn spawn_dome(
         NoFrustumCulling,
         Dome,
     ));
+    // The fog as the DISTANCE it fades over rather than as its density:
+    // on a thousand kilometre planet the density is seven millionths a
+    // metre and four decimals of it print as nought, which is a line that
+    // says nothing exactly where the number moved.
     info!(
-        "sky: air from {:.0} m to {:.0} m, the sun at {:.2}, fog {:.4} a metre fading out by {:.0} m",
-        weather.air.ground, weather.air.top, weather.sun, weather.air.fog, weather.air.fog_height
+        "sky: air from {:.0} m to {:.0} m, the sun at {:.2}, fog e folding over {:.0} m and gone by {:.0} m up",
+        weather.air.ground,
+        weather.air.top,
+        weather.sun,
+        1.0 / weather.air.fog.max(f64::MIN_POSITIVE),
+        weather.air.fog_height
     );
 }
 
@@ -189,13 +209,15 @@ pub fn drift_sky(
     let here = eye.0 .0;
     let centre = frame.0.local(freeport_core::pos::WorldPos(DVec3::ZERO));
     let at = frame.0.local(eye.0);
+    let reach = dome_radius(here, &weather.air);
     for mut tf in &mut dome {
         tf.translation = at;
+        tf.scale = Vec3::splat(reach / DOME);
     }
     let ids: Vec<_> = skies.ids().collect();
     for id in ids {
         if let Some(sky) = skies.get_mut(id) {
-            sky.centre = centre.extend(DOME);
+            sky.centre = centre.extend(reach);
             sky.sun = weather.sun.as_vec3().extend(atmos::NITS as f32);
         }
     }

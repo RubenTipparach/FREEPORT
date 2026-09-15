@@ -195,6 +195,28 @@ The rules tenebris paid for, kept here in the same words:
   and `far_shell` is the fallback if either costs more than it buys; either
   way the sky's bodies are drawn where they LOOK, and the number that decides
   is measured in a picture.
+- **The DEPTH buffer needed neither, and that was measured rather than
+  assumed.** Bevy's perspective is INFINITE REVERSE Z: the near plane maps to
+  one, infinity to nought, and an `f32`'s mantissa is dense exactly where the
+  precision is wanted. At a near plane of a tenth of a metre the step at ten
+  metres is a hundredth of a millimetre and at a thousand kilometres it is
+  under a tenth of a metre, which is finer than anything this world draws
+  there. A logarithmic depth buffer is what a program with a FINITE far plane
+  needs and this one has none, so the owner's ask for one is answered by
+  saying which problem it would have solved. What a thousand kilometres
+  actually costs is the VERTEX, not the depth, and the next rule is that.
+- **A vertex is an OFFSET from an anchor, so the shader never forms a planet
+  scale unit vector.** `pos::unit_offset(anchor, step)` is
+  `normalize(anchor + step) - anchor` in closed form: `s = 2 a.step +
+  step.step` and then `anchor * (-s / (root (1 + root))) + step / root`, which
+  is algebraically the same thing and never differences two numbers near one.
+  The naive form in `f32` loses a vertex 6.5 cm at a thousand kilometres
+  (`a_small_step_keeps_its_metres_at_a_thousand_kilometres` prints both: 0.0650 m
+  naive against 0.000018 m stable), which is a hex tile visibly out of place
+  under the feet. Every tier's vertex is built this way now: one anchor
+  differenced in `f64` on the CPU, and a small offset added in `f32` on the
+  GPU. The same rule sends Planet-LOD's leaves as offsets from the anchor
+  rather than as directions.
 
 ## The ground is a field, sampled where the eye is
 
@@ -241,9 +263,11 @@ the two levels below is the whole of it.
    planet is patches on a sphere and not cells in a lattice, and `select`'s
    nearest point rule is the one that tier will need.
 2. **The impostor tier.** Past the rings a body is tenebris's baked equirect
-   on an icosphere, lit per body from its own star. On the 10 km planet the
-   coarsest ring is 32 km across and holds the whole planet, so nothing is
-   past the rings yet; a planet ten times the size is where this comes due.
+   on an icosphere, lit per body from its own star. It is DUE: on the 10 km
+   planet the coarsest ring was 32 km across and held the whole world, and
+   at 1,000 km it is a patch 16 km either side of the eye, so `--chunks`
+   from the air ends at the box with nothing behind it. The hex world has
+   no such edge, since Planet-LOD's far tier is the rest of the planet.
 3. **The rest of the materials.** The sets are on the field in the harness
    (the section on the sets below), concrete is in the town's frame, the
    array textures carry their mip chains and the sand band is on the shore;
@@ -655,8 +679,11 @@ construction. The rules that make that hold:
   it can change, so a few samples across the chunk rule it out anyway
   (`a_box_is_ruled_rock_or_air_only_where_the_band_allows`). An answer must
   hold on the box's closed boundary, because the chunk beside a skipped one
-  relies on the shared face having no crossing. That is why the 10 km planet
-  is 2,245 chunks and not the rings' 5,632. The bound counts a site's
+  relies on the shared face having no crossing. That is why the planet was
+  2,245 chunks and not the rings' 5,632 when it was ten kilometres across.
+  `Density::slope` is what `town::surface_radius` sphere traces on too,
+  which is how a march down to the ground stopped costing one step per half
+  metre of relief. The bound counts a site's
   skirt too, where the relief blends to the town's level over eleven
   metres: without it a chunk on the apron whose surface fell between two
   samples could be ruled empty and left a hole at the town's edge
@@ -684,7 +711,7 @@ along every crease. The pictures the design page carries of a planetoid with
 its coarse vertices sand and its fine ones blue are from the mask's day, and
 the seam they show is the same polygon rule.
 
-## A 10 km planet is streamed in rings round the eye
+## The dual contoured world is streamed in rings round the eye
 
 `stream.rs` is the streamer this file used to say was still to build. Every
 frame the rings follow the eye (`Rings::follow`; the eye is the walker's or
@@ -740,18 +767,28 @@ A block sculpted on the port's main street dirties eight
   at eight hundred thousand triangles on a software rasteriser rather than
   the mesher, which is why the number that matters is the work and not the
   clock.
-- **The harness is the planet.** `freeport_app` is a 10 km planet (`RADIUS`
-  5,000 m, the sea 12 m under the mean radius, eleven levels of 0.25 m to
-  256 m cells, so the coarsest box is 32 km across and holds the whole
-  planet), eight towns of 80 m, and the walker on a street of the port
-  facing the middle of town. F swaps to the fly camera from wherever the
-  walker is and back, Tab wires, Esc frees the mouse, B builds; `--fly`
-  starts in the air, `--eye` and `--look` place the camera, `--levels` sets
-  the count, `--frames N --shot out.png` takes a picture once the streamer
-  is idle and N frames have run and quits, `--sculpt KIND` places a shape
-  the frame after the first load settles and holds the picture until the
-  chunks it remade are drawn, and `--wire` starts in wireframe. The port's first lot is a hangar, and the log says
-  where its door is so a picture can be taken from it.
+- **The harness is `--chunks` now**, because the hex world is what the
+  binary opens on. `freeport_app --chunks` is the same planet the tiers
+  draw (`RADIUS` 1,000,000 m, the sea 400 m under the mean radius, eleven
+  levels of 0.25 m to 256 m cells), eight towns of 80 m, and the walker on
+  a street of the port facing the middle of town. F swaps to the fly camera
+  from wherever the walker is and back, Tab wires, Esc frees the mouse, B
+  builds; `--fly` starts in the air, `--eye` and `--look` place the camera,
+  `--levels` sets the count, `--frames N --shot out.png` takes a picture
+  once the streamer is idle and N frames have run and quits, `--sculpt
+  KIND` places a shape the frame after the first load settles and holds the
+  picture until the chunks it remade are drawn, and `--wire` starts in
+  wireframe. The port's first lot is a hangar, and the log says where its
+  door is so a picture can be taken from it.
+- **The coarsest box no longer holds the planet, and that is the impostor
+  tier coming due.** At 5,000 m of radius the 32 km box held the whole
+  world; at 1,000,000 m it is a patch 16 km either side of the eye. On foot
+  that is still far past the horizon, which is `sqrt(2 R h)` and 1.8 km
+  from an eye 1.7 m up, so a walker sees no edge; from the air the world
+  ends at the box and there is nothing behind it. The hex world has no such
+  edge, because Planet-LOD's far tier IS the rest of the planet, and that
+  is the strongest argument yet for the tiers being what the binary opens
+  on.
 
 ## Water is finite, and the sea's surface is clipped by what is under it
 
@@ -999,11 +1036,12 @@ and the streets in pieces again.
 
 The owner's ask: hex terrain, but the hexes do not go on for ever, they
 give way to a planet tessellation, and the geometry runs on the GPU. What
-is built is `--tiers`: a disc of Goldberg columns round the eye, sp4cerat's
-Planet-LOD past it, and not one triangle of either built on the CPU or
-uploaded. It stands beside the dual contoured world rather than replacing
-it; the two share the planet's field, the five baked sets and the same
-shader, and a flag says which draws.
+is built is what the binary now OPENS on: a disc of Goldberg columns round
+the eye, sp4cerat's Planet-LOD past it, and not one triangle of either
+built on the CPU or uploaded. It stands beside the dual contoured world
+rather than replacing it; the two share the planet's field, the five baked
+sets and the same shader, and `--chunks` is how the other one is asked
+for.
 
 **Planet-LOD was chosen over the cube sphere quadtree for one property,
 and it is the one that makes a shader possible.** sp4cerat's rule is that
@@ -1037,8 +1075,8 @@ knob and ratio 32 is still nothing for a GPU.
 
 **A tile is an ADDRESS, never a row of a list.** Tenebris builds its
 Goldberg polyhedron whole, 163,842 tiles for a three hundred metre planet,
-and walks it. A five kilometre planet at one metre tiles is 306,472,962
-tiles, which is neither a list nor an allocation, so `hex.rs` computes
+and walks it. A thousand kilometre planet at one metre tiles is
+12,257,789,082,012 tiles, which is neither a list nor an allocation, so `hex.rs` computes
 everything about a tile from `(face, i, j)` on the subdivided icosahedron:
 where it is, what is round it, its hexagon's corners, the disc of them
 under an eye. A step off a face is carried across by UNFOLDING the two
@@ -1143,22 +1181,171 @@ would draw the undisplaced counting mesh: a depth buffer of a point at the
 origin and a shadow map of nothing. Putting them back means transcribing
 the prepass vertex stage too, and that is what it will take.
 
+**The sea is ONE sheet for both tiers**, because a sea is flat whatever
+the ground under it is made of. It rides the same Planet-LOD leaves the
+far tier does, at the sea's radius instead of the ground's, with no hole
+cut in it, so it lies over the hex columns at a shore exactly as it lies
+over the far tier's triangles. A sub triangle whose three corners all
+stand on ground above the sea is not drawn, and that is where a coastline
+comes from. The fragment shader is `water.wgsl` unchanged, tenebris's
+own. What differs is where the THICKNESS comes from: the tiers are not in
+the depth prepass at all (Bevy's own vertex stage would draw their
+counting mesh), and a depth buffer measures to whatever is behind, which
+at a shore is the beach BESIDE the water rather than the floor under it.
+The sea's vertex stage knows the water's own column (`sea - ground(dir)`)
+and hands it down, and the fragment turns it into a path length by how
+steeply the view leaves the surface; `WATER_COLUMN` is the define, and the
+prepass path is still there for the dual contoured sheet. `water_lib.wgsl`
+is the swell and its gradient noise lifted out of `water.wgsl`, because
+two things raise a sea surface now and a swell written twice is a sheet
+that would meet itself at a step.
+
+**The far tier shades on the FIELD's own gradient, not on its face.** A
+leaf cut four ways is a metre of ground at the feet and a kilometre at the
+horizon, and a face normal made every one of them a facet. The gradient is
+continuous and is measured over the sub triangle's OWN size, so the ground
+is smooth at every distance and the sub triangles stop showing.
+
+**The bump maps are worn out with distance**, 25 m to 140 m on the ground
+and 30 m to 160 m on the sea's ripples. A bump map is detail at the size
+of its own tile, two metres on the ground, and past a few dozen metres a
+tile is under a pixel: what it adds there is not detail, it is the noise
+left over once the mip chain has done albedo's share. The owner asked for
+this off a picture of a hillside that read as static.
+
+**The hex tier wins the depth test where the two overlap** (`HEX_BIAS`),
+because the overlap exists so the columns cover the far tier and not the
+other way about.
+
+**A tier hands its height over the sea DOWN as a varying** (`TIER_HEIGHT`
+in `terrain.wgsl`), rather than letting the fragment work it out from its
+own position. `terrain.wgsl` picks sand or grass off a band a metre and a
+half wide, and a fragment's position is INTERPOLATED across its triangle,
+which on a far leaf is a CHORD: from four radii up the whole planet is 44
+leaves, a sub triangle is 75 km across, and a 75 km chord on a thousand
+kilometre sphere sags 703 m under it against a sea 400 m down. So the
+middle of every sub triangle read as UNDER the sea and the continents came
+out sand, while the sea itself, which is clipped on the true field at the
+corners, stayed exactly where it belonged: a planet of beaches with
+oceans in the right places. A height interpolated between three corners
+has no sphere in it to sag. The dual contoured world keeps the length,
+because a chunk's triangles are metres across and their position IS the
+surface, so there the varying would cost something and buy nothing.
+
 **What is still to build on the tiers, named so the gap is visible:** the
 walker (a hex column's ground is a question `freeport_core::walker` has
-not been asked), the sea, the towns (`field.wgsl` has no sites in it, so a
-levelled plateau would be in the walker's field and not in the picture),
-the shadow and prepass stages, and the twelve pentagons.
+not been asked), the towns (`field.wgsl` has no sites in it, so a levelled
+plateau would be in the walker's field and not in the picture), the
+builder on tiles, the shadow and prepass stages, and the twelve
+pentagons.
 
-Measured on the harness: one metre tiles (306,472,962 round the planet), a
-disc of 48 tiles and 48 m, 9,409 prisms of 150,544 triangles; Planet-LOD
-at ratio 6 cut 4 ways, which is ratio 24 of detail for the cost of
-selecting at 6. From the ground 3,059 leaves and 48,944 triangles, from
-two kilometres up 548 and 8,768, and from three radii up the whole planet
-is 44 leaves and 704 triangles with no streaming and no seam. A frame on
-lavapipe is 3.97 s at ground level and nearly all of it is the field in
-the vertex stage: about 892,000 evaluations of 80 hashes each, a tenth of
-a millisecond of real silicon and most of four seconds of software
-rasteriser.
+Measured on the harness, which is the 1,000 km planet: one metre tiles
+(12,257,789,082,012 round it), a disc of 48 tiles and 48 m, 9,409 prisms
+of 150,544 triangles; Planet-LOD at ratio 6 cut 4 ways, which is ratio 24
+of detail for the cost of selecting at 6. From the ground 8,120 leaves in
+1.2 to 1.7 ms and 129,920 triangles, from 30 km up 2,100 and 33,600, and
+from four radii up the whole planet is 44 leaves and 704 triangles with no
+streaming and no seam. A frame on lavapipe is seconds and nearly all of it
+is the field in the vertex stage, which is a tenth of a millisecond of
+real silicon and most of four seconds of software rasteriser.
+
+## The air is one march, and the sky is what lights the world
+
+`atmos.rs` is tenebris's `atmosphere.fs.glsl` in `f64`, which is a GPU Gems
+2 single scatter march under that: eight samples along the view ray, four
+out to the sun from each, Rayleigh and Mie with their own phase functions,
+and tenebris's two dusk terms (a glow along the sun and a band on the
+horizon). It is in the CORE rather than in a shader alone because the sky
+and the FOG have to agree and tenebris says why: the fog's colour is its
+own sky sampled at the horizon every frame (`atmos::horizon`, averaged
+over four bearings so a sun on one side does not glow behind the eye), so
+the two match at noon, at dusk and at night rather than by a pair of
+numbers somebody tuned to look alike. `atmos.wgsl` is the transcription
+the dome runs, named function for function; the one deliberate difference
+is that the GPU dithers the march by a hash of the pixel, because a fixed
+offset bands a gradient across a screen, and the CPU takes the middle of
+each step because it has no pixel and wants the same answer twice.
+
+**The sky LIGHTS the world.** `sky::bake_env` marches the same function
+into a 64 pixel cubemap at startup and the camera wears it as a
+`GeneratedEnvironmentMapLight`, so a face turned away from the sun is the
+colour of the air above it. The flat ambient is gone: what fills a shadow
+is the sky, and what is left under it is a floor so a face with no sky over
+it is the colour of the gap between two stars rather than a hole, which is
+swarm-demo's own lesson.
+
+**Ground fog POOLS.** The haze is measured at the MIDDLE of the view ray
+and is `pooled` times thicker down at the sea, falling off over `pool`
+metres, so a valley seen from a ridge is hazy and the ridge seen from the
+valley is not, and a distant range reads as distant. `Air::round(radius,
+relief)` is where tenebris's numbers are carried to another planet's size:
+the shell is a multiple of the radius already, and the fog's lengths are
+the GROUND's, so its density falls as the square root of the radius (how
+far an eye sees is `sqrt(2 R h)`) and how deep the air pools is the relief,
+because that is what the weather has to fill.
+
+**Three whites and a black, each a different mistake.**
+
+- **The sky drew BLACK**, because the march's nought to one answer was
+  multiplied by the camera's own exposure (5.75e-4) as though it were a
+  radiance. It is a SHARE, so it is scaled into candela (`atmos::NITS`,
+  1,400) first and then taken through the exposure beside everything else.
+- **The sky drew WHITE**, three times over. The Mie sum was collapsed to
+  one channel, so the haze lost the per wavelength attenuation the Rayleigh
+  sum has and washed the hue out. Tenebris's own last line is
+  `1 - exp(-x)`, which is right for a shader writing an eight bit buffer
+  and wrong here, because Bevy tone maps downstream and running BOTH
+  compresses every channel toward one at the same rate exactly where the
+  air is thickest: the horizon came out blue by a factor of 1.3 compressed
+  and 2.0 uncompressed, and 1.3 is a white sky. And tenebris's lengths are
+  shares of a three hundred metre planet, which is what `Air::round` is
+  for. The coefficients were then SWEPT (`atmos::sizes::sky_colours`
+  prints it) and taken at the setting where the zenith is blue by a factor
+  of two and a half and the horizon is still the pale band it ought to be.
+- **A dark stripe along the horizon**, which the owner's own eye would have
+  caught and a picture did. `Air::floor` is the answer and the field's own
+  doc comment is the long form: what stops a view ray going DOWN is the
+  lowest the real ground reaches and never the mean radius, because
+  wherever the terrain is lower than the mean the dome cut its ray short,
+  marched fifteen hundred metres of air instead of two hundred kilometres,
+  and drew a black band between the sky and the horizon that no terrain
+  covered. Measured on the thousand kilometre planet: 2.93 at four tenths
+  of a milliradian under the horizontal and 0.034 at eight, a factor of
+  eighty seven across two pixels. It is also the only conditioning the test
+  has, since in `f32` the difference of two squares at 10^12 is quantised
+  to 131 km^2, which at twelve metres over the mean radius is half a per
+  cent of the whole term and at eight kilometres over the floor is eight
+  millionths.
+
+**The dome is BEHIND everything, and how far behind is a function of where
+the eye is.** It rides the eye, is drawn inside out, writes no depth and is
+never culled, and its colour is a DIRECTION, so growing it costs nothing.
+A fixed five hundred kilometres was enough while the planet was ten
+kilometres across and is not at a thousand: from four radii up the eye is
+three thousand kilometres off, so the dome stood IN FRONT of the planet and
+painted it out, a pale blue disc with no ground in it at all. `dome_radius`
+is `(|eye| + top) * 2` now, which is the far limb of the shell with the
+margin doubled.
+
+**The sun stands over where the WORLD starts, not along a world axis.**
+`SUN_UP` (32 degrees over the local horizon) and `SUN_BEARING` (40 round
+from local north) are the numbers, and `sun_over` turns them into a world
+direction at the harness's own starting point. It was a fixed world
+vector whose comment claimed it stood "a little over the horizon at the
+harness's start", which is a thing a world vector cannot promise: it is
+true of one spot and the towns are placed by the ground. On the thousand
+kilometre planet the port came out 56 degrees into its own NIGHT and the
+picture of its main street was black with speckle, which reads as a
+shading defect and is a clock. It is measured from the WORLD's start and
+never from `--eye`, so two pictures from two places are lit alike and only
+the camera moved.
+
+**A frame cap, swarm-demo's.** `--fps`, 144 by default and nought to lift
+it: vsync is the MONITOR's cap and not a cap at all, and a scene this cheap
+to simulate draws at the refresh rate and holds the card at full clock for
+frames nobody asked for. It is a DEADLINE rather than a fixed sleep, so the
+cap does not drift, and a frame that has already overrun resyncs to now
+rather than running the next few flat out.
 
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
@@ -1259,7 +1446,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 57, the core, about 4 s
+cargo test -p freeport_core                       # 85, the core, about 4 s
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -1268,13 +1455,18 @@ tools/bake_materials.sh --check                   # the maps match their graphs
 python3 tools/bundle_buildings.py --check         # the mockup's recipes match assets/buildings
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
-./target/release/freeport_app                     # a window: on foot on a street of the port; F flies, B builds, Tab wires, Esc frees the mouse
+./target/release/freeport_app                     # a window on the HEX world: a disc of columns round the eye and Planet-LOD past it, both made in the vertex stage; F flies, Tab wires, Esc frees the mouse
+./target/release/freeport_app --chunks            # the dual contoured world instead: on foot on a street of the port, B builds
 ./run.sh --test                                   # the core suite and the shape and recipe checks, then the build and the window; run.bat is the Windows twin, --shot out.png takes a picture with no display
-./target/release/freeport_app --fly --frames 20 --eye -1832,1474,4484 --look -1807,1453,4422 --shot town.png   # the port from 70 m up, headless under xvfb-run with VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
-./target/release/freeport_app --frames 50 --sculpt block --shot sculpt.png   # a block placed on the street once the ground has settled, and the chunks it remade
-./target/release/freeport_app --tiers                                       # the hex world: a disc of columns round the eye, Planet-LOD past it, both made in the vertex stage
-./target/release/freeport_app --tiers --frames 10 --eye 0,5012,-14 --look 0,4998,40 --shot seam.png     # the seam between the tiers, at the grazing angle that found it
-./target/release/freeport_app --tiers --frames 10 --eye 0,20000,0 --look 0,5000,0 --shot orbit.png      # the whole planet in 44 leaves and 704 triangles
+# Every headless run below is under xvfb-run with
+# VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json, and `--span` and
+# `--octaves` are what a picture on a software rasteriser is bought down
+# with, since the field in the vertex stage is nearly all of a frame there.
+./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,1000012,-14 --look 0,1000012,60 --shot graze.png   # the horizon dead level, which is where the dark band was
+./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,1030000,0 --look 0,1000000,120000 --shot high.png  # 30 km up: the curve, the sea and the haze
+./target/release/freeport_app --fly --span 20 --octaves 14 --frames 40 --eye 0,4000000,0 --look 0,1000000,0 --shot orbit.png      # the whole planet in 44 leaves and 704 triangles
+./target/release/freeport_app --chunks --octaves 14 --levels 9 --frames 20 --shot chunks.png   # the dual contoured world on the same planet, on the port's main street
+./target/release/freeport_app --chunks --frames 50 --sculpt block --shot sculpt.png            # a block placed on the street once the ground has settled, and the chunks it remade
 ```
 
 The mockups are `docs/mockups/marching-cubes.html` and
@@ -1300,34 +1492,66 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 57 tests in about 4 s. A 6 m sphere on a 32^3 lattice at
+- `freeport_core`: 85 tests in about 3.5 s. A 6 m sphere on a 32^3 lattice at
   half a metre marches to 5,288 triangles, a closed shell within 3% of the
   sphere's area, and dual contours to one at one level and across four.
-- The 10 km planet, in release on lavapipe: eleven levels of 0.25 m to 256 m
-  cells, 2,245 to 2,521 chunks wanted of the rings' 5,632, the rest ruled
-  rock or air without a sample; 387,308 triangles from 70 m over the port
-  and 807,367 on its main street; 7.3 to 8.5 ms a chunk on three workers,
-  16 to 21 s of work, settled in 17 s from the air and 56 to 77 s on the
-  street, the difference the frame rate of a software rasteriser drawing a
-  city. An edit on that street: a block dirties eight chunks, 30 to 39 ms
-  of work to contour them again, drawn 4.7 s later at that frame rate; the
-  walker stands on it the frame it lands.
-- The two tiers, on the same 10 km planet: one metre hex tiles
-  (306,472,962 round the planet, which is why a tile is an address and
-  never a list), a disc of 48 tiles, 9,409 prisms of 150,544 triangles;
-  Planet-LOD at ratio 6 cut 4 ways picks 3,059 leaves in 1.38 ms from the
-  ground and the vertex stage makes 48,944 triangles of them, 548 and
-  8,768 from two kilometres up, and 44 leaves and 704 triangles for the
-  whole planet from three radii. A frame on lavapipe is 3.97 s at ground
-  level, nearly all of it about 892,000 field evaluations of 80 hashes
-  each in the vertex stage: a tenth of a millisecond of real silicon. The
-  hex tier evaluates its field 48 times a prism where a compute pass
-  would do it once, which is the measured argument for moving it there
-  the day the count grows.
-- The towns: eight planned in 1.23 s (four thousand candidates on a golden
+- The planet is 1,000,000 m of radius, two thousand kilometres across, with
+  8,000 m of relief on 18 octaves and the sea 400 m under the mean radius.
+- The two tiers on it: one metre hex tiles (12,257,789,082,012 round the
+  planet, which is why a tile is an address and never a list), a disc of 48
+  tiles, 9,409 prisms of 150,544 triangles; Planet-LOD at ratio 6 cut 4
+  ways picks 8,120 leaves in 1.2 to 1.7 ms from the ground and the vertex
+  stage makes 129,920 triangles of them, 2,100 and 33,600 from 30 km up,
+  and 44 leaves and 704 triangles for the whole planet from four radii. The
+  hex tier evaluates its field 48 times a prism where a compute pass would
+  do it once, which is the measured argument for moving it there the day
+  the count grows.
+- What a bigger planet costs the far tier, at ratio 6 from the ground
+  (`lod::sizes::the_cost_of_a_bigger_planet`): 4,147 leaves in 0.65 ms at
+  5 km, 6,035 at 50 km, 7,172 at 200 km and 8,396 in 0.71 ms at 1,000 km,
+  19 levels deep. A leaf count is an ANGLE's and not a length's, so the
+  planet grew two hundred times for a factor of two. `MOST_LEAVES` is
+  12,288 for it, half again over the worst measured, and a truncation says
+  so rather than leaving a hole in the ground.
+- What it costs instead is PRECISION and OCTAVES. A vertex at a thousand
+  kilometres is 6.5 cm out of place the naive way and 18 microns through
+  `pos::unit_offset`; `log2(2 pi R / lumps / 2 m)` is 18 octaves against
+  11 on a five kilometre world.
+- The far tier's chord, at four radii up: 44 leaves over the planet, a sub
+  triangle 75 km across, and a 75 km chord on a 1,000 km sphere sags 703 m
+  under the sphere against a sea 400 m down, which is why a tier hands its
+  height over the sea down as a varying. 8.25% of the picture moved when it
+  did: sand continents to green ones on the same frame.
+- The dark band, as a picture rather than as a march: the same frame before
+  and after the floor, 0.361% of pixels over 8 of 255 and a worst of 232.
+- The sky under the horizon, measured on this planet with an eye 12 m up:
+  2.93 at four tenths of a milliradian under the horizontal and 0.034 at
+  eight with the ray stopped at the MEAN radius, a factor of 87 across two
+  pixels and a black stripe along the whole horizon; stopped at the lowest
+  the ground reaches it stays within a tenth of the horizontal's to sixteen
+  milliradians down.
+- `town::surface_radius` sphere traced on the field's own slope bound
+  rather than stepped a fixed half metre: 400 directions in 15 ms against
+  1,760 on the big planet and 9 against 15 on a five kilometre one, the
+  same answer to the last bit (nought of 400 differ). `town::plan` is 190
+  ms against 15 s, and 579 ms against 1.2 s on the small planet.
+- The dual contoured world, measured when the planet was 10 km, in release
+  on lavapipe: eleven levels of 0.25 m to 256 m cells, 2,245 to 2,521
+  chunks wanted of the rings' 5,632, the rest ruled rock or air without a
+  sample; 387,308 triangles from 70 m over the port and 807,367 on its main
+  street; 7.3 to 8.5 ms a chunk on three workers, 16 to 21 s of work,
+  settled in 17 s from the air and 56 to 77 s on the street, the difference
+  the frame rate of a software rasteriser drawing a city. An edit on that
+  street: a block dirties eight chunks, 30 to 39 ms of work to contour them
+  again, drawn 4.7 s later at that frame rate; the walker stands on it the
+  frame it lands.
+- The towns: eight planned in 190 ms (four thousand candidates on a golden
   spiral, the port first), 699 buildings from eight recipes and 7,744 pieces
   of street built in 14 to 20 ms, 2,132 lamps of which the nearest 48 are
-  lights.
+  lights. They plan on the thousand kilometre planet too, and 65 of the four
+  thousand candidates land in the 3 to 40 m band over the sea there against
+  3,676 on a five kilometre one, which is the margin a bigger planet leaves
+  and is worth watching if the relief grows again.
 - The sets: five on the ground (basalt, dunes, grass, concrete and hull
   plate), at 1024 a side, three array textures of five layers, each layer
   with an eleven level mip chain built at load.

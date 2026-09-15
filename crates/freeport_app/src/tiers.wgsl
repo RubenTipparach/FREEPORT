@@ -27,6 +27,7 @@
     mesh_view_bindings::{view, globals},
 }
 #import freeport::field
+#import freeport::frame
 #import freeport::water
 
 // What the tiers add to `terrain.wgsl`'s own bindings, which are the
@@ -37,21 +38,25 @@
 // with a size in bytes and no name (880 against 80, which was this file
 // carrying the hundreds' fields as well).
 struct Tier {
-    // The planet's centre in the render frame.
+    // The planet's centre in the render frame, w: how many leaves of the
+    // storage buffer are live.
     centre: vec4<f32>,
-    // Where the hex disc's middle is, as a UNIT direction, w: the cosine
-    // of the angle the far tier's hole reaches. It is not the anchor
-    // below: an anchor is a point in its FACE's plane and is shorter than
-    // one, so it cannot be the axis of an angle.
+    // The ANCHOR: one unit direction, the eye's own tile's, that every
+    // vertex in this draw is an offset from (`freeport::frame`). In w,
+    // the far tier's hole, as the SQUARED CHORD of the angle it reaches
+    // rather than its cosine, because a cosine near one is a number an
+    // f32 cannot tell from one.
     disc: vec4<f32>,
+    // Where the anchor's own ground stands in the RENDER frame, worked
+    // out in f64 on the CPU: `anchor * radius + centre`, which is the one
+    // large subtraction, done once and where it can be done exactly.
+    // Every vertex is this plus a small accurate offset.
+    base: vec4<f32>,
     // x: mean radius, y: the sea's radius, z: the relief, w: the lumps.
     shape: vec4<f32>,
     // x: octaves, y: seed, z: pieces a leaf's edge is cut into, w: the hex
     // grid's `n`, which nothing here reads and the log prints.
     counts: vec4<u32>,
-    // The hex anchor: the eye's own tile as a direction, w: how many
-    // leaves of the storage buffer are live.
-    eye: vec4<f32>,
     // The hex lattice's first step as a vector off the anchor, w: how deep
     // a column's skirt hangs, metres.
     lat1: vec4<f32>,
@@ -100,21 +105,59 @@ fn nowhere(vertex: Vertex) -> VertexOutput {
     return out;
 }
 
-// A point of the ground in the render frame: the direction out, the field
-// along it, and the planet's centre.
-fn place(p: field::Planet, dir: vec3<f32>) -> vec3<f32> {
-    return dir * field::ground(p, dir) + tier.centre.xyz;
+// Where one vertex is: an OFFSET from the anchor, and the direction it
+// works out to. Nothing here ever holds a planet sized number.
+struct Spot {
+    // `dir - anchor`, small and accurate.
+    off: vec3<f32>,
+    // The direction itself, which is only ever used as a direction.
+    dir: vec3<f32>,
+}
+
+// The spot a small step off the anchor reaches.
+fn spot(step: vec3<f32>) -> Spot {
+    var s: Spot;
+    s.off = frame::unit_offset(tier.disc.xyz, step);
+    s.dir = tier.disc.xyz + s.off;
+    return s;
+}
+
+// A point of the ground in the render frame, at `lift` metres over the
+// mean radius on top of the relief. The radius multiplies the OFFSET and
+// never the direction, which is the whole of the trick: `base` already
+// carries `anchor * radius + centre`, worked out in f64.
+fn place(p: field::Planet, s: Spot, up: f32) -> vec3<f32> {
+    return tier.base.xyz + s.off * p.radius + s.dir * up;
 }
 
 // One vertex, given where it is, the normal its triangle stands on and
 // which vertex of the draw it is.
-fn emit(vertex: Vertex, world: vec3<f32>, normal: vec3<f32>) -> VertexOutput {
+fn emit(
+    vertex: Vertex,
+    world: vec3<f32>,
+    normal: vec3<f32>,
+    over_sea: f32,
+) -> VertexOutput {
     var out: VertexOutput;
     out.world_position = vec4<f32>(world, 1.0);
     out.world_normal = normal;
     out.position = view.clip_from_world * vec4<f32>(world, 1.0);
 #ifdef VERTEX_OUTPUT_INSTANCE_INDEX
     out.instance_index = vertex.instance_index;
+#endif
+    // How far this vertex stands over the sea, carried down rather than
+    // worked out again from the fragment's own position. `terrain.wgsl`
+    // picks sand or grass off a band 1.5 m wide, and the fragment's
+    // position is INTERPOLATED across the triangle, which on a far leaf
+    // is a CHORD: at four radii up the whole planet is 44 leaves, a sub
+    // triangle is 75 km across, and a 75 km chord on a 1,000 km sphere
+    // sags 703 m below it. The sea is 400 m down, so the middle of every
+    // sub triangle read as below the sea and the continents came out
+    // sand while the sea itself, which is clipped on the true field at
+    // the corners, stayed where it belonged. A height interpolated
+    // between three corners has no sphere in it to sag.
+#ifdef VERTEX_UVS_A
+    out.uv = vec2<f32>(0.0, over_sea);
 #endif
     return out;
 }
@@ -142,9 +185,13 @@ fn face_normal(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, up: vec3<f32>) -> vec3<
 // nought <= q <= p <= sub, weighting the leaf's corners (sub - p), (p - q)
 // and q, so an edge of the leaf is a whole row of the lattice and two
 // leaves sharing an edge cut it alike.
-fn leaf_dir(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, p: i32, q: i32, sub: i32) -> vec3<f32> {
+// The corners in the buffer are OFFSETS from the anchor, so a weighted
+// sum of them with weights that add to one is the offset of the point:
+// `wa*(N+ra) + wb*(N+rb) + wc*(N+rc) = N + (wa*ra + wb*rb + wc*rc)`. The
+// large part cancels on the CPU, where it can.
+fn leaf_spot(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, p: i32, q: i32, sub: i32) -> Spot {
     let n = f32(sub);
-    return normalize(a * (f32(sub - p) / n) + b * (f32(p - q) / n) + c * (f32(q) / n));
+    return spot(a * (f32(sub - p) / n) + b * (f32(p - q) / n) + c * (f32(q) / n));
 }
 
 // Which three lattice points of a leaf's sub triangle `s` is. Row `r`
@@ -185,7 +232,7 @@ fn lod(vertex: Vertex) -> VertexOutput {
     let rest = id - leaf * per * 3;
     let s = rest / 3;
     let corner = rest - s * 3;
-    if (leaf >= i32(tier.eye.w)) {
+    if (leaf >= i32(tier.centre.w)) {
         return nowhere(vertex);
     }
     let a = leaves[u32(leaf * 3)].xyz;
@@ -193,18 +240,21 @@ fn lod(vertex: Vertex) -> VertexOutput {
     let c = leaves[u32(leaf * 3 + 2)].xyz;
     let pq = sub_triangle(s, sub);
     let p = planet();
-    var dir = array<vec3<f32>, 3>();
+    var at = array<Spot, 3>();
     for (var k = 0; k < 3; k = k + 1) {
-        dir[k] = leaf_dir(a, b, c, pq[k].x, pq[k].y, sub);
+        at[k] = leaf_spot(a, b, c, pq[k].x, pq[k].y, sub);
     }
     // The HOLE the hex disc stands in, cut here rather than by `select` on
     // the CPU: a sub triangle wholly inside the disc is not drawn, which
     // resolves the rim at the sub triangle's own size instead of a whole
     // leaf's, and leaves the CPU one `select` a frame to serve both the
     // ground and the sea.
-    if (dot(dir[0], tier.disc.xyz) > tier.disc.w
-        && dot(dir[1], tier.disc.xyz) > tier.disc.w
-        && dot(dir[2], tier.disc.xyz) > tier.disc.w) {
+    // The hole, measured as the squared chord off the anchor: a cosine
+    // near one is a number an f32 cannot tell from one, and a chord is
+    // the same test written where the precision is.
+    if (dot(at[0].off, at[0].off) < tier.disc.w
+        && dot(at[1].off, at[1].off) < tier.disc.w
+        && dot(at[2].off, at[2].off) < tier.disc.w) {
         return nowhere(vertex);
     }
     // The normal is the FIELD's gradient at this vertex, not its
@@ -216,8 +266,14 @@ fn lod(vertex: Vertex) -> VertexOutput {
     // over `sub`, so the normal is as coarse as the triangle carrying it
     // and no coarser.
     let step = length(a - b) * p.radius / f32(sub);
-    let d = dir[corner];
-    return emit(vertex, place(p, d), field::ground_normal(p, d, step));
+    let here = at[corner];
+    let up = field::surface(p, here.dir);
+    return emit(
+        vertex,
+        place(p, here, up),
+        field::ground_normal(p, here.dir, step),
+        up - (p.sea - p.radius),
+    );
 }
 
 // ---------------------------------------------------------------- the sea
@@ -244,7 +300,7 @@ fn sea(vertex: Vertex) -> VertexOutput {
     let rest = id - leaf * per * 3;
     let s = rest / 3;
     let corner = rest - s * 3;
-    if (leaf >= i32(tier.eye.w)) {
+    if (leaf >= i32(tier.centre.w)) {
         return nowhere(vertex);
     }
     let a = leaves[u32(leaf * 3)].xyz;
@@ -254,10 +310,13 @@ fn sea(vertex: Vertex) -> VertexOutput {
     let p = planet();
     var depth = array<f32, 3>();
     var dry = 0;
-    var dir = array<vec3<f32>, 3>();
+    var at = array<Spot, 3>();
+    // The sea's own height over the mean radius, which is what a vertex
+    // of the sheet is lifted by instead of the relief.
+    let sea_up = p.sea - p.radius;
     for (var k = 0; k < 3; k = k + 1) {
-        dir[k] = leaf_dir(a, b, c, pq[k].x, pq[k].y, sub);
-        depth[k] = p.sea - field::ground(p, dir[k]);
+        at[k] = leaf_spot(a, b, c, pq[k].x, pq[k].y, sub);
+        depth[k] = sea_up - field::surface(p, at[k].dir);
         if (depth[k] <= 0.0) {
             dry = dry + 1;
         }
@@ -265,14 +324,22 @@ fn sea(vertex: Vertex) -> VertexOutput {
     if (dry == 3) {
         return nowhere(vertex);
     }
-    let d = dir[corner];
-    let q = d * p.sea;
+    let here = at[corner];
     // The swell is `water_lib.wgsl`'s, the same function the dual
     // contoured sheet's vertex stage calls, so the two seas are one sea.
-    let lift = water::swell(q, tier.wave, tier.deep.w, globals.time);
-    var out = emit(vertex, q + d * lift + tier.centre.xyz, d);
+    // It is asked in the planet's own frame, which for a point on the
+    // sheet is its direction times the sea's radius.
+    let lift = water::swell(here.dir * p.sea, tier.wave, tier.deep.w, globals.time);
+    var out = emit(
+        vertex,
+        tier.base.xyz + here.off * p.radius + here.dir * (sea_up + lift),
+        here.dir,
+        0.0,
+    );
 #ifdef VERTEX_UVS_A
-    out.uv = vec2<f32>(max(depth[corner], 0.0), 0.0);
+    // The sheet's own lane: the water's COLUMN under this vertex, which
+    // `water.wgsl` reads as `WATER_COLUMN`.
+    out.uv.x = max(depth[corner], 0.0);
 #endif
     return out;
 }
@@ -300,14 +367,17 @@ fn hex_step(k: i32) -> vec2<f32> {
     return s[k];
 }
 
-// A tile's middle, as a direction. The lattice is carried as two steps off
-// the eye's own tile rather than as an address, which is
+// A tile's middle, as a spot off the anchor. The lattice is carried as
+// two steps rather than as an address, which is
 // `freeport_core::hex::Grid::basis`: over a disc of a few dozen metres on
 // a planet of kilometres the icosahedron's own lattice IS this affine one
 // to a few millimetres, and the twelve corners where it is not are what
-// `a_window_of_steps_is_the_grids_own_tiles` measures.
-fn tile_dir(uv: vec2<f32>) -> vec3<f32> {
-    return normalize(tier.eye.xyz + tier.lat1.xyz * uv.x + tier.lat2.xyz * uv.y);
+// `a_window_of_steps_is_the_grids_own_tiles` measures. The two steps come
+// down already divided by the anchor point's own length, so what is added
+// here is a small number and the anchor is the unit direction every other
+// tier measures from.
+fn tile_spot(uv: vec2<f32>) -> Spot {
+    return spot(tier.lat1.xyz * uv.x + tier.lat2.xyz * uv.y);
 }
 
 @vertex
@@ -327,47 +397,56 @@ fn hex(vertex: Vertex) -> VertexOutput {
     }
     let p = planet();
     let uv = vec2<f32>(f32(u), f32(v));
-    let mid = tile_dir(uv);
-    let top = field::ground(p, mid);
+    let middle = tile_spot(uv);
+    let top = field::surface(p, middle.dir);
     let foot = top - tier.lat1.w;
     // The hexagon's corners: each is the middle of the three tiles round
     // it, which is the dual of the lattice and the one construction every
-    // tile sharing that corner agrees on.
+    // tile sharing that corner agrees on. They are kept as OFFSETS, since
+    // an offset is what a position is built out of here: the average of
+    // three offsets is the offset of their average, and the anchor part
+    // of it never has to be formed.
     var corner = array<vec3<f32>, 6>();
-    var here = array<vec3<f32>, 6>();
+    var round_it = array<vec3<f32>, 6>();
     for (var i = 0; i < 6; i = i + 1) {
-        here[i] = tile_dir(uv + hex_step(i));
+        round_it[i] = tile_spot(uv + hex_step(i)).off;
     }
     for (var i = 0; i < 6; i = i + 1) {
-        corner[i] = normalize(mid + here[i] + here[(i + 1) % 6]);
+        corner[i] = (middle.off + round_it[i] + round_it[(i + 1) % 6]) / 3.0;
     }
     let tri = k / 3;
     let which = k - tri * 3;
     if (tri < TOP_TRIS) {
         // The top, as a fan from the first corner.
         var idx = array<i32, 3>(0, tri + 1, tri + 2);
-        let d = corner[idx[which]];
-        let world = d * top + tier.centre.xyz;
-        return emit(vertex, world, mid);
+        let off = corner[idx[which]];
+        let world = tier.base.xyz + off * p.radius + middle.dir * top;
+        return emit(vertex, world, middle.dir, top - (p.sea - p.radius));
     }
     // A side: the quad from one corner to the next, down to the skirt.
     let side = (tri - TOP_TRIS) / 2;
     let half = (tri - TOP_TRIS) - side * 2;
     let a = corner[side];
     let b = corner[(side + 1) % 6];
-    var at = array<vec3<f32>, 3>(a * top, b * top, b * foot);
+    // A corner's position is the base plus its offset times the radius,
+    // and its height is the column's top or its foot along the tile's own
+    // direction.
+    let pa = tier.base.xyz + a * p.radius;
+    let pb = tier.base.xyz + b * p.radius;
+    let up = middle.dir;
+    var at = array<vec3<f32>, 3>(pa + up * top, pb + up * top, pb + up * foot);
     if (half == 1) {
-        at = array<vec3<f32>, 3>(a * top, b * foot, a * foot);
+        at = array<vec3<f32>, 3>(pa + up * top, pb + up * foot, pa + up * foot);
     }
     // A side faces the edge it stands on, across the tile's own up: the
     // cross of its two edges says the same thing and says nothing at all
     // when the two columns either side of it are the same height, which is
     // most of a plain.
-    let edge = normalize(a + b);
-    let across = edge - mid * dot(edge, mid);
-    var n = mid;
+    let edge = normalize(tier.disc.xyz + (a + b) * 0.5);
+    let across = edge - up * dot(edge, up);
+    var n = up;
     if (dot(across, across) > 1.0e-12) {
         n = normalize(across);
     }
-    return emit(vertex, at[which] + tier.centre.xyz, n);
+    return emit(vertex, at[which], n, top - (p.sea - p.radius));
 }
