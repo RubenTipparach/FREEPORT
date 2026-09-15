@@ -11,8 +11,10 @@
 pub mod audit;
 pub mod dc;
 pub mod field;
+pub mod hex;
 pub mod json;
 pub mod lattice;
+pub mod lod;
 pub mod march;
 pub mod pos;
 pub mod qef;
