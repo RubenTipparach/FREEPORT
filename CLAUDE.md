@@ -150,6 +150,15 @@ Ported from swarm-demo's `CLAUDE.md`, which ported it from redux-tribes'
   is clamped and lies exactly when it matters.
 - **Before a push**: `/simplify` on the diff for reuse and altitude,
   `/code-review` for correctness, then the suites (`/tidy` runs them).
+- **A session never RE-ARMS itself.** No scheduled check-in, no timer, no
+  routine that wakes the session up to look at a pull request again, and
+  nothing that arms its own successor. A push and the pull request are the
+  handover, and after them the work is the owner's to look at; a loop that
+  wakes every hour to report that nothing changed is noise that costs
+  tokens and says nothing. If something really has to be watched, it is
+  watched by whatever GitHub already sends, and the session ends its turn.
+  This is the owner's own instruction and it holds until the owner says
+  otherwise.
 
 ## The world frame is f64 and the renderer's is measured from a floating origin
 
