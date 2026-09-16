@@ -21,6 +21,12 @@ use freeport_core::water::SURFACE;
 
 pub type WaterMaterial = ExtendedMaterial<StandardMaterial, WaterExt>;
 
+/// Radial displacement bound for `water_lib.wgsl::swell`. Its three sine
+/// weights sum to 0.36; amplitude comes from the actual material uniform.
+pub fn swell_bound(water: &WaterExt) -> f32 {
+    (0.18 + 0.12 + 0.06) * water.wave.w.abs()
+}
+
 /// What the shader is handed beyond the standard material. One uniform;
 /// the comments in `water.wgsl` say what each lane is.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -169,6 +175,12 @@ pub fn recentre(
     handle: &Handle<WaterMaterial>,
     centre: Vec3,
 ) {
+    if materials
+        .get(handle)
+        .is_none_or(|m| m.extension.centre.truncate() == centre)
+    {
+        return;
+    }
     if let Some(m) = materials.get_mut(handle) {
         m.extension.centre = centre.extend(m.extension.centre.w);
     }

@@ -18,6 +18,13 @@ use three distance-based detail levels. Buildings are baked with headless Blende
 editable boolean-cut windows and doors, transparent glazing, static runtime meshes,
 and collision from the same dimensions. See [the authoring and streaming guide](docs/buildings-and-streaming.md).
 
+The home planet is 1,000 km in radius, or 2,000 km across. The finest terrain
+grid defaults to 0.5 m cells; dual-contour vertices follow the surface, so edge
+lengths vary rather than forming an exact 50 cm mesh. Set `terrain_cell_size` in
+`assets/config/render.json`, or use `--cell-size 0.5`, to adjust it.
+See [flight performance](docs/flight-performance.md) for the optimizations,
+repeatable moving benchmarks and optional render profiling.
+
 `CLAUDE.md` is the rules and the reasons. `docs/freeport.html` is the design
 page ([published](https://claude.ai/code/artifact/7822c376-33d9-4391-9907-a958426efc29)): what is being built, the stack, the tooling and the
 two terrain mockups.
@@ -31,7 +38,7 @@ python3 tools/shape.py --check              # no file over 900 lines, no functio
 tools/get_material_maker.sh                 # fetch Material Maker into tools/ (gitignored)
 tools/bake_materials.sh                     # bake materials/*.ptex to assets/textures/terrain
 blender --background --factory-startup --python tools/bake_buildings.py # regenerate editable sources and static building LODs
-cargo test --release -p freeport_app gpu_matches_cpu -- --ignored --nocapture # validate the actual compute shader on a GPU
+cargo test --release -p freeport_app gpu_preserves_cpu_signs_and_lod_seams -- --ignored --nocapture # validate the actual compute shader on a GPU
 ```
 
 Left click captures the mouse; Escape releases it. On foot, use WASD, Shift to

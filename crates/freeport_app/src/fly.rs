@@ -16,8 +16,8 @@ pub(crate) struct FlightSettings {
     min_speed: f64,
     max_speed: f64,
     wheel_factor: f64,
-    surface_speed: f64,
-    ground_clearance: f64,
+    pub(crate) surface_speed: f64,
+    pub(crate) ground_clearance: f64,
 }
 
 impl Default for FlightSettings {

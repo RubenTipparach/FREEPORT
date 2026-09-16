@@ -209,8 +209,8 @@ impl Density for Planet {
         self.radius + surface - r + carve
     }
 
-    /// Outside the band the relief and the overhang can reach, the sign is
-    /// the sphere's.
+    /// Reject boxes using the radial band first, then a conservative local
+    /// bound. Town skirts are kept unless a box lies wholly on a level site.
     fn solid(&self, lo: DVec3, hi: DVec3) -> Option<bool> {
         let (near, far) = box_radii(lo, hi);
         let (floor, top) = self.band();
@@ -219,7 +219,7 @@ impl Density for Planet {
         } else if near > top {
             Some(false)
         } else {
-            None
+            self.local_solid(lo, hi)
         }
     }
 
@@ -229,6 +229,48 @@ impl Density for Planet {
 }
 
 impl Planet {
+    fn local_solid(&self, lo: DVec3, hi: DVec3) -> Option<bool> {
+        let centre = (lo + hi) * 0.5;
+        let reach = (hi - lo).length() * 0.5;
+        let radius = centre.length();
+        let near = radius - reach;
+        if near <= 0.0 || !near.is_finite() {
+            return None;
+        }
+        let dir = centre / radius;
+        let span = (2.0 * reach / near + 1e-12).min(2.0);
+        for site in &self.sites {
+            let distance = (dir - site.dir).length();
+            let (inner, outer) = site_band(site);
+            if (distance - span) * self.radius >= outer {
+                continue;
+            }
+            let level_chord = 2.0 * (0.5 * inner / self.radius).sin();
+            if inner > 0.0 && distance + span < level_chord {
+                return Sphere {
+                    radius: self.radius + site.h,
+                }
+                .solid(lo, hi);
+            }
+            // Its skirt may cross the box. A planet-wide skirt slope is much
+            // too loose to help, and overlapping sites must preserve order.
+            return None;
+        }
+        // The direction's derivative is bounded by 1 / near throughout this
+        // ball. Every octave's amplitude * frequency is one; ignoring their
+        // normalization makes this conservative for any octave count.
+        let relief =
+            self.relief.abs() * NOISE_SLOPE * self.lumps.abs() * self.octaves.max(1) as f64 / near;
+        let carve = if self.ledge > 0.0 {
+            self.overhang.abs() * NOISE_SLOPE / self.ledge
+        } else {
+            0.0
+        };
+        let value = self.at(centre);
+        let roundoff = 16.0 * f64::EPSILON * (self.radius.abs() + value.abs());
+        (value.abs() > (1.0 + relief + carve) * reach + roundoff).then_some(value > 0.0)
+    }
+
     /// The radii the surface stays between: the mean less and plus half the
     /// relief and half the overhang.
     pub fn band(&self) -> (f64, f64) {
@@ -240,7 +282,7 @@ impl Planet {
 /// The steepest `noise3` gets, per unit of its argument: a smoothstep
 /// climbs at one and a half at most, across a unit cell, along each of
 /// three axes.
-const NOISE_SLOPE: f64 = 1.5 * 1.7320508;
+const NOISE_SLOPE: f64 = 2.598_076_211_353_316;
 
 impl Planet {
     /// One from the radius, the relief's fractal (each octave doubles the
@@ -339,7 +381,11 @@ impl Density for Built<'_> {
     }
 
     fn material(&self, p: DVec3) -> u8 {
-        self.sample(p).1
+        if self.blocks.is_empty() {
+            TERRAIN
+        } else {
+            self.sample(p).1
+        }
     }
 
     /// The ground's answer, unless a block reaches into the box.
@@ -419,6 +465,16 @@ fn smooth(t: f64) -> f64 {
 /// Value noise on the integer lattice, in 0..1, smoothstepped so the lattice
 /// does not show as diamonds.
 pub fn noise3(p: DVec3, seed: u32) -> f64 {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // Detection guards every use; other architectures retain the scalar
+        // reference and no executable-wide CPU feature flag is required.
+        return unsafe { simd::noise3(p, seed) };
+    }
+    noise3_scalar(p, seed)
+}
+
+fn noise3_scalar(p: DVec3, seed: u32) -> f64 {
     let f = p.floor();
     let (x, y, z) = (f.x as i64, f.y as i64, f.z as i64);
     let t = p - f;
@@ -431,6 +487,9 @@ pub fn noise3(p: DVec3, seed: u32) -> f64 {
     let x11 = lerp(c(0, 1, 1), c(1, 1, 1), tx);
     lerp(lerp(x00, x10, ty), lerp(x01, x11, ty), tz)
 }
+
+#[cfg(target_arch = "x86_64")]
+mod simd;
 
 /// Fractal sum of `noise3`, in 0..1: each octave doubles the frequency and
 /// halves the weight.
@@ -512,6 +571,40 @@ pub fn sample(field: &dyn Density, corner: DVec3, cell: f64, n: usize) -> Grid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_bounds_reject_empty_boxes_inside_the_relief_band() {
+        let planet = Planet {
+            octaves: 18,
+            overhang: 3.0,
+            ledge: 12.0,
+            sites: vec![crate::town::Site {
+                dir: DVec3::Y,
+                h: 0.0,
+                r: 172.0,
+            }],
+            ..Planet::default()
+        };
+        for dir in [DVec3::Y, DVec3::X, DVec3::new(-0.6, 0.4, -0.7).normalize()] {
+            let surface = crate::town::surface_radius(&planet, dir);
+            for height in [-100.0, 100.0] {
+                let centre = dir * (surface + height);
+                let lo = centre - DVec3::splat(2.0);
+                let hi = centre + DVec3::splat(2.0);
+                assert_eq!(planet.solid(lo, hi), Some(height < 0.0));
+                for k in 0..5 {
+                    for j in 0..5 {
+                        for i in 0..5 {
+                            let p = lo + DVec3::new(i as f64, j as f64, k as f64);
+                            assert_eq!(planet.at(p) > 0.0, height < 0.0);
+                        }
+                    }
+                }
+            }
+            let centre = dir * surface;
+            assert_eq!(planet.solid(centre - DVec3::ONE, centre + DVec3::ONE), None);
+        }
+    }
 
     #[test]
     fn noise_is_in_range_and_deterministic() {

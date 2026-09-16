@@ -1,5 +1,11 @@
 # freeport
 
+Flight performance update: the finest terrain cell is 0.5 m, with ten levels
+retaining the previous outer streaming extent. Planning runs off-thread, noise
+has an exact AVX2 path, and GPU readback uses nonblocking polling so its worker
+cannot hold rendering's device locks across a wait. See `docs/flight-performance.md`
+for current measurements, diagnostics and the limits of this optimization pass.
+
 Current implementation update: terrain sampling is now batched in a compute
 shader, with f64 crossings and dual-contouring LOD seams retained on CPU. Mesh
 conversion runs on workers and asset installation has a real frame budget. Rings

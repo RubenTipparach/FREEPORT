@@ -1,6 +1,6 @@
 //! Inspect the actual terrain triangles, colored by their owning chunk's LOD.
 
-use crate::{Args, FINE};
+use crate::Args;
 use bevy::camera::visibility::RenderLayers;
 use bevy::pbr::wireframe::{Wireframe, WireframeColor, WireframeConfig};
 use bevy::prelude::*;
@@ -42,7 +42,12 @@ pub(crate) fn color(level: u8) -> Color {
     Color::srgb(rgb[0], rgb[1], rgb[2])
 }
 
-pub(crate) fn spawn_legend(mut commands: Commands, args: Res<Args>) {
+pub(crate) fn spawn_legend(
+    mut commands: Commands,
+    args: Res<Args>,
+    tuning: Res<crate::tuning::Tuning>,
+) {
+    let fine = args.cell_size.unwrap_or(tuning.terrain_cell_size);
     commands
         .spawn((
             Legend,
@@ -70,7 +75,7 @@ pub(crate) fn spawn_legend(mut commands: Commands, args: Res<Args>) {
                 parent.spawn((
                     Text::new(format!(
                         "LOD {level:2}   {:7.2} m cells",
-                        FINE * (1u64 << level) as f64
+                        fine * (1u64 << level) as f64
                     )),
                     TextFont {
                         font_size: 13.0,

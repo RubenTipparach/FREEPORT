@@ -1,6 +1,6 @@
 //! Continuous flight limits and collision, in a body's local f64 frame.
 
-use crate::field::Density;
+use crate::field::{site_band, Density, Planet, Sphere};
 use glam::DVec3;
 
 /// Smoothly reduce a requested cruise speed through the atmosphere. The
@@ -43,6 +43,85 @@ pub fn sweep(field: &dyn Density, from: DVec3, to: DVec3, clearance: f64) -> DVe
     from + direction * distance
 }
 
+/// Sweep with the slope of terrain that can actually influence this segment.
+/// Town skirts can be much steeper than wilderness. Including a remote skirt
+/// in every ray step makes contact recovery thousands of times too cautious.
+/// Normalized points on a segment follow the shorter arc between its endpoint
+/// directions, so their chord from the first direction never exceeds `span`.
+pub fn sweep_planet(planet: &Planet, from: DVec3, to: DVec3, clearance: f64) -> DVec3 {
+    if !from.is_finite() || !to.is_finite() {
+        return sweep(planet, from, to, clearance);
+    }
+    if planet.sites.is_empty() {
+        return sweep_along(planet, from, to, clearance);
+    }
+    let first = from.normalize_or(DVec3::Y);
+    let last = to.normalize_or(first);
+    // The small expansion covers rounding in normalization at planet scale.
+    let span = (first - last).length() + 1e-12;
+    let mut earlier_site = false;
+    for site in &planet.sites {
+        let (inner, _) = site_band(site);
+        let inside = 2.0 * (inner / (2.0 * planet.radius)).sin();
+        let separation = (first - site.dir).length();
+        if !earlier_site && separation + span < inside {
+            return sweep(
+                &Sphere {
+                    radius: planet.radius + site.h,
+                },
+                from,
+                to,
+                clearance,
+            );
+        }
+        earlier_site |= separation - span <= inside;
+    }
+    let mut local = planet.clone();
+    local.sites.retain(|site| {
+        let (_, outer) = site_band(site);
+        (first - site.dir).length() - span <= outer / planet.radius
+    });
+    sweep_along(&local, from, to, clearance)
+}
+
+struct Along<'a> {
+    planet: &'a Planet,
+    slope: f64,
+}
+
+impl Density for Along<'_> {
+    fn at(&self, p: DVec3) -> f64 {
+        self.planet.at(p)
+    }
+
+    fn slope(&self) -> f64 {
+        self.slope
+    }
+}
+
+fn sweep_along(planet: &Planet, from: DVec3, to: DVec3, clearance: f64) -> DVec3 {
+    let delta = to - from;
+    let length = delta.length();
+    if length == 0.0 {
+        return from;
+    }
+    let direction = delta / length;
+    let closest = from + direction * (-from.dot(direction)).clamp(0.0, length);
+    let near = closest.length();
+    if near < planet.radius * 0.5 {
+        return sweep(planet, from, to, clearance);
+    }
+    // Along this line |d(normalize(p))/dt| = |from x direction| / |p|^2.
+    // Radial travel has no relief or skirt derivative. Keep the full bound
+    // for the 3D carve, which can change even during a perfectly radial step.
+    let angular = planet.radius * from.cross(direction).length() / (near * near) + 1e-10;
+    let mut radial = planet.clone();
+    radial.relief = 0.0;
+    radial.sites.clear();
+    let slope = radial.slope() + planet.slope() * angular;
+    sweep(&Along { planet, slope }, from, to, clearance)
+}
+
 /// Distance along a unit ray to entering a sphere, or infinity if it misses.
 /// Used to split a space-speed step exactly at an atmosphere's boundary.
 pub fn entry_distance(at: DVec3, direction: DVec3, radius: f64) -> f64 {
@@ -63,7 +142,7 @@ pub fn entry_distance(at: DVec3, direction: DVec3, radius: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::{Planet, Sphere};
+    use crate::town::Site;
 
     #[test]
     fn speed_is_continuous_monotone_and_never_increases_a_slow_selection() {
@@ -119,5 +198,89 @@ mod tests {
             entry_distance(DVec3::new(10.0, 20.0, 0.0), DVec3::NEG_Y, 10.0),
             20.0
         );
+    }
+
+    #[test]
+    fn a_flat_town_recovers_to_contact_without_a_remote_skirt_work_limit() {
+        let planet = Planet {
+            octaves: 18,
+            sites: vec![Site {
+                dir: DVec3::Y,
+                h: 1200.0,
+                r: 160.0,
+            }],
+            ..Default::default()
+        };
+        let landed = sweep_planet(&planet, DVec3::Y * 1_004_100.0, DVec3::ZERO, 0.51);
+        assert!((landed.y - 1_001_200.51).abs() < 1e-5);
+        assert!(planet.at(landed) <= -0.51);
+        let takeoff = landed + DVec3::Y * 0.1;
+        assert_eq!(sweep_planet(&planet, landed, takeoff, 0.5), takeoff);
+    }
+
+    #[test]
+    fn local_slope_keeps_skirts_crossed_between_clear_endpoints() {
+        let planet = Planet {
+            radius: 1000.0,
+            relief: 0.0,
+            overhang: 0.0,
+            sites: vec![Site {
+                dir: DVec3::Y,
+                h: 20.0,
+                r: 40.0,
+            }],
+            ..Default::default()
+        };
+        let start = DVec3::new(-40.0, 1010.0, 0.0);
+        let end = DVec3::new(40.0, 1010.0, 0.0);
+        assert!(planet.at(start) < -0.5 && planet.at(end) < -0.5);
+        let stopped = sweep_planet(&planet, start, end, 0.5);
+        assert!(stopped.x < 0.0);
+        for i in 0..=1000 {
+            assert!(planet.at(start.lerp(stopped, i as f64 / 1000.0)) <= -0.5);
+        }
+    }
+
+    #[test]
+    fn remote_towns_cannot_slow_wilderness_collision() {
+        let mut planet = Planet {
+            octaves: 18,
+            ..Default::default()
+        };
+        let start = DVec3::X * 1_010_000.0;
+        let end = DVec3::X * 990_000.0;
+        let expected = sweep_planet(&planet, start, end, 0.5);
+        planet.sites.push(Site {
+            dir: DVec3::Y,
+            h: 1000.0,
+            r: 160.0,
+        });
+        assert_eq!(sweep_planet(&planet, start, end, 0.5), expected);
+        assert!(planet.at(expected) <= -0.5);
+    }
+
+    #[test]
+    fn radial_takeoff_on_a_skirt_keeps_its_distance_and_carve_collision() {
+        let planet = Planet {
+            octaves: 18,
+            sites: vec![Site {
+                dir: DVec3::Y,
+                h: 1200.0,
+                r: 160.0,
+            }],
+            ..Default::default()
+        };
+        let direction = DVec3::new(80e-6, 1.0, 0.0).normalize();
+        let ground = crate::town::surface_radius(&planet, direction);
+        let landed = sweep_planet(
+            &planet,
+            direction * (ground + 2.0),
+            direction * (ground - 2.0),
+            0.51001,
+        );
+        let wanted = landed + direction * 0.1 + DVec3::Z * 1e-5;
+        assert_eq!(sweep_planet(&planet, landed, wanted, 0.5), wanted);
+        let stopped = sweep_planet(&planet, wanted, direction * (ground - 20.0), 0.5);
+        assert!(planet.at(stopped) <= -0.5);
     }
 }

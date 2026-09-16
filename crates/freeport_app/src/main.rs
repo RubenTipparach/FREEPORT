@@ -31,12 +31,14 @@ mod args;
 mod buildings;
 mod city;
 mod compute;
+mod flight_bench;
 mod fly;
 mod lamps;
 mod lod_debug;
 mod meshing;
 mod planet_view;
 mod planets;
+mod render_probe;
 mod sky;
 mod stream;
 mod terrain;
@@ -95,12 +97,9 @@ const TOWNS: usize = 8;
 const TOWN_RADIUS: f64 = 80.0;
 /// The world's seed.
 const SEED: u32 = 7;
-/// The finest cell, metres, under the feet.
-const FINE: f64 = 0.25;
-/// Levels of rings: the coarsest box is `16 * 8 * FINE * 2^(LEVELS-1)`
-/// across, 32 km at eleven, which holds the whole planet from any eye on
-/// it.
-const LEVELS: u8 = 11;
+/// Ten levels at 0.5 m preserve the previous 32.8 km streaming box while
+/// removing the unnecessarily dense 0.25 m tier. Distant meshes fill the disk.
+const LEVELS: u8 = 10;
 /// Frames a second the loop is held to by default. Vsync is the MONITOR's
 /// cap and not a cap at all: a scene this cheap to simulate draws at the
 /// refresh rate and holds the card at full clock the whole time, which is
@@ -145,55 +144,84 @@ fn main() {
         enabled: args.lod_wire,
         frozen: false,
     };
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins((
-            WireframePlugin::default(),
-            TerrainPlugin,
-            WaterPlugin,
-            sky::SkyPlugin,
-        ))
-        .insert_resource(WireframeConfig {
-            global: args.wire && !args.lod_wire,
-            default_color: Color::srgb(0.1, 0.1, 0.12),
-        })
-        // What is BEHIND the sky is space, and the sky is the air: a
-        // painted blue would be a second answer to what the sky looks
-        // like, and the one that could not be right at dusk.
-        .insert_resource(ClearColor(Color::srgb(0.01, 0.012, 0.02)))
-        .insert_resource(args)
-        .insert_resource(lod_debug)
-        .insert_resource(tuning::Tuning::load())
-        .insert_resource(FlightSettings::load())
-        .init_resource::<Eye>()
-        .init_resource::<Frame>()
-        .init_resource::<Status>()
-        .add_systems(Startup, (compute::init_compute, spawn_world).chain())
-        .add_systems(Startup, lod_debug::spawn_legend)
-        .add_systems(
-            Update,
-            (
-                grab_mouse,
-                lod_debug::controls,
-                toggle_walk,
-                walk,
-                fly,
-                planets::activate,
-                rebase_origin,
-                planet_view::recentre,
-                city::update_lod,
-                stream,
-                light_lamps,
-                place_eye,
-                sky::drift_sky,
-                show_status,
-                lod_debug::apply,
-                take_shot,
-                hold_frame,
-            )
-                .chain(),
+    let mut app = App::new();
+    let present_mode = if args.benchmark.is_some() {
+        bevy::window::PresentMode::AutoNoVsync
+    } else {
+        default()
+    };
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            present_mode,
+            ..default()
+        }),
+        ..default()
+    }));
+    if args.benchmark.is_some() {
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
+    }
+    if args.profile_render {
+        app.add_plugins(render_probe::RenderProbePlugin);
+    }
+    app.add_plugins((
+        WireframePlugin::default(),
+        TerrainPlugin,
+        WaterPlugin,
+        sky::SkyPlugin,
+    ))
+    .insert_resource(WireframeConfig {
+        global: args.wire && !args.lod_wire,
+        default_color: Color::srgb(0.1, 0.1, 0.12),
+    })
+    // What is BEHIND the sky is space, and the sky is the air: a
+    // painted blue would be a second answer to what the sky looks
+    // like, and the one that could not be right at dusk.
+    .insert_resource(ClearColor(Color::srgb(0.01, 0.012, 0.02)))
+    .insert_resource(args)
+    .insert_resource(lod_debug)
+    .insert_resource(tuning::Tuning::load())
+    .insert_resource(FlightSettings::load())
+    .init_resource::<Eye>()
+    .init_resource::<Frame>()
+    .init_resource::<Status>()
+    .init_resource::<flight_bench::Benchmark>()
+    .add_systems(
+        Startup,
+        (compute::init_compute, spawn_world, flight_bench::setup).chain(),
+    )
+    .add_systems(
+        PreUpdate,
+        flight_bench::clear_input.after(bevy::input::InputSystems),
+    )
+    .add_systems(Startup, lod_debug::spawn_legend)
+    .add_systems(Last, flight_bench::after_update)
+    .add_systems(
+        Update,
+        (
+            grab_mouse,
+            lod_debug::controls,
+            toggle_walk,
+            walk,
+            fly,
+            flight_bench::drive,
+            planets::activate,
+            rebase_origin,
+            planet_view::recentre,
+            city::update_lod,
+            stream,
+            flight_bench::after_stream,
+            light_lamps,
+            place_eye,
+            sky::drift_sky,
+            show_status,
+            lod_debug::apply,
+            take_shot,
+            flight_bench::finish,
+            hold_frame,
         )
-        .run();
+            .chain(),
+    )
+    .run();
 }
 
 /// What a frame of input is read from: the clock, the keys, the mouse's
@@ -282,8 +310,9 @@ fn spawn_world(
     // and the cells either side of it solve to one point, which the core's
     // audit counts as a pinch), and far enough out that every index over
     // the planet is positive.
-    let corner = DVec3::splat(-2.0 * RADIUS - 100.0 + 0.5 * FINE);
-    let lat = Lattice::new(corner, FINE);
+    let fine = args.cell_size.unwrap_or(tuning.terrain_cell_size);
+    let corner = DVec3::splat(-2.0 * RADIUS - 100.0 + 0.5 * fine);
+    let lat = Lattice::new(corner, fine);
     let frames: Vec<_> = world
         .towns
         .iter()
@@ -482,6 +511,7 @@ fn spawn_camera(
             intensity: 1.0,
             ..default()
         },
+        sky::StaticEnvironment,
         fly,
     ));
 }
@@ -550,7 +580,7 @@ fn show_status(
 /// it is off under `--shot`, where a headless run wants every frame it
 /// can get.
 fn hold_frame(args: Res<Args>, mut due: Local<Option<Instant>>) {
-    if args.fps <= 0.0 || args.shot.is_some() {
+    if args.fps <= 0.0 || args.shot.is_some() || args.benchmark.is_some() {
         return;
     }
     let frame = std::time::Duration::from_secs_f64(1.0 / args.fps);

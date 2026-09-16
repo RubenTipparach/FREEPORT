@@ -5,3 +5,7 @@
 __pycache__/
 *.blend1
 /docs/mockups/shots/*.tmp.png
+
+# Vendored third-party content (tenebris). 85 MB of assets that are not
+# ours to carry in this history.
+external/

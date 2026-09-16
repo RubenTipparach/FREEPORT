@@ -1,6 +1,6 @@
 # Flight and planet exploration
 
-Freeport now has three nearby landable worlds: Ember (420 km radius), Pelagos
+Freeport has a 1,000 km radius, or 2,000 km diameter. Its three nearby landable worlds are Ember (420 km radius), Pelagos
 (760 km), and Rime (280 km). Their positions, relief, sea levels and seeds come
 from `assets/config/planets.json`. The worlds are stationary for now.
 
@@ -24,8 +24,10 @@ to requested cruise speed, and applies after boost. Movement is split at the
 atmosphere boundary and again by altitude, so a long frame cannot skip the region.
 Lower wheel settings remain lower; departure restores cruise speed automatically.
 
-Slowing down is separate from collision. `freeport_core::flight::sweep` checks the
-entire segment using the terrain density's slope bound. It catches a trajectory
+Slowing down is separate from collision. `freeport_core::flight::sweep_planet` checks the
+entire segment using a conservative slope bound for the swept region. Distant town
+skirts do not inflate that bound, and radial recovery uses the radial derivative.
+It catches a trajectory
 whose endpoints are both outside a planet, and stops at the last verified clear
 point if its work budget runs out. Collision uses the procedural field even when
 terrain meshes are still loading. Contact recovery leaves room to take off again;

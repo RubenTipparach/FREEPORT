@@ -9,6 +9,9 @@
 //! the sky they stand under. Tenebris samples its fog off its own sky
 //! every frame for exactly this reason, and says so.
 
+mod environment;
+pub(crate) use environment::StaticEnvironment;
+
 use crate::terrain::TerrainMaterial;
 use crate::water::WaterMaterial;
 use bevy::asset::embedded_asset;
@@ -143,7 +146,10 @@ impl Plugin for SkyPlugin {
             .resource::<AssetServer>()
             .load("embedded://freeport_app/atmos.wgsl");
         app.insert_resource(Lib(lib));
-        app.add_plugins(MaterialPlugin::<Sky>::default());
+        app.add_plugins((
+            MaterialPlugin::<Sky>::default(),
+            environment::StaticEnvironmentPlugin,
+        ));
     }
 }
 

@@ -344,10 +344,7 @@ mod tests {
         );
         let (lo, hi) = id.bounds(&lat, MARGIN);
         assert_eq!(lo, lat.point([256 - 16, -128 - 16, 640 - 16]));
-        assert_eq!(
-            hi,
-            lat.point([256 + 128 + 16, -128 + 128 + 16, 640 + 128 + 16])
-        );
+        assert_eq!(hi, lat.point([400, 16, 784]));
     }
 
     #[test]

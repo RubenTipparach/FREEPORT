@@ -1,9 +1,10 @@
 //! Bounded sampling and meshing workers, with cancellation before costly work.
 
-use crate::compute::{Sampler, BATCH};
+use crate::compute::Sampler;
 use crate::terrain::{chunk_mapping, to_mesh};
 use crate::water::to_sheet;
 use crate::World;
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use freeport_core::dc::{contour, contour_sampled, DcMesh};
 use freeport_core::field::Density;
@@ -42,10 +43,11 @@ impl Job {
         if self.cancelled.load(Ordering::Relaxed) {
             return false;
         }
-        let (lo, hi) = self.id.bounds(&self.lat, freeport_core::lattice::MARGIN);
+        let (lo, hi) = self.id.bounds(&self.lat, 0);
         if self.world.planet.solid(lo, hi).is_some() {
             return false;
         }
+        let (lo, hi) = self.id.bounds(&self.lat, freeport_core::lattice::MARGIN);
         (0..8).any(|corner| {
             let p = bevy::math::DVec3::new(
                 if corner & 1 == 0 { lo.x } else { hi.x },
@@ -123,6 +125,9 @@ impl Job {
                 .and_then(|m| m.indices())
                 .map_or(0, |i| i.len() / 3);
         }
+        for mesh in done.mesh.iter_mut().chain(done.sheet.iter_mut()) {
+            mesh.asset_usage = RenderAssetUsages::RENDER_WORLD;
+        }
         done.ms = self.sample_ms + t0.elapsed().as_secs_f32() * 1000.0;
         done
     }
@@ -162,7 +167,7 @@ fn sample_batches(take: Receiver<Job>, sampled: Sender<Job>, sampler: Sampler) {
     let mut enabled = true;
     while let Ok(first) = take.recv() {
         let mut incoming = vec![first];
-        incoming.extend(take.try_iter().take(BATCH - 1));
+        incoming.extend(take.try_iter().take(sampler.batch_limit - 1));
         let mut batches: Vec<Vec<Job>> = Vec::new();
         for job in incoming {
             if enabled && job.needs_gpu() {
@@ -180,18 +185,15 @@ fn sample_batches(take: Receiver<Job>, sampled: Sender<Job>, sampler: Sampler) {
         }
         for mut batch in batches {
             let t0 = Instant::now();
-            let chunks: Vec<_> = batch.iter().map(|job| (job.lat, job.id)).collect();
-            match sampler.sample(&batch[0].world.planet, &chunks) {
-                Ok(values) => {
-                    let ms = t0.elapsed().as_secs_f32() * 1000.0 / batch.len() as f32;
-                    for (job, samples) in batch.iter_mut().zip(values) {
-                        job.samples = Some(samples);
-                        job.sample_ms = ms;
-                    }
-                }
-                Err(e) => {
-                    warn!("GPU density sampling failed; using CPU: {e}");
-                    enabled = false;
+            let values = sample_if_enabled(&mut enabled, || {
+                let chunks: Vec<_> = batch.iter().map(|job| (job.lat, job.id)).collect();
+                sampler.sample(&batch[0].world.planet, &chunks)
+            });
+            if let Some(values) = values {
+                let ms = t0.elapsed().as_secs_f32() * 1000.0 / batch.len() as f32;
+                for (job, samples) in batch.iter_mut().zip(values) {
+                    job.samples = Some(samples);
+                    job.sample_ms = ms;
                 }
             }
             for job in batch {
@@ -199,6 +201,48 @@ fn sample_batches(take: Receiver<Job>, sampled: Sender<Job>, sampler: Sampler) {
                     return;
                 }
             }
+        }
+    }
+}
+
+/// A failed readback destroys its buffer. Disable the sampler immediately,
+/// including remaining world-specific batches from this same queue drain.
+fn sample_if_enabled(
+    enabled: &mut bool,
+    sample: impl FnOnce() -> Result<Vec<Vec<f32>>, String>,
+) -> Option<Vec<Vec<f32>>> {
+    if !*enabled {
+        return None;
+    }
+    match sample() {
+        Ok(values) => Some(values),
+        Err(error) => {
+            warn!("GPU density sampling failed; using CPU: {error}");
+            *enabled = false;
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sample_if_enabled;
+
+    #[test]
+    fn failed_gpu_batch_never_reuses_the_destroyed_sampler() {
+        let mut enabled = true;
+        assert_eq!(
+            sample_if_enabled(&mut enabled, || Ok(vec![vec![1.0]])),
+            Some(vec![vec![1.0]])
+        );
+        assert!(enabled);
+        assert!(sample_if_enabled(&mut enabled, || Err("readback failed".into())).is_none());
+        assert!(!enabled);
+        for _ in 0..3 {
+            assert!(sample_if_enabled(&mut enabled, || {
+                panic!("the failed sampler cannot serve later batches")
+            })
+            .is_none());
         }
     }
 }

@@ -10,7 +10,7 @@ struct Point {
 }
 @group(0) @binding(0) var<storage, read> points: array<Point>;
 @group(0) @binding(1) var<storage, read_write> densities: array<f32>;
-@group(0) @binding(2) var<uniform> settings: vec4<u32>; // seed, octaves, count
+@group(0) @binding(2) var<uniform> settings: vec4<u32>; // seed, octaves, count, error bits
 
 fn hash(p: vec3<i32>, seed: u32) -> f32 {
     var h = u32(p.x) * 0x8DA6B343u ^ u32(p.y) * 0xD8163841u
@@ -43,23 +43,34 @@ fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if i >= settings.z { return; }
     let p = points[i];
     var density = p.relief_hi.w;
-    if p.relief_lo.w != 0.0 {
-        var total = 0.0;
-        var amplitude = 1.0;
-        var norm = 0.0;
-        var frequency = 1.0;
-        for (var octave = 0u; octave < settings.y; octave++) {
-            total += amplitude * noise(p.relief_hi.xyz * frequency,
-                p.relief_lo.xyz * frequency, settings.x + octave);
-            norm += amplitude;
-            amplitude *= 0.5;
-            frequency *= 2.0;
-        }
-        density += (2.0 * total / norm - 1.0) * p.relief_lo.w;
-    }
     if p.carve_hi.w != 0.0 {
         density += (noise(p.carve_hi.xyz, p.carve_lo.xyz, settings.x + 0x9E37u) - 0.5)
             * p.carve_hi.w;
+    }
+    if p.relief_lo.w != 0.0 {
+        // Contouring uses only these signs. A remaining octave contributes
+        // between zero and its amplitude, so its interval can prove the sign
+        // without evaluating it. Crossings and normals are still solved in f64.
+        let norm = 2.0 - exp2(1.0 - f32(settings.y));
+        let scale = 2.0 * p.relief_lo.w / norm;
+        let error = 2.0 * bitcast<f32>(settings.w);
+        var amplitude = 1.0;
+        var remaining = norm;
+        var frequency = 1.0;
+        density -= p.relief_lo.w;
+        for (var octave = 0u; octave < settings.y; octave++) {
+            let tail = scale * remaining;
+            let middle = density + 0.5 * tail;
+            if abs(middle) > 0.5 * abs(tail) + error {
+                densities[i] = middle;
+                return;
+            }
+            density += scale * amplitude * noise(p.relief_hi.xyz * frequency,
+                p.relief_lo.xyz * frequency, settings.x + octave);
+            remaining = max(0.0, remaining - amplitude);
+            amplitude *= 0.5;
+            frequency *= 2.0;
+        }
     }
     densities[i] = density;
 }

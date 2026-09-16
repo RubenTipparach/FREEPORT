@@ -76,16 +76,20 @@ fn contour_flat(field: &dyn Density, lat: &Lattice, at: i64, n: i64) -> Vec<(DVe
 
 #[test]
 fn every_component_row_partitions_the_crossed_edges() {
-    for config in 0..256 {
+    for (config, edges) in EDGE_TABLE.iter().enumerate() {
         let comp = components(config);
-        for e in 0..12 {
+        for (e, component) in comp.iter().enumerate() {
             assert_eq!(
-                comp[e] >= 0,
-                EDGE_TABLE[config] & (1 << e) != 0,
+                *component >= 0,
+                edges & (1 << e) != 0,
                 "config {config} edge {e}"
             );
         }
         let count = comp.iter().max().copied().unwrap_or(-1) + 1;
+        assert!(
+            count <= 4,
+            "config {config} exceeds the cell vertex capacity"
+        );
         for k in 0..count {
             assert!(comp.contains(&k), "config {config} skips surface {k}");
         }

@@ -4,6 +4,62 @@ use crate::field::Planet;
 use crate::lattice::Rings;
 
 #[test]
+fn local_culling_preserves_owned_apron_polygons_near_town_skirts() {
+    let planet = Planet {
+        radius: 1_000_000.0,
+        relief: 8_000.0,
+        lumps: 12.0,
+        octaves: 18,
+        overhang: 3.0,
+        ledge: 12.0,
+        sites: vec![crate::town::Site {
+            dir: DVec3::Y,
+            h: 0.0,
+            r: 172.0,
+        }],
+        ..Planet::default()
+    };
+    let lat = Lattice::new(DVec3::splat(-2_000_099.75), 0.5);
+    let mut tested = 0;
+    for dir in [
+        DVec3::Y,
+        DVec3::new(87.0, planet.radius, 3.0).normalize(),
+        DVec3::new(200.0, planet.radius, 8.0).normalize(),
+    ] {
+        let eye = dir * crate::town::surface_radius(&planet, dir);
+        let rings = Rings::around(&lat, eye, 4);
+        let mut culled: Vec<_> = rings
+            .chunks()
+            .into_iter()
+            .filter(|id| {
+                let (lo, hi) = id.bounds(&lat, 0);
+                let (near, far) = crate::field::box_radii(lo, hi);
+                let (floor, top) = planet.band();
+                // Only boxes the old planet-wide band retained, beside a coarser
+                // neighbor. These exercise the newly culled seam owners.
+                let sig = rings.signature(*id);
+                near <= top
+                    && far >= floor
+                    && planet.solid(lo, hi).is_some()
+                    && (0..26).any(|i| (sig >> (i * 2)) & 3 == 2)
+            })
+            .collect();
+        culled.sort();
+        for id in culled.into_iter().take(24) {
+            // contour does not call solid: this is the full original mesher,
+            // including its apron and coarse seam cells, without box culling.
+            let reference = contour(&planet, &lat, id, &rings);
+            assert_eq!(reference.triangles(), 0, "culled seam owner {id:?}");
+            tested += 1;
+        }
+    }
+    assert!(
+        tested >= 12,
+        "not enough newly culled seam owners: {tested}"
+    );
+}
+
+#[test]
 fn rough_planet_lod_boundaries_have_no_open_edges() {
     let planet = Planet {
         radius: 20.0,

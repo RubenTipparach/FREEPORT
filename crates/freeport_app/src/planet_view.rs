@@ -84,8 +84,14 @@ pub(crate) fn recentre(
 ) {
     for body in &planets.bodies {
         let centre = frame.0.local(WorldPos(body.centre));
-        if let Some(material) = materials.get_mut(&body.material) {
-            material.extension.centre = centre.extend(0.0);
+        let desired = centre.extend(0.0);
+        let changed = materials
+            .get(&body.material)
+            .is_some_and(|m| m.extension.centre != desired);
+        if changed {
+            if let Some(material) = materials.get_mut(&body.material) {
+                material.extension.centre = desired;
+            }
         }
         crate::water::recentre(&mut waters, &body.water, centre);
     }

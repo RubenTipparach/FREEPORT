@@ -42,28 +42,35 @@ models, whose box and pane winding is now corrected.
 ## Terrain
 
 The surface remains dual contouring on the existing shared lattice. The GPU
-compute shader evaluates batches of up to eight density grids, including the
+compute shader evaluates bounded batches of density grids (two by default, at
+most eight), including the
 coarse-neighbour apron. Input preparation subtracts planetary radii and blends town
 sites in f64. High/low noise coordinates retain detail at large planetary radii.
 Samples close enough to zero to risk a float sign difference are checked against
 the CPU field. Surface root finding, QEF vertices, collision, and LOD seam topology
-still use that reference field. This is compute-assisted meshing, not a fully
+still use that reference field. Octave evaluation can stop when the remaining
+amplitude cannot change a sample's sign. This is compute-assisted meshing, not a fully
 GPU-resident mesh pipeline.
 
-A dedicated worker owns the reusable compute buffers and waits for readback.
-The frame thread never waits for GPU sampling. Meshing workers also convert to
+A dedicated worker owns the reusable compute buffers and receives readback.
+It uses nonblocking device polling: a blocking device wait also holds wgpu locks
+needed by rendering on the shared device. Meshing workers also convert to
 Bevy meshes, so the frame's upload budget covers installing completed assets and
 spawning their entities. Obsolete queued work is cancelled, and the bounded number
 of pending jobs limits both in-flight memory and wasted work. A readback failure
 switches subsequent jobs to CPU sampling. Software adapters and unsupported
 compute limits select CPU automatically; `--cpu-terrain` explicitly selects it.
+Conservative local field bounds skip whole air/rock chunks before dispatch.
 Fully levelled town chunks have no noise to evaluate and bypass the compute
 dispatch, so their CPU work can overlap GPU batches for the surrounding terrain.
 
-Terrain rings drop unnecessary fine levels as height increases, with hysteresis,
+Layout culling, seam signatures and distance ordering run on a separate planner
+thread. The frame thread consumes an already ordered queue. Terrain rings drop
+unnecessary fine levels as height increases, with hysteresis,
 while retaining the adjacent-level seam invariant. Replacement meshes are uploaded
 hidden within the frame budget. The old layout remains visible until every new
 chunk and changed neighbor seam is ready, then terrain and water swap together.
+Hidden old entities are destroyed over subsequent frames within a count budget.
 The target layout stays fixed while building, and catches up with the current eye
 after publishing, so motion cannot continually cancel the transition. Initial
 loading still appears progressively. Staging temporarily retains both layouts in
@@ -78,10 +85,14 @@ Look for edges meeting at the color boundaries, not just triangles overlapping.
 Tab returns to the ordinary global wireframe toggle. Terrain keeps its shared
 field normals across transitions; architectural materials retain hard creases.
 
+The finest grid uses 0.5 m cells, configurable as `terrain_cell_size` or
+`--cell-size`. Ten levels retain the former 32.8 km outer streaming box. Vertices
+follow the contoured surface; cell size is not an exact triangle-edge length.
+
 `assets/config/render.json` controls the mesh installation time/count budgets,
-queue lookahead, worker count, and building LOD distances/hysteresis. Distances are
+queue lookahead, worker count, compute batch size, and building LOD distances/hysteresis. Distances are
 metres from the town's bounds in the absolute world frame. Zero selects the default.
-The default worker count reserves two hardware threads and caps terrain workers
+The default worker count uses half the available hardware threads and caps terrain workers
 at eight. Building LOD thresholds are 250 and 1,200 metres, with 15% hysteresis.
 
 ## Validation and measurements
@@ -89,16 +100,18 @@ at eight. Building LOD thresholds are 250 and 1,200 metres, with 15% hysteresis.
 ```sh
 cargo test -p freeport_core
 cargo test --release -p freeport_app
-cargo test --release -p freeport_app gpu_matches_cpu -- --ignored --nocapture
+cargo test --release -p freeport_app gpu_preserves_cpu_signs_and_lod_seams -- --ignored --nocapture
 cargo clippy -p freeport_core -- -D warnings
 cargo clippy -p freeport_app -- -D warnings
 python tools/shape.py --check
 ```
 
 The explicit GPU test compiles and dispatches the actual WGSL shader, compares
-74,088 samples against the CPU field at multiple LODs and a town apron, and checks
+sample signs against the CPU field at multiple LODs and a town apron, and checks
 that the generated vertex positions, normals and indices agree exactly. It reports
-sampling times including input preparation and readback. The default app tests
+sampling times including input preparation and readback. Coverage includes every
+configured planet and a 3,000 km radius, 290 km relief, 24-octave stress world.
+The default app tests
 also load and validate every committed building variant.
 
 The streaming tests deliver replacement meshes out of order and check that
@@ -118,8 +131,9 @@ timeout before the terrain settles has a null settle time and pending work; it
 must not be reported as a completed loading measurement. Sampling speed, total
 loading time and steady frame rate are separate measurements.
 
-Measured on the local RTX 3070, release build, 11 terrain levels, six meshing
-workers, stationary default port view, sequential isolated runs:
+Before the flight optimization pass, measured on the local RTX 3070, release
+build, 11 terrain levels, six meshing workers, stationary default port view,
+sequential isolated runs:
 
 | Measurement | CPU sampling | Compute sampling |
 | --- | ---: | ---: |
@@ -132,3 +146,4 @@ workers, stationary default port view, sequential isolated runs:
 This is about 33% less loading time in that scene; it is not a claim of a 33%
 increase in steady-state frame rate. A 600-frame automated walk also settled
 with no pending jobs and 1,856 loaded chunks in the four-level test area.
+See `flight-performance.md` for the current moving-flight measurements.

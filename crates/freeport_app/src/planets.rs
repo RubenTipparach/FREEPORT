@@ -7,7 +7,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::atmos::Air;
 use freeport_core::field::{Density, Planet};
-use freeport_core::flight::{approach_speed, entry_distance, sweep};
+use freeport_core::flight::{approach_speed, entry_distance, sweep_planet};
 use freeport_core::walker::Bounds;
 use freeport_core::water::Sea;
 use serde::Deserialize;
@@ -201,15 +201,28 @@ impl Body {
 
     fn recover(&self, at: DVec3, clearance: f64) -> DVec3 {
         let local = at - self.centre;
-        if local.length() > self.world.planet.band().1 + clearance + 0.02
-            || self.world.planet.at(local) < -clearance - 0.0001
-        {
+        let planet = &self.world.planet;
+        let radius = local.length();
+        let outside_radius = planet.band().1 + clearance + 1.0;
+        if radius > outside_radius {
+            return at;
+        }
+        let density = planet.at(local);
+        if density < -clearance - 0.0001 {
             return at;
         }
         // Only invalid starting positions use recovery. Normal travel is swept.
+        // Bracket nearby air first: a contact needs centimetres of correction,
+        // not a sweep through kilometres of empty air from the relief envelope.
         let direction = local.normalize_or(DVec3::Y);
-        let outside = direction * (self.world.planet.band().1 + clearance + 1.0);
-        self.centre + sweep(&self.world.planet, outside, local, clearance + 0.01)
+        let reach = (outside_radius - radius).max(0.0);
+        let mut distance = (density + clearance + 0.02).max(0.02).min(reach);
+        let mut outside = local + direction * distance;
+        while distance < reach && planet.at(outside) >= -clearance - 0.01 {
+            distance = (distance * 2.0).min(reach);
+            outside = local + direction * distance;
+        }
+        self.centre + sweep_planet(planet, outside, local, clearance + 0.01)
     }
 
     fn stop(&self, from: DVec3, to: DVec3, clearance: f64) -> DVec3 {
@@ -228,7 +241,7 @@ impl Body {
             return to;
         }
         let start = local + delta / length * entry;
-        let end = sweep(&self.world.planet, start, to - self.centre, clearance);
+        let end = sweep_planet(&self.world.planet, start, to - self.centre, clearance);
         self.centre + end
     }
 }

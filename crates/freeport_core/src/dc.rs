@@ -174,10 +174,13 @@ fn perpendicular(axis: usize) -> (usize, usize) {
 
 /// A leaf's vertices: the surface each edge is on and a mesh vertex per
 /// surface.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct Verts {
     comp: [i8; 12],
-    verts: Vec<u32>,
+    // The 256 cell configurations contain at most four disjoint surfaces.
+    // Copying incident cells for every polygon must not allocate.
+    verts: [u32; 4],
+    count: usize,
 }
 
 /// A leaf: a cell of the chunk's level, or of the level above at a seam,
@@ -395,7 +398,7 @@ impl Chunk<'_> {
     /// faces.
     fn verts(&mut self, leaf: Leaf) -> Verts {
         if let Some(v) = self.leaves.get(&leaf) {
-            return v.clone();
+            return *v;
         }
         let step = 1i64 << (leaf.level - self.id.level);
         let base = [
@@ -418,9 +421,14 @@ impl Chunk<'_> {
         let count = comp.iter().max().map(|&m| m + 1).unwrap_or(0).max(0) as usize;
         let lo = self.lat.point(self.fine(base));
         let hi = lo + DVec3::splat(step as f64 * self.cell());
-        let mut verts = Vec::with_capacity(count.max(1));
+        let mut verts = [0; 4];
+        let mut vertex_count = count;
         for k in 0..count as i8 {
-            let mut xs = Vec::new();
+            let mut xs = [Crossing {
+                p: DVec3::ZERO,
+                n: DVec3::ZERO,
+            }; 12];
+            let mut crossings = 0;
             for (e, (at, axis)) in EDGE_AT.iter().enumerate() {
                 if comp[e] != k {
                     continue;
@@ -431,20 +439,26 @@ impl Chunk<'_> {
                     base[2] + at[2] as i64 * step,
                 ];
                 let id = self.crossing(self.fine(a), *axis, step * self.id.scale());
-                xs.push(self.crossings[id as usize]);
+                xs[crossings] = self.crossings[id as usize];
+                crossings += 1;
             }
-            let (p, n) = qef(&xs, lo, hi);
-            verts.push(self.push_vertex(p, n, leaf.level));
+            let (p, n) = qef(&xs[..crossings], lo, hi);
+            verts[k as usize] = self.push_vertex(p, n, leaf.level);
         }
         if count == 0 && step > 1 {
             let xs = self.face_crossings(base, step);
             if !xs.is_empty() {
                 let (p, n) = qef(&xs, lo, hi);
-                verts.push(self.push_vertex(p, n, leaf.level));
+                verts[0] = self.push_vertex(p, n, leaf.level);
+                vertex_count = 1;
             }
         }
-        let v = Verts { comp, verts };
-        self.leaves.insert(leaf, v.clone());
+        let v = Verts {
+            comp,
+            verts,
+            count: vertex_count,
+        };
+        self.leaves.insert(leaf, v);
         v
     }
 
@@ -562,7 +576,7 @@ impl Chunk<'_> {
             level: self.id.level + 1,
             cell: c,
         });
-        if v.verts.is_empty() {
+        if v.count == 0 {
             self.mesh.missing += 1;
             return None;
         }
@@ -602,7 +616,7 @@ impl Chunk<'_> {
             return Some(v.verts[candidates[0] as usize]);
         }
         let pool: Vec<u32> = if candidates.is_empty() {
-            v.verts.clone()
+            v.verts[..v.count].to_vec()
         } else {
             candidates.iter().map(|&k| v.verts[k as usize]).collect()
         };
@@ -622,15 +636,18 @@ impl Chunk<'_> {
     /// quad split along the diagonal that folds less, each triangle wound to
     /// face out of the rock by the field's gradient at its middle.
     fn emit(&mut self, corners: [Option<u32>; 4], seam: bool) {
-        let mut v: Vec<u32> = Vec::with_capacity(4);
+        let mut v = [0; 4];
+        let mut count = 0;
         for c in corners.into_iter().flatten() {
-            if v.last() != Some(&c) {
-                v.push(c);
+            if count == 0 || v[count - 1] != c {
+                v[count] = c;
+                count += 1;
             }
         }
-        while v.len() > 1 && v.first() == v.last() {
-            v.pop();
+        while count > 1 && v[0] == v[count - 1] {
+            count -= 1;
         }
+        let v = &v[..count];
         if v.len() < 3 || (1..v.len()).any(|i| v[..i].contains(&v[i])) {
             return;
         }
