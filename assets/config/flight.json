@@ -1,0 +1,10 @@
+{
+  "speed": 6.0,
+  "boost": 8.0,
+  "roll_degrees_per_second": 90.0,
+  "min_speed": 0.25,
+  "max_speed": 2000000.0,
+  "wheel_factor": 1.6,
+  "surface_speed": 6.0,
+  "ground_clearance": 0.5
+}

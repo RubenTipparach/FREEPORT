@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "coordinates": "x east, y north, z up; metres",
+  "source_sha256": "3432e44d81531caac374fec9b42ce65ba5f169135a761ba7367c3d3bf4eb5290",
+  "models": [
+    {
+      "kind": "block",
+      "storeys": 4,
+      "file": "block_4.json"
+    },
+    {
+      "kind": "block",
+      "storeys": 5,
+      "file": "block_5.json"
+    },
+    {
+      "kind": "block",
+      "storeys": 6,
+      "file": "block_6.json"
+    },
+    {
+      "kind": "block",
+      "storeys": 7,
+      "file": "block_7.json"
+    },
+    {
+      "kind": "block",
+      "storeys": 8,
+      "file": "block_8.json"
+    },
+    {
+      "kind": "house",
+      "storeys": 1,
+      "file": "house_1.json"
+    },
+    {
+      "kind": "house",
+      "storeys": 2,
+      "file": "house_2.json"
+    },
+    {
+      "kind": "bungalow",
+      "storeys": 1,
+      "file": "bungalow_1.json"
+    },
+    {
+      "kind": "tower",
+      "storeys": 3,
+      "file": "tower_3.json"
+    },
+    {
+      "kind": "tower",
+      "storeys": 4,
+      "file": "tower_4.json"
+    },
+    {
+      "kind": "tower",
+      "storeys": 5,
+      "file": "tower_5.json"
+    },
+    {
+      "kind": "tower",
+      "storeys": 6,
+      "file": "tower_6.json"
+    },
+    {
+      "kind": "hangar",
+      "storeys": 1,
+      "file": "hangar_1.json"
+    }
+  ]
+}

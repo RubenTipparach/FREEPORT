@@ -18,8 +18,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Left click takes the mouse, Escape gives it back. WASD walks, Shift runs,
-echo Space jumps, F swaps between walking and flying, Tab toggles the wire.
+echo A planet two thousand kilometres across, dual contoured in rings of
+echo chunks round the eye, with a sea, eight towns and the walker on a
+echo street of the port.
+echo.
+echo Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
+echo runs, Space jumps. F swaps to the fly camera and back, Tab toggles the
+echo wire. Flying: WASD moves, Space/Ctrl rises/sinks, Q/E rolls, Shift boosts.
+echo The mouse wheel changes flight speed; R levels the view to the planet.
+echo N selects a planet; G faces it. Atmospheres slow flight before landing.
+echo L colors terrain wireframe by LOD; K freezes its rings for inspection.
 echo.
 target\release\freeport_app.exe %*
 pause

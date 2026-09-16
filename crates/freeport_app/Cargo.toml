@@ -11,6 +11,12 @@ freeport_core = { path = "../freeport_core" }
 # 0.18 today and big_space has not followed 0.19 yet. The engine moves when
 # all three do together, in one commit that carries nothing else.
 bevy = "0.18.1"
+# Half floats for the baked sky cubemap, which is the format a cube view
+# wants and the one Bevy filters its specular mips out of.
+half = "2"
+bytemuck = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 # The baked sets are decoded straight off the checkout into array textures
 # at startup, on the same crate Bevy's own loader uses, at its version.
 image = { version = "0.25", default-features = false, features = ["png"] }

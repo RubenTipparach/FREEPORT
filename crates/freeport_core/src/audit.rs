@@ -22,8 +22,10 @@ pub struct Audit {
     pub open: usize,
     /// Edges in more than two triangles: pinches.
     pub non_manifold: usize,
-    /// Triangles wound into the rock.
+    /// Triangles wound into the rock, and their area, square metres: a
+    /// sliver can point anywhere and nothing of any size may point in.
     pub facing_in: usize,
+    pub facing_area: f64,
     /// The surface's area, square metres.
     pub area: f64,
     /// Seam polygons and missing corners, summed over the chunks.
@@ -33,6 +35,7 @@ pub struct Audit {
     /// defect can be looked at rather than counted.
     pub open_at: Vec<DVec3>,
     pub pinch_at: Vec<DVec3>,
+    pub facing_at: Vec<DVec3>,
 }
 
 /// Positions are welded to this, metres.
@@ -103,6 +106,10 @@ pub fn audit(field: &dyn Density, chunks: &[(DVec3, DcMesh)]) -> Audit {
             let g = DVec3::new(d(DVec3::X), d(DVec3::Y), d(DVec3::Z));
             if face.dot(g) > 0.2 * area * g.length() {
                 out.facing_in += 1;
+                out.facing_area += area * 0.5;
+                if out.facing_at.len() < 64 {
+                    out.facing_at.push(m);
+                }
             }
         }
     }
@@ -191,7 +198,9 @@ mod tests {
     #[test]
     fn a_face_wound_inward_is_counted_and_a_face_dropped_opens_three_edges() {
         let rock = Sphere { radius: 0.2 };
-        assert_eq!(audit(&rock, &tetra(true)).facing_in, 1);
+        let flipped = audit(&rock, &tetra(true));
+        assert_eq!(flipped.facing_in, 1);
+        assert!((flipped.facing_area - 2.0 * 3.0f64.sqrt()).abs() < 1e-9);
         let mut chunks = tetra(false);
         chunks[1].1.indices.truncate(3);
         let a = audit(&rock, &chunks);
