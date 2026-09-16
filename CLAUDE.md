@@ -1,5 +1,22 @@
 # freeport
 
+Current implementation update: terrain sampling is now batched in a compute
+shader, with f64 crossings and dual-contouring LOD seams retained on CPU. Mesh
+conversion runs on workers and asset installation has a real frame budget. Rings
+adapt to altitude and wait for replacement coverage when changing levels.
+Buildings are authored by headless Blender with editable Exact Boolean cutters,
+then baked into static meshes, collision boxes and three visual LODs. Windows
+have actual openings and transparent glazing. The parametric source is
+`assets/config/buildings.json`; `tools/bake_buildings.py` regenerates the library.
+`docs/buildings-and-streaming.md` describes this workflow and supersedes the older
+runtime building-generation and streamer timeout descriptions below.
+
+The playable system now contains Freeport, Ember, Pelagos and Rime, configured in
+`assets/config/planets.json`. Flight uses a wheel-selected cruise speed, a smooth
+atmospheric limit, and continuous collision against each body's density field.
+`docs/flight-and-planets.md` documents controls, body-local terrain streaming,
+stale-job rejection and the current coarse distant-body rendering limitation.
+
 An open world space game about WORKING in a space economy: a few thousand
 stars, tens of thousands of planets, and a player who flies between them,
 lands, gets out, walks, and earns a living hauling, mining, trading and
@@ -587,7 +604,7 @@ the seam they show is the same polygon rule.
 
 ## The world is streamed in rings of chunks round the eye
 
-`stream.rs` is the streamer. Every frame the rings follow the eye
+`stream.rs` is the streamer. Between completed layout builds the rings follow the eye
 (`Rings::follow`; the eye is the walker's or the fly camera's, whichever is
 driving) and, when a box moves, the wanted set is recomputed: every chunk
 of every level's box that the field cannot rule wholly rock or air, each
@@ -602,24 +619,22 @@ the planet and asked it about every chunk, which was eight thousand box
 tests a chunk for five thousand chunks every time a box moved, a hitch
 every five metres of walking; there is nothing to test now.
 
-A wanted chunk that is not loaded with that signature is a job, nearest
-first and new before rebuilt, contoured on a worker thread (three here, one
-fewer than the cores) from the same field and the same rings, and drawn
-when it comes back if it is still wanted as it was. A loaded chunk the
-rings no longer want stays drawn until whatever now covers its ground has
-arrived, and for `LINGER` (three seconds) at most, so the ground never has
-a hole where a level changes and nothing stays for ever; tenebris held a
-chunk to one and a half times its load distance for three seconds for the
-same reason, and the rule here is the cover rather than the distance.
+A wanted chunk that is not ready with that signature is a job, nearest
+first and new before rebuilt, contoured on a worker from the same field
+and frozen target rings. Initial loading draws progressively. Subsequent
+layouts upload hidden and publish together only after every wanted chunk
+and changed neighbor seam is ready. Spatial overlap alone cannot prove a
+seam matches. There is no linger timeout. Moving catches up after publishing,
+and a floating-origin rebase moves hidden staged meshes as well as visible ones.
+L enables terrain-only wireframe colored by LOD with a cell-size legend;
+K freezes the rings so the camera can inspect fixed joins. `--lod-wire`
+starts in that view. Terrain keeps shared field normals at LOD joins;
+architectural materials retain the normal crease rule.
 
-- **Draining is by time, not by count.** The main thread takes finished
-  meshes off the workers for `DRAIN_MS` (six milliseconds) a frame and at
-  least `DRAIN_LEAST` (thirty two) whatever they cost. The first cut took a
-  dozen a frame, which throttled the first load to the frame rate: two
-  thousand chunks at a dozen a frame is a hundred and seventy frames, and
-  under lavapipe a frame is most of a second. `AHEAD` (sixty four) jobs are
-  in flight beyond the workers, so a worker never waits for the main thread
-  and a stale job is never far down the queue.
+- **Draining has time and count budgets.** `assets/config/render.json`
+  controls upload milliseconds, maximum chunks per frame, worker count,
+  and queued lookahead. Mesh conversion happens on workers; hidden staging
+  uses the same upload budget as the first load.
 - **A mesh is chunk local and placed through the origin.** A chunk's
   vertices are `f32` metres from the chunk's own `f64` corner, and its
   entity is placed from that corner through `pos::Origin`. `rebase_origin`
@@ -638,7 +653,11 @@ same reason, and the rule here is the cover rather than the distance.
   `freeport_app` is the planet (`RADIUS` 1,000,000 m, the sea 400 m under
   the mean radius, eleven levels of 0.25 m to 256 m cells), eight towns of
   80 m, and the walker on a street of the port facing the middle of town. F
-  swaps to the fly camera from wherever the walker is and back, Tab wires,
+  swaps to the fly camera from wherever the walker is and back. Flight uses
+  quaternion orientation: Q/E rolls, Space/Ctrl moves along camera up/down,
+  the mouse turns without a pitch limit, either Shift boosts, the wheel
+  adjusts speed and R levels to the local horizon. Flight settings live in
+  `assets/config/flight.json`. Tab wires,
   Esc frees the mouse; `--fly` starts in the air, `--eye` and `--look`
   place the camera, `--levels` sets the count, `--octaves` buys a picture
   down on a software rasteriser, `--walk N` drives the walker forward N

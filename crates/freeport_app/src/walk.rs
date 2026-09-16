@@ -37,10 +37,10 @@ pub fn walk(
     mut status: ResMut<Status>,
     mut script: Local<Scripted>,
 ) {
+    let look = controls.look();
     let Some(mut walker) = walker else {
         return;
     };
-    let look = controls.look();
     let keys = &controls.keys;
     let axis =
         |neg: KeyCode, pos: KeyCode| (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f64;
@@ -82,7 +82,7 @@ pub fn walk(
     // measuring against in the first place.
     let clock = std::time::Instant::now();
     walker.0.update(&field, &bounds, &input, dt);
-    eye.0 = WorldPos(walker.0.eye());
+    eye.0 = WorldPos(ground.1 + walker.0.eye());
     say_walk(
         &mut script,
         &walker.0,
@@ -147,22 +147,27 @@ pub fn toggle_walk(
     };
     match walker {
         Some(w) => {
-            let look = w.0.look().as_vec3();
-            fly.yaw = (-look.x).atan2(-look.z);
-            fly.pitch = look.y.clamp(-1.0, 1.0).asin();
-            fly.at = w.0.eye();
+            fly.face(w.0.look(), w.0.dir);
+            fly.at = ground.1 + w.0.eye();
             commands.remove_resource::<OnFoot>();
             status.walker = "flying".to_string();
         }
         None => {
-            let field = ground.0.underfoot(fly.at, 8.0);
+            let local = fly.at - ground.1;
+            let field = ground.0.underfoot(local, 8.0);
             let heading = fly.forward().as_dvec3();
-            commands.insert_resource(OnFoot(Walker::enter(
-                &field,
-                &ground.0.bounds,
-                fly.at,
-                heading,
-            )));
+            let mut walker = Walker::enter(&field, &ground.0.bounds, local, heading);
+            let right = (fly.rotation * Vec3::X).as_dvec3();
+            walker.fwd = (heading - walker.dir * heading.dot(walker.dir))
+                .try_normalize()
+                .filter(|_| heading.dot(walker.dir).abs() < 0.999999)
+                .unwrap_or_else(|| walker.dir.cross(right).normalize());
+            walker.pitch = heading
+                .dot(walker.dir)
+                .clamp(-1.0, 1.0)
+                .asin()
+                .clamp(-1.45, 1.45);
+            commands.insert_resource(OnFoot(walker));
         }
     }
 }

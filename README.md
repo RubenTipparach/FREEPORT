@@ -12,6 +12,12 @@ and a walker on a street of the port who is stopped by the same boxes the
 walls were drawn from. The sky is tenebris's scattering march, run in the
 core so the dome and the fog cannot disagree.
 
+Terrain density sampling now uses batched compute shaders, with CPU meshing for
+precise surface crossings and LOD seams. The rings adapt to altitude, and buildings
+use three distance-based detail levels. Buildings are baked with headless Blender:
+editable boolean-cut windows and doors, transparent glazing, static runtime meshes,
+and collision from the same dimensions. See [the authoring and streaming guide](docs/buildings-and-streaming.md).
+
 `CLAUDE.md` is the rules and the reasons. `docs/freeport.html` is the design
 page ([published](https://claude.ai/code/artifact/7822c376-33d9-4391-9907-a958426efc29)): what is being built, the stack, the tooling and the
 two terrain mockups.
@@ -24,7 +30,35 @@ cargo test -p freeport_core                 # the engine free core: positions, t
 python3 tools/shape.py --check              # no file over 900 lines, no function over 100
 tools/get_material_maker.sh                 # fetch Material Maker into tools/ (gitignored)
 tools/bake_materials.sh                     # bake materials/*.ptex to assets/textures/terrain
+blender --background --factory-startup --python tools/bake_buildings.py # regenerate editable sources and static building LODs
+cargo test --release -p freeport_app gpu_matches_cpu -- --ignored --nocapture # validate the actual compute shader on a GPU
 ```
+
+Left click captures the mouse; Escape releases it. On foot, use WASD, Shift to
+run, and Space to jump. **F** switches between walking and flying. In flight,
+WASD moves along the camera axes, **Space/Ctrl** rises or sinks in that same
+frame, **Q/E** rolls, and the mouse turns freely through a full loop. Either
+Shift boosts speed; the mouse wheel adjusts the base speed shown in the HUD.
+**R** levels the view against the planet's local horizon. Flight speed, boost,
+roll rate and wheel sensitivity are adjustable in `assets/config/flight.json`
+(restart to reload; zero selects the default). Tab toggles wireframe.
+
+The wheel now spans 0.25 m/s to 2,000 km/s for travel between Freeport, Ember,
+Pelagos and Rime. **N** selects a destination; **G** faces it, then hold W to fly.
+Atmosphere entry progressively reduces speed to 6 m/s near terrain (or your
+selected speed if lower), including while boosting. The HUD shows actual and
+selected cruise speed separately. Collision sweeps the whole movement path
+against each planet's terrain, independently of whether its chunks have loaded.
+Planet positions, sizes and seeds are in `assets/config/planets.json`.
+See [flight and planet exploration](docs/flight-and-planets.md) for details.
+
+**L** toggles terrain wireframe colored by LOD, with a cell-size legend.
+This view isolates terrain so water and buildings cannot obscure its topology.
+**K** freezes/unfreezes the rings in that mode, so you can fly around a fixed
+transition and inspect its triangles. `--lod-wire` enables it at startup.
+Colors follow the chunk that owns each triangle, including transition faces.
+LOD changes keep the old layout visible until the complete replacement is ready,
+then switch the terrain and water together.
 
 The two mockups are the record of the decision rather than a picture of the
 game: they compare the meshers on the same seed, field, sea, towns and

@@ -2,6 +2,59 @@ use super::*;
 use crate::field::{Density, Planet, TERRAIN};
 use crate::town::{self, frame_at, BLOCK};
 
+#[test]
+fn box_faces_point_outward_and_match_collision_faces() {
+    let frame = frame_on(1_000_000.0);
+    for yaw in [0.0, 0.73, -1.4] {
+        let mut m = Model::new();
+        let centre = DVec3::new(2.0, -1.0, 3.0);
+        m.solid(centre, DVec3::new(1.0, 2.0, 3.0), yaw, CONCRETE);
+        let block = m.solids[0].block(&frame);
+        for tri in m.mesh.indices.chunks_exact(3) {
+            let p: Vec<_> = tri
+                .iter()
+                .map(|&i| glam::Vec3::from(m.mesh.positions[i as usize]).as_dvec3())
+                .collect();
+            let mid = (p[0] + p[1] + p[2]) / 3.0;
+            let normal = (p[1] - p[0]).cross(p[2] - p[0]).normalize();
+            assert!(normal.dot(mid - centre) > 0.0);
+            assert!(block.at(frame.world(mid + normal * 0.01)) < 0.0);
+            assert!(block.at(frame.world(mid - normal * 0.01)) > 0.0);
+        }
+    }
+}
+
+#[test]
+fn panes_face_out_on_every_wall() {
+    for out in [DVec3::X, DVec3::NEG_X, DVec3::Y, DVec3::NEG_Y] {
+        let mut m = Model::new();
+        let wide = if out.x == 0.0 { DVec3::X } else { DVec3::Y };
+        m.pane(out * 5.0, out, wide, PANE_H, 0.5);
+        for normal in m.mesh.normals {
+            assert!(glam::Vec3::from(normal).as_dvec3().dot(out) > 0.999);
+        }
+    }
+}
+
+#[test]
+fn supplied_static_models_use_the_same_town_transform() {
+    let planet = Planet {
+        radius: 2000.0,
+        relief: 100.0,
+        octaves: 5,
+        ..Planet::default()
+    };
+    let towns = town::plan(&planet, 1980.0, 40.0, 1, 7);
+    let town = towns.first().expect("a test town");
+    let ordinary = fabric(town, planet.radius, 7);
+    let supplied = fabric_with(town, planet.radius, |lot| {
+        building(lot.kind, BLOCK, BLOCK, lot.storeys, 7 ^ lot.id)
+    });
+    assert_eq!(ordinary.mesh.positions, supplied.mesh.positions);
+    assert_eq!(ordinary.mesh.indices, supplied.mesh.indices);
+    assert_eq!(ordinary.blocks.len(), supplied.blocks.len());
+}
+
 /// A frame at the pole of a ball, which is where a model is measured.
 fn frame_on(radius: f64) -> Frame {
     let (east, north) = frame_at(DVec3::Y);

@@ -66,6 +66,9 @@ pub struct Terrain {
     /// of its own weather.
     #[uniform(100)]
     pub haze: Vec4,
+    /// Body surface colour; w blends from the authored texture colours.
+    #[uniform(100)]
+    pub palette: Vec4,
     #[texture(101, dimension = "2d_array")]
     #[sampler(102)]
     pub albedo: Handle<Image>,
@@ -94,7 +97,7 @@ impl Plugin for TerrainPlugin {
 
 /// Where the assets are: `FREEPORT_ASSETS`, else the checkout this was
 /// built from, else `assets` beside the working directory.
-fn assets_dir() -> Option<PathBuf> {
+pub(crate) fn assets_dir() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(root) = std::env::var("FREEPORT_ASSETS") {
         candidates.push(PathBuf::from(root));
@@ -278,6 +281,7 @@ pub fn terrain_material(
             frames: lanes,
             fog: Vec4::ZERO,
             haze: Vec4::ZERO,
+            palette: Vec4::ZERO,
             albedo,
             normal,
             orm,
@@ -291,12 +295,10 @@ pub fn terrain_material(
 const CREASE: f32 = 0.35;
 
 /// The chunk as Bevy draws it. Vertices are split per triangle, and each
-/// corner keeps the smooth normal the field gave it unless that normal
-/// disagrees with the triangle's face by more than a crease, in which case
-/// it takes the face's: a box face is shaded on its own plane and meets the
-/// next on an edge, the ground stays round, and where the ground meets a
-/// wall only the corner on the crease changes, so the shading on either
-/// side of it is continuous.
+/// terrain corner keeps the field's smooth normal, including at LOD joins.
+/// Substituting a face normal there gives a shared vertex two normals and
+/// makes a shading seam. Architectural materials retain the crease rule:
+/// a corner far from its face normal takes the face's normal instead.
 ///
 /// Every vertex carries FOUR numbers besides its place: the triangle's
 /// material in the colour's red, flat, every corner the same so no
@@ -318,25 +320,37 @@ const CREASE: f32 = 0.35;
 /// `f64` where it is small and exact, and the fragment does no arithmetic
 /// on it at all.
 pub fn to_mesh(m: &DcMesh, place: impl Fn(Vec3) -> (Vec3, f32)) -> Mesh {
+    to_mesh_filtered(m, place, |_| true)
+}
+
+/// Separate glass from opaque structure without duplicating the model or
+/// changing its mapping frame. Both meshes retain the baked normals.
+pub fn to_mesh_filtered(
+    m: &DcMesh,
+    place: impl Fn(Vec3) -> (Vec3, f32),
+    include: impl Fn(u8) -> bool,
+) -> Mesh {
     let mut positions = Vec::with_capacity(m.indices.len());
     let mut normals = Vec::with_capacity(m.indices.len());
     let mut colours = Vec::with_capacity(m.indices.len());
     let mut uvs = Vec::with_capacity(m.indices.len());
     for (t, material) in m.indices.chunks(3).zip(&m.materials) {
-        let p: Vec<Vec3> = t
-            .iter()
-            .map(|&i| Vec3::from(m.positions[i as usize]))
-            .collect();
+        if !include(*material) {
+            continue;
+        }
+        let p: [Vec3; 3] = std::array::from_fn(|k| Vec3::from(m.positions[t[k] as usize]));
         let face = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or(Vec3::Y);
         for (k, &i) in t.iter().enumerate() {
             let n = Vec3::from(m.normals[i as usize]);
             let (map, over) = place(p[k]);
             positions.push(p[k].to_array());
-            normals.push(if n.angle_between(face) > CREASE {
-                face.to_array()
-            } else {
-                n.to_array()
-            });
+            normals.push(
+                if *material != freeport_core::field::TERRAIN && n.angle_between(face) > CREASE {
+                    face.to_array()
+                } else {
+                    n.to_array()
+                },
+            );
             colours.push([*material as f32, map.x, map.y, map.z]);
             uvs.push([over, 0.0]);
         }
@@ -371,5 +385,45 @@ pub fn chunk_mapping(corner: DVec3, sea: f64) -> impl Fn(Vec3) -> (Vec3, f32) {
             (anchor + local).as_vec3(),
             ((corner + local).length() - sea) as f32,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::mesh::VertexAttributeValues;
+    use freeport_core::field::{CONCRETE, TERRAIN};
+
+    #[test]
+    fn terrain_keeps_shared_normals_when_lod_faces_have_different_slopes() {
+        let mut mesh = DcMesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, -1.0],
+                [0.0, 1.0, 1.0],
+            ],
+            normals: vec![[0.0, 1.0, 0.0]; 4],
+            levels: vec![0, 1, 0, 1],
+            indices: vec![0, 1, 2, 0, 3, 1],
+            materials: vec![TERRAIN; 2],
+            ..default()
+        };
+        let rendered = to_mesh(&mesh, |p| (p, 0.0));
+        let Some(VertexAttributeValues::Float32x3(normals)) =
+            rendered.attribute(Mesh::ATTRIBUTE_NORMAL)
+        else {
+            panic!("missing normals")
+        };
+        assert!(normals.iter().all(|n| *n == [0.0, 1.0, 0.0]));
+        // Architectural creases still retain their hard edges.
+        mesh.materials = vec![CONCRETE; 2];
+        let rendered = to_mesh(&mesh, |p| (p, 0.0));
+        let Some(VertexAttributeValues::Float32x3(normals)) =
+            rendered.attribute(Mesh::ATTRIBUTE_NORMAL)
+        else {
+            panic!("missing normals")
+        };
+        assert_ne!(normals[0], normals[3]);
     }
 }

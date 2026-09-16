@@ -198,12 +198,13 @@ pub fn drift_sky(
     eye: Res<crate::Eye>,
     frame: Res<crate::stream::Frame>,
     weather: Res<Weather>,
+    ground: Res<crate::Ground>,
     mut skies: ResMut<Assets<Sky>>,
     mut dome: Query<&mut Transform, With<Dome>>,
     mut painted: Painted,
 ) {
-    let here = eye.0 .0;
-    let centre = frame.0.local(freeport_core::pos::WorldPos(DVec3::ZERO));
+    let here = eye.0 .0 - ground.1;
+    let centre = frame.0.local(freeport_core::pos::WorldPos(ground.1));
     let at = frame.0.local(eye.0);
     let reach = dome_radius(here, &weather.air);
     for mut tf in &mut dome {
@@ -213,6 +214,7 @@ pub fn drift_sky(
     let ids: Vec<_> = skies.ids().collect();
     for id in ids {
         if let Some(sky) = skies.get_mut(id) {
+            *sky = Sky::of(&weather.air, weather.sun);
             sky.centre = centre.extend(reach);
             sky.sun = weather.sun.as_vec3().extend(atmos::NITS as f32);
         }

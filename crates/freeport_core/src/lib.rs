@@ -12,6 +12,7 @@ pub mod atmos;
 pub mod audit;
 pub mod dc;
 pub mod field;
+pub mod flight;
 pub mod lattice;
 pub mod march;
 pub mod model;

@@ -102,7 +102,8 @@ const PEEK: i64 = 5;
 const HAND: f64 = 0.5;
 
 /// Points along a chunk's side that are sampled: the chunk and its margin.
-const STRIDE: i64 = CH + 2 * MARGIN + 1;
+pub const SAMPLE_STRIDE: i64 = CH + 2 * MARGIN + 1;
+const STRIDE: i64 = SAMPLE_STRIDE;
 
 /// For a configuration, the surface each crossed edge is on (-1 if not
 /// crossed): the marching cubes triangles joined where they share an edge.
@@ -216,6 +217,40 @@ struct Chunk<'a> {
 /// Contour chunk `id`: every polygon it owns, its own cells' and the seams
 /// to coarser neighbours'.
 pub fn contour(field: &dyn Density, lat: &Lattice, id: ChunkId, levels: &dyn Levels) -> DcMesh {
+    build(field, lat, id, levels, Vec::new())
+}
+
+/// Contour with precomputed lattice densities, x fastest, including `MARGIN`
+/// on every side. GPU samples must have the reference field's signs. Crossings
+/// and seam vertices still use the reference field in f64. Invalid grids fall
+/// back to ordinary contouring rather than leaving a hole in the terrain.
+pub fn contour_sampled(
+    field: &dyn Density,
+    lat: &Lattice,
+    id: ChunkId,
+    levels: &dyn Levels,
+    samples: Vec<f32>,
+) -> DcMesh {
+    if samples.len() != (STRIDE * STRIDE * STRIDE) as usize
+        || samples.iter().any(|v| !v.is_finite())
+    {
+        return contour(field, lat, id, levels);
+    }
+    // With no crossed edge, this grid cannot produce a polygon, including
+    // the coarser cells in the apron. No CPU noise evaluations are needed.
+    if samples.iter().all(|&v| air(v) == air(samples[0])) {
+        return DcMesh::default();
+    }
+    build(field, lat, id, levels, samples)
+}
+
+fn build(
+    field: &dyn Density,
+    lat: &Lattice,
+    id: ChunkId,
+    levels: &dyn Levels,
+    samples: Vec<f32>,
+) -> DcMesh {
     let s = id.scale();
     let f0 = id.f0();
     let mut chunk = Chunk {
@@ -224,14 +259,14 @@ pub fn contour(field: &dyn Density, lat: &Lattice, id: ChunkId, levels: &dyn Lev
         levels,
         id,
         c0: [f0[0] / s, f0[1] / s, f0[2] / s],
-        samples: Vec::new(),
+        samples,
         origin: lat.point(f0),
         crossings: Vec::new(),
         crossing_of: HashMap::new(),
         leaves: HashMap::new(),
         mesh: DcMesh::default(),
     };
-    if chunk.empty() {
+    if chunk.samples.is_empty() && chunk.empty() {
         return chunk.mesh;
     }
     chunk.edges();
@@ -648,3 +683,6 @@ impl Verts {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod lod_tests;

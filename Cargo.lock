@@ -2464,9 +2464,12 @@ name = "freeport_app"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bytemuck",
  "freeport_core",
  "half",
  "image",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -169,12 +169,12 @@ impl Model {
         }
         .corners();
         // Each face anticlockwise from outside: low and high on each axis.
-        self.quad(k[0], k[2], k[6], k[4], material);
-        self.quad(k[1], k[5], k[7], k[3], material);
-        self.quad(k[0], k[4], k[5], k[1], material);
-        self.quad(k[2], k[3], k[7], k[6], material);
-        self.quad(k[0], k[1], k[3], k[2], material);
-        self.quad(k[4], k[6], k[7], k[5], material);
+        self.quad(k[0], k[4], k[6], k[2], material);
+        self.quad(k[1], k[3], k[7], k[5], material);
+        self.quad(k[0], k[1], k[5], k[4], material);
+        self.quad(k[2], k[6], k[7], k[3], material);
+        self.quad(k[0], k[2], k[3], k[1], material);
+        self.quad(k[4], k[5], k[7], k[6], material);
     }
 
     /// A box that draws AND stops a body: a wall, a slab, a pillar.
@@ -192,6 +192,11 @@ impl Model {
     /// within or dark by a throw of the dice.
     pub fn pane(&mut self, centre: DVec3, out: DVec3, wide: DVec3, high: f64, dice: f64) {
         let at = centre + out * PROUD;
+        let wide = if wide.cross(DVec3::Z).dot(out) < 0.0 {
+            -wide
+        } else {
+            wide
+        };
         let (u, v) = (wide * (PANE_W * 0.5), DVec3::Z * (high * 0.5));
         let material = if dice < LIT_SHARE { LIT } else { GLASS };
         self.quad(at - u - v, at + u - v, at + u + v, at - u + v, material);
@@ -563,12 +568,29 @@ pub struct Fabric {
 /// sphere (`lot_frame`), so nothing long enough for the ground to curve
 /// under it is placed in one piece.
 pub fn fabric(town: &Town, radius: f64, seed: u32) -> Fabric {
+    fabric_with(town, radius, |lot| {
+        building(
+            lot.kind,
+            crate::town::BLOCK,
+            crate::town::BLOCK,
+            lot.storeys,
+            seed ^ lot.id,
+        )
+    })
+}
+
+/// Assemble a town from static models supplied by an asset library. Drawing,
+/// collision boxes, and lamps pass through the very same lot transform.
+pub fn fabric_with(
+    town: &Town,
+    radius: f64,
+    mut model: impl FnMut(&crate::town::Lot) -> Model,
+) -> Fabric {
     let mut out = Fabric::default();
     let middle = lot_frame(radius, town, 0.0, 0.0);
     for lot in &town.lots {
         let frame = lot_frame(radius, town, lot.x, lot.z);
-        let side = crate::town::BLOCK;
-        let m = building(lot.kind, side, side, lot.storeys, seed ^ lot.id);
+        let m = model(lot);
         weld(&mut out, &m, &frame, &middle);
         out.buildings += 1;
     }

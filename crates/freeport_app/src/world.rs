@@ -51,7 +51,7 @@ pub(crate) struct World {
 /// once, so the workers never carry it.
 pub(crate) struct TownMesh {
     pub frame: Frame,
-    pub mesh: DcMesh,
+    pub meshes: [DcMesh; 3],
 }
 
 impl World {
@@ -101,7 +101,7 @@ impl World {
 }
 
 #[derive(Resource)]
-pub(crate) struct Ground(pub Arc<World>);
+pub(crate) struct Ground(pub Arc<World>, pub DVec3);
 
 /// Build it: the planet, its towns, and the models standing in them.
 pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
@@ -128,7 +128,7 @@ pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
         raised.buildings,
         raised.pieces,
         (t0.elapsed() - planned).as_secs_f64() * 1000.0,
-        raised.meshes.iter().map(|m| m.mesh.triangles()).sum::<usize>(),
+        raised.meshes.iter().map(|m| m.meshes[0].triangles()).sum::<usize>(),
         raised.blocks.len(),
         raised.lamps.len()
     );
@@ -169,8 +169,9 @@ struct Raised {
 /// Every town modelled.
 fn raise(towns: &[Town]) -> Raised {
     let mut out = Raised::default();
+    let library = crate::buildings::Library::load();
     for town in towns {
-        let f = model::fabric(town, RADIUS, SEED);
+        let f = model::fabric_with(town, RADIUS, |lot| library.model(lot, 0, SEED));
         let start = out.blocks.len();
         out.blocks.extend(f.blocks);
         let here = &out.blocks[start..];
@@ -188,7 +189,11 @@ fn raise(towns: &[Town]) -> Raised {
         out.pieces += f.pieces;
         out.meshes.push(TownMesh {
             frame: lot_frame(RADIUS, town, 0.0, 0.0),
-            mesh: f.mesh,
+            meshes: [
+                f.mesh,
+                model::fabric_with(town, RADIUS, |lot| library.model(lot, 1, SEED)).mesh,
+                model::fabric_with(town, RADIUS, |lot| library.model(lot, 2, SEED)).mesh,
+            ],
         });
     }
     out

@@ -11,6 +11,7 @@ use bevy::prelude::{warn, Resource};
 #[derive(Resource, Clone, Debug)]
 pub(crate) struct Args {
     pub(crate) wire: bool,
+    pub(crate) lod_wire: bool,
     pub(crate) fly: bool,
     pub(crate) eye: Option<DVec3>,
     pub(crate) look: Option<DVec3>,
@@ -28,11 +29,13 @@ pub(crate) struct Args {
     /// feel is a number a second person can check rather than a thing to
     /// take on trust.
     pub(crate) walk: u32,
+    pub(crate) cpu_terrain: bool,
 }
 
 pub(crate) fn parse_args() -> Args {
     let mut args = Args {
         wire: false,
+        lod_wire: false,
         fly: false,
         eye: None,
         look: None,
@@ -42,15 +45,19 @@ pub(crate) fn parse_args() -> Args {
         fps: FPS,
         octaves: OCTAVES,
         walk: 0,
+        cpu_terrain: false,
     };
     let mut it = std::env::args().skip(1);
     let vec3 = |s: &str| -> Option<DVec3> {
         let v: Vec<f64> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-        (v.len() == 3).then(|| DVec3::new(v[0], v[1], v[2]))
+        (v.len() == 3 && v.iter().all(|value| value.is_finite()))
+            .then(|| DVec3::new(v[0], v[1], v[2]))
     };
     while let Some(a) = it.next() {
         match a.as_str() {
             "--wire" => args.wire = true,
+            "--lod-wire" => args.lod_wire = true,
+            "--cpu-terrain" => args.cpu_terrain = true,
             "--fly" => args.fly = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),

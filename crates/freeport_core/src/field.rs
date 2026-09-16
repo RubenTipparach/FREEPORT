@@ -155,32 +155,42 @@ impl Planet {
     /// How much a site levels a direction: one right across it, nought
     /// past its apron.
     fn site_weight(&self, site: &crate::town::Site, dir: DVec3) -> f64 {
-        let c = dir.dot(site.dir).clamp(-1.0, 1.0);
-        let dist = c.acos() * self.radius;
         let (inner, outer) = site_band(site);
+        let chord = (dir - site.dir).length();
+        if chord * self.radius >= outer {
+            return 0.0;
+        }
+        let dist = 2.0 * (chord * 0.5).clamp(0.0, 1.0).asin() * self.radius;
         1.0 - smoothstep(inner, outer, dist)
+    }
+
+    /// The additive site height and the fraction of procedural relief left
+    /// at a direction. Shared with GPU input preparation so levelling has
+    /// one definition and is still evaluated in the world frame's f64.
+    pub fn surface_blend(&self, dir: DVec3) -> (f64, f64) {
+        let (mut bias, mut keep) = (0.0, 1.0);
+        for site in &self.sites {
+            let w = self.site_weight(site, dir);
+            if w >= 1.0 {
+                return (site.h, 0.0);
+            }
+            bias += (site.h - bias) * w;
+            keep *= 1.0 - w;
+        }
+        (bias, keep)
     }
 
     /// The relief at a direction, metres over the mean radius, sites
     /// applied, and how much of the overhang is kept there. On a levelled
     /// site the relief is the site's height and the noise is not asked.
     pub fn surface(&self, dir: DVec3) -> (f64, f64) {
-        for site in &self.sites {
-            if self.site_weight(site, dir) >= 1.0 {
-                return (site.h, 0.0);
-            }
+        let (bias, keep) = self.surface_blend(dir);
+        if keep == 0.0 {
+            return (bias, keep);
         }
-        let mut s =
+        let relief =
             (fbm3(dir * self.lumps, self.seed, self.octaves) * 2.0 - 1.0) * self.relief * 0.5;
-        let mut keep = 1.0;
-        for site in &self.sites {
-            let w = self.site_weight(site, dir);
-            if w > 0.0 {
-                s += (site.h - s) * w;
-                keep *= 1.0 - w;
-            }
-        }
-        (s, keep)
+        (bias + relief * keep, keep)
     }
 }
 

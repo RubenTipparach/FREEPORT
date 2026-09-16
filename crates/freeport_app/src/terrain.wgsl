@@ -34,6 +34,7 @@ struct Terrain {
     // times the plain haze it is down at the sea, z the radius that is
     // measured from.
     haze: vec4<f32>,
+    palette: vec4<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> terrain: Terrain;
@@ -238,6 +239,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Worn toward the surface's own normal with distance.
     let away = length(in.world_position.xyz - view.world_position);
     nm = normalize(mix(nm, n, smoothstep(BUMP_NEAR, BUMP_FAR, away)));
+    // Keep the baked texture's detail and brightness with this body's hue.
+    let luma = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let coloured = terrain.palette.rgb * dot(albedo, luma) / max(dot(terrain.palette.rgb, luma), 0.001);
+    albedo = mix(albedo, coloured, terrain.palette.a * ground);
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     pbr_input.material.perceptual_roughness = orm.g;
     pbr_input.material.metallic = orm.b;

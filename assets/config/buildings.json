@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "dimensions": {
+    "width": 10.0,
+    "depth": 10.0,
+    "storey": 3.2,
+    "wall": 0.35,
+    "slab": 0.25,
+    "door_width": 1.6,
+    "door_height": 2.3,
+    "window_width": 1.2,
+    "window_height": 1.5,
+    "window_pitch": 2.6,
+    "sill": 1.0,
+    "frame": 0.065,
+    "bevel": 0.025
+  },
+  "recipes": [
+    {"kind": "block", "storeys": [4, 5, 6, 7, 8], "roof": "flat"},
+    {"kind": "house", "storeys": [1, 2], "roof": "gable"},
+    {"kind": "bungalow", "storeys": [1], "roof": "flat"},
+    {"kind": "tower", "storeys": [3, 4, 5, 6], "roof": "flat", "sides": 12},
+    {"kind": "hangar", "storeys": [1], "roof": "vault"}
+  ]
+}

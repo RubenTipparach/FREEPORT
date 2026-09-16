@@ -144,6 +144,8 @@ pub struct Rings {
     /// Each level's box middle, in that level's chunks; always even, so the
     /// box is aligned to the next level's chunks.
     pub centre: Vec<[i64; 3]>,
+    /// Finest active ring. At altitude, finer boxes contain only air.
+    pub min_level: u8,
 }
 
 /// How far the eye may drift from a box's middle, in that level's chunks,
@@ -157,6 +159,7 @@ impl Rings {
     pub fn around(lat: &Lattice, eye: DVec3, levels: u8) -> Rings {
         let mut rings = Rings {
             centre: vec![[0; 3]; levels as usize],
+            min_level: 0,
         };
         for level in 0..levels {
             let u = rings.eye_in(lat, eye, level);
@@ -168,6 +171,24 @@ impl Rings {
     /// How many levels.
     pub fn levels(&self) -> u8 {
         self.centre.len() as u8
+    }
+
+    /// Adapt the finest ring to height above the surface, with hysteresis.
+    /// The finest box stays filled and every neighbour still differs by at
+    /// most one level. Height and the lattice are in absolute world metres.
+    pub fn adapt(&mut self, lat: &Lattice, height: f64) -> bool {
+        if !height.is_finite() || self.levels() == 0 {
+            return false;
+        }
+        let old = self.min_level;
+        let reach = |level| lat.cell(level) * CH as f64 * HALF as f64;
+        while self.min_level + 1 < self.levels() && height > reach(self.min_level + 1) * 1.2 {
+            self.min_level += 1;
+        }
+        while self.min_level > 0 && height < reach(self.min_level) * 0.8 {
+            self.min_level -= 1;
+        }
+        old != self.min_level
     }
 
     /// The eye's place at a level, in that level's chunks.
@@ -193,6 +214,9 @@ impl Rings {
 
     /// Whether a chunk is inside its level's box.
     pub fn holds(&self, id: ChunkId) -> bool {
+        if id.level < self.min_level {
+            return false;
+        }
         let Some(c) = self.centre.get(id.level as usize) else {
             return false;
         };
@@ -202,7 +226,7 @@ impl Rings {
     /// Whether a chunk is wholly inside the next finer level's box, where
     /// the finer chunks stand in for it.
     fn under_finer(&self, id: ChunkId) -> bool {
-        if id.level == 0 {
+        if id.level == self.min_level {
             return false;
         }
         let c = self.centre[id.level as usize - 1];
@@ -213,7 +237,7 @@ impl Rings {
     /// finer box covers.
     pub fn chunks(&self) -> Vec<ChunkId> {
         let mut out = Vec::new();
-        for (level, c) in self.centre.iter().enumerate() {
+        for (level, c) in self.centre.iter().enumerate().skip(self.min_level as usize) {
             for z in c[2] - HALF..c[2] + HALF {
                 for y in c[1] - HALF..c[1] + HALF {
                     for x in c[0] - HALF..c[0] + HALF {
@@ -270,7 +294,7 @@ fn snap(u: DVec3) -> [i64; 3] {
 
 impl Levels for Rings {
     fn level_at(&self, f: [i64; 3]) -> Option<u8> {
-        (0..self.levels()).find(|&level| self.holds(ChunkId::holding(level, f)))
+        (self.min_level..self.levels()).find(|&level| self.holds(ChunkId::holding(level, f)))
     }
 }
 
@@ -350,6 +374,24 @@ mod tests {
         }
         // The eye's own fine cell is at level 0.
         assert_eq!(rings.level_at(lat.fine_cell(eye)), Some(0));
+    }
+
+    #[test]
+    fn altitude_drops_air_rings_without_leaving_a_hole() {
+        let lat = Lattice::new(DVec3::ZERO, 0.25);
+        let mut rings = Rings::around(&lat, DVec3::ZERO, 8);
+        let full = rings.chunks().len();
+        assert!(rings.adapt(&lat, 500.0));
+        assert!(rings.min_level > 0);
+        assert!(rings.chunks().len() < full);
+        assert_eq!(rings.level_at([0; 3]), Some(rings.min_level));
+        for id in rings.chunks() {
+            assert_eq!(rings.level_at(id.f0()), Some(id.level));
+        }
+        assert!(!rings.adapt(&lat, 500.1));
+        assert!(rings.adapt(&lat, 0.0));
+        assert_eq!(rings.min_level, 0);
+        assert_eq!(rings.chunks().len(), full);
     }
 
     #[test]

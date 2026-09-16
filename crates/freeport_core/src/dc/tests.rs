@@ -8,6 +8,35 @@ use crate::field::{Block, Built, Planet, Sphere, CONCRETE, TERRAIN};
 use crate::lattice::{Flat, Rings};
 use crate::tables::EDGE_TABLE;
 
+#[test]
+fn precomputed_samples_preserve_surface_and_invalid_samples_fall_back() {
+    let field = Sphere { radius: 6.0 };
+    let lat = Lattice::new(DVec3::splat(-8.125), 0.5);
+    let id = ChunkId {
+        level: 0,
+        at: [0; 3],
+    };
+    let mut samples = Vec::new();
+    for k in -MARGIN..=CH + MARGIN {
+        for j in -MARGIN..=CH + MARGIN {
+            for i in -MARGIN..=CH + MARGIN {
+                samples.push(field.at(lat.point([i, j, k])) as f32);
+            }
+        }
+    }
+    let want = contour(&field, &lat, id, &Flat(0));
+    for values in [
+        samples,
+        vec![f32::NAN; (STRIDE * STRIDE * STRIDE) as usize],
+        vec![0.0],
+    ] {
+        let mesh = contour_sampled(&field, &lat, id, &Flat(0), values);
+        assert_eq!(want.positions, mesh.positions);
+        assert_eq!(want.indices, mesh.indices);
+        assert_eq!(want.normals, mesh.normals);
+    }
+}
+
 /// Every chunk the rings ask for that the field cannot rule out, with
 /// triangles in it.
 fn contour_rings(field: &dyn Density, lat: &Lattice, rings: &Rings) -> Vec<(DVec3, DcMesh)> {

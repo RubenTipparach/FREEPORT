@@ -43,7 +43,7 @@ pub fn light_lamps(
         .iter()
         .enumerate()
         .filter_map(|(i, (at, _))| {
-            let d = (*at - eye.0 .0).length();
+            let d = (*at + ground.1 - eye.0 .0).length();
             (d < REACH).then_some((d, i))
         })
         .collect();
@@ -63,6 +63,7 @@ pub fn light_lamps(
             continue;
         }
         let (at, reach) = ground.0.lamps[i];
+        let at = ground.1 + at;
         commands.spawn((
             PointLight {
                 intensity: LUMENS,

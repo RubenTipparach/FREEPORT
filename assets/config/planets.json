@@ -1,0 +1,5 @@
+[
+  { "name": "Ember", "centre": [3200000, 800000, -2000000], "radius": 420000, "relief": 6200, "sea_offset": -3500, "seed": 31, "colour": [0.58, 0.24, 0.12] },
+  { "name": "Pelagos", "centre": [-4000000, 1000000, -3000000], "radius": 760000, "relief": 9000, "sea_offset": 400, "seed": 113, "colour": [0.16, 0.48, 0.28] },
+  { "name": "Rime", "centre": [1000000, -2000000, 4000000], "radius": 280000, "relief": 4400, "sea_offset": -2400, "seed": 271, "colour": [0.65, 0.72, 0.8] }
+]

@@ -3,4 +3,5 @@
 /tools/material_maker
 *.log
 __pycache__/
+*.blend1
 /docs/mockups/shots/*.tmp.png

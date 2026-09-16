@@ -24,7 +24,10 @@ echo street of the port.
 echo.
 echo Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
 echo runs, Space jumps. F swaps to the fly camera and back, Tab toggles the
-echo wire.
+echo wire. Flying: WASD moves, Space/Ctrl rises/sinks, Q/E rolls, Shift boosts.
+echo The mouse wheel changes flight speed; R levels the view to the planet.
+echo N selects a planet; G faces it. Atmospheres slow flight before landing.
+echo L colors terrain wireframe by LOD; K freezes its rings for inspection.
 echo.
 target\release\freeport_app.exe %*
 pause

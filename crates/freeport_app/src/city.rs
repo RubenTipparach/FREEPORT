@@ -1,29 +1,23 @@
-//! The towns as they are DRAWN: one mesh a town, spawned once.
-//!
-//! A town's buildings and streets are parametric models
-//! (`freeport_core::model`), welded into ONE mesh in the town's own frame
-//! at startup and never touched again: a town is eighty metres across, so
-//! an `f32` in its frame holds a micron, and eight towns are eight draws
-//! rather than eight thousand. The entity is placed from the town's own
-//! world position through the floating origin, like a chunk, so
-//! `rebase_origin` moves it with everything else.
-//!
-//! They wear the ground's own material, so concrete, plate, glass, a lamp
-//! and a street are the same seven the terrain shader already draws, in
-//! the same town frames it already maps them in.
+//! Town meshes baked by Blender, batched per town and selected by distance.
+//! Collision always uses the full bake, independent of the visible LOD.
 
 use crate::stream::{Anchored, Frame};
-use crate::terrain::{to_mesh, TerrainMaterial};
+use crate::terrain::{to_mesh_filtered, TerrainMaterial};
 use crate::world::TownMesh;
+use crate::Eye;
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use freeport_core::field::GLASS;
 use freeport_core::pos::WorldPos;
 
-/// A mark on a town's models.
 #[derive(Component)]
-pub struct Built;
+pub struct Built {
+    meshes: [Handle<Mesh>; 3],
+    empty: [bool; 3],
+    level: usize,
+    radius: f64,
+}
 
-/// Spawn every town's mesh where it stands.
 pub fn spawn_towns(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -31,38 +25,116 @@ pub fn spawn_towns(
     frame: &Frame,
     sea: f64,
     towns: Vec<TownMesh>,
+    standard: &mut Assets<StandardMaterial>,
 ) {
+    let glass = standard.add(StandardMaterial {
+        base_color: Color::srgba(0.55, 0.72, 0.78, 0.18),
+        perceptual_roughness: 0.12,
+        reflectance: 0.5,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        double_sided: true,
+        ..default()
+    });
     for town in towns {
-        if town.mesh.indices.is_empty() {
-            continue;
-        }
         let at = WorldPos(town.frame.world(DVec3::ZERO));
-        // A model's vertices are ALREADY in the frame the concrete is
-        // mapped in, east, north and up from the town's own middle, and
-        // they are metres, so the shader maps from them as they stand.
-        // That is the same rule the chunks keep, arrived at for free: the
-        // number a texture coordinate is made of is never a planet's
-        // radius held in an f32.
-        let world = town.frame;
-        let place = move |p: Vec3| (p, (world.world(p.as_dvec3()).length() - sea) as f32);
-        // The mesh is written east, north and up in the town's frame, so
-        // the entity carries that frame's own rotation and the origin
-        // carries where it is.
         let basis = Mat3::from_cols(
             town.frame.east.as_vec3(),
             town.frame.north.as_vec3(),
             town.frame.dir.as_vec3(),
         );
-        commands.spawn((
-            Mesh3d(meshes.add(to_mesh(&town.mesh, place))),
-            MeshMaterial3d(material.clone()),
-            Transform {
-                translation: frame.0.local(at),
-                rotation: Quat::from_mat3(&basis),
-                scale: Vec3::ONE,
-            },
-            Anchored { at },
-            Built,
-        ));
+        let transform = Transform {
+            translation: frame.0.local(at),
+            rotation: Quat::from_mat3(&basis),
+            scale: Vec3::ONE,
+        };
+        let radius = town.meshes[0]
+            .positions
+            .iter()
+            .map(|&p| Vec3::from(p).length() as f64)
+            .fold(0.0, f64::max);
+        for glazing in [false, true] {
+            let empty = std::array::from_fn(|lod| {
+                !town.meshes[lod]
+                    .materials
+                    .iter()
+                    .any(|&m| (m == GLASS) == glazing)
+            });
+            if empty.iter().all(|&e| e) {
+                continue;
+            }
+            let handles = std::array::from_fn(|lod| {
+                let place = |p: Vec3| (p, (town.frame.world(p.as_dvec3()).length() - sea) as f32);
+                let mut mesh =
+                    to_mesh_filtered(&town.meshes[lod], place, |m| (m == GLASS) == glazing);
+                // Vertex color is the terrain shader's material/mapping
+                // payload, not a tint for StandardMaterial glass.
+                if glazing {
+                    mesh.remove_attribute(Mesh::ATTRIBUTE_COLOR);
+                }
+                meshes.add(mesh)
+            });
+            let mut entity = commands.spawn((
+                Mesh3d(handles[0].clone()),
+                transform,
+                Anchored { at },
+                Built {
+                    meshes: handles,
+                    empty,
+                    level: 0,
+                    radius,
+                },
+            ));
+            if glazing {
+                entity.insert((MeshMaterial3d(glass.clone()), bevy::light::NotShadowCaster));
+            } else {
+                entity.insert(MeshMaterial3d(material.clone()));
+            }
+        }
+    }
+}
+
+fn select_lod(current: usize, distance: f64, tuning: &crate::tuning::Tuning) -> usize {
+    let distances = [tuning.building_lod_near, tuning.building_lod_far];
+    let mut level = current;
+    while level < 2 && distance > distances[level] * (1.0 + tuning.lod_hysteresis) {
+        level += 1;
+    }
+    while level > 0 && distance < distances[level - 1] * (1.0 - tuning.lod_hysteresis) {
+        level -= 1;
+    }
+    level
+}
+
+pub fn update_lod(
+    eye: Res<Eye>,
+    tuning: Res<crate::tuning::Tuning>,
+    mut towns: Query<(&Anchored, &mut Built, &mut Mesh3d, &mut Visibility)>,
+) {
+    for (anchor, mut built, mut mesh, mut visibility) in &mut towns {
+        let distance = ((anchor.at.0 - eye.0 .0).length() - built.radius).max(0.0);
+        let lod = select_lod(built.level, distance, &tuning);
+        if lod == built.level {
+            continue;
+        }
+        mesh.0 = built.meshes[lod].clone();
+        *visibility = if built.empty[lod] {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        built.level = lod;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn lod_has_hysteresis_and_handles_teleports() {
+        assert_eq!(select_lod(0, 260.0, &default()), 0);
+        assert_eq!(select_lod(1, 240.0, &default()), 1);
+        assert_eq!(select_lod(0, 5000.0, &default()), 2);
+        assert_eq!(select_lod(2, 0.0, &default()), 0);
     }
 }

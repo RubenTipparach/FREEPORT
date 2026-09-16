@@ -14,22 +14,33 @@
 //! floating origin.
 //!
 //! ```text
-//! freeport_app [--wire] [--fly] [--eye x,y,z] [--look x,y,z] [--levels N]
+//! freeport_app [--wire] [--lod-wire] [--fly] [--eye x,y,z] [--look x,y,z] [--levels N]
 //!              [--fps N] [--octaves N] [--walk N] [--shot out.png]
 //!              [--frames N]
 //! ```
 //!
 //! Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
-//! runs, Space jumps. Flying: WASD and Q E, Shift is faster. F swaps the
-//! two, Tab toggles the wireframe. `--eye` is where to start, metres from
-//! the planet's centre (on foot, the spot under it) and `--look` what to
+//! runs, Space jumps. Flying: WASD, Space/Ctrl rise/sink, Q/E roll, Shift
+//! boosts, mouse wheel sets cruise speed, R levels the view. N selects a
+//! destination and G faces it. Atmospheres limit speed before landing. F swaps the
+//! two, Tab toggles the wireframe, L colors terrain LODs and K freezes their
+//! rings for inspection. `--eye` is where to start, metres from
+//! the system origin (on foot, the spot under it) and `--look` what to
 //! face; both default to the port.
 mod args;
+mod buildings;
 mod city;
+mod compute;
+mod fly;
 mod lamps;
+mod lod_debug;
+mod meshing;
+mod planet_view;
+mod planets;
 mod sky;
 mod stream;
 mod terrain;
+mod tuning;
 mod walk;
 mod water;
 mod world;
@@ -45,6 +56,7 @@ use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use fly::{fly, FlightSettings, Fly};
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
 use freeport_core::town;
@@ -126,12 +138,13 @@ fn sun_over(dir: DVec3) -> DVec3 {
 
 /// Radians of look per pixel of mouse.
 pub(crate) const LOOK: f32 = 0.0022;
-/// Flying: metres a second, and the factor Shift puts on it.
-const SPEED: f64 = 6.0;
-const SPRINT: f64 = 8.0;
 
 fn main() {
     let args = parse_args();
+    let lod_debug = lod_debug::LodDebug {
+        enabled: args.lod_wire,
+        frozen: false,
+    };
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins((
@@ -141,7 +154,7 @@ fn main() {
             sky::SkyPlugin,
         ))
         .insert_resource(WireframeConfig {
-            global: args.wire,
+            global: args.wire && !args.lod_wire,
             default_color: Color::srgb(0.1, 0.1, 0.12),
         })
         // What is BEHIND the sky is space, and the sky is the air: a
@@ -149,24 +162,32 @@ fn main() {
         // like, and the one that could not be right at dusk.
         .insert_resource(ClearColor(Color::srgb(0.01, 0.012, 0.02)))
         .insert_resource(args)
+        .insert_resource(lod_debug)
+        .insert_resource(tuning::Tuning::load())
+        .insert_resource(FlightSettings::load())
         .init_resource::<Eye>()
         .init_resource::<Frame>()
         .init_resource::<Status>()
-        .add_systems(Startup, spawn_world)
+        .add_systems(Startup, (compute::init_compute, spawn_world).chain())
+        .add_systems(Startup, lod_debug::spawn_legend)
         .add_systems(
             Update,
             (
                 grab_mouse,
+                lod_debug::controls,
                 toggle_walk,
                 walk,
                 fly,
+                planets::activate,
                 rebase_origin,
+                planet_view::recentre,
+                city::update_lod,
                 stream,
                 light_lamps,
                 place_eye,
                 sky::drift_sky,
                 show_status,
-                toggle_wireframe,
+                lod_debug::apply,
                 take_shot,
                 hold_frame,
             )
@@ -183,10 +204,14 @@ pub(crate) struct Controls<'w, 's> {
     pub time: Res<'w, Time>,
     pub keys: Res<'w, ButtonInput<KeyCode>>,
     motion: MessageReader<'w, 's, MouseMotion>,
-    cursor: Query<'w, 's, &'static CursorOptions, With<PrimaryWindow>>,
+    cursor: Query<'w, 's, (&'static CursorOptions, &'static Window), With<PrimaryWindow>>,
 }
 
 impl Controls<'_, '_> {
+    pub fn focused(&self) -> bool {
+        self.cursor.single().is_ok_and(|(_, window)| window.focused)
+    }
+
     /// This frame's look, radians about the local up and of tilt, from the
     /// mouse while the window holds it. One event carrying a whole screen
     /// is a window handing focus back, never a look; it is clamped rather
@@ -195,7 +220,7 @@ impl Controls<'_, '_> {
         let taken = self
             .cursor
             .single()
-            .map(|c| c.grab_mode == CursorGrabMode::Locked)
+            .map(|(c, window)| window.focused && c.grab_mode == CursorGrabMode::Locked)
             .unwrap_or(false);
         let mut look = Vec2::ZERO;
         for m in self.motion.read() {
@@ -204,22 +229,6 @@ impl Controls<'_, '_> {
             }
         }
         look
-    }
-}
-
-/// The fly camera: where it is in the world frame and its heading, kept as
-/// angles so a look cannot roll.
-#[derive(Component)]
-pub(crate) struct Fly {
-    pub yaw: f32,
-    pub pitch: f32,
-    pub at: DVec3,
-}
-
-impl Fly {
-    /// The way it faces.
-    pub fn forward(&self) -> Vec3 {
-        Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0) * Vec3::NEG_Z
     }
 }
 
@@ -237,15 +246,32 @@ pub(crate) struct Status {
 #[derive(Component)]
 struct Stat;
 
+#[derive(SystemParam)]
+struct WorldAssets<'w> {
+    images: ResMut<'w, Assets<Image>>,
+    materials: ResMut<'w, Assets<TerrainMaterial>>,
+    waters: ResMut<'w, Assets<WaterMaterial>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    skies: ResMut<'w, Assets<sky::Sky>>,
+    standard: ResMut<'w, Assets<StandardMaterial>>,
+}
+
 fn spawn_world(
     mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<TerrainMaterial>>,
-    mut waters: ResMut<Assets<WaterMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut skies: ResMut<Assets<sky::Sky>>,
+    assets: WorldAssets,
     args: Res<Args>,
+    mut compute: ResMut<compute::Compute>,
+    tuning: Res<tuning::Tuning>,
+    flight: Res<FlightSettings>,
 ) {
+    let WorldAssets {
+        mut images,
+        mut materials,
+        mut waters,
+        mut meshes,
+        mut skies,
+        mut standard,
+    } = assets;
     let (world, towns) = world::build(&args);
     let (start_eye, start_look) = start(&world);
     let eye = args.eye.unwrap_or(start_eye);
@@ -265,31 +291,7 @@ fn spawn_world(
         .collect();
     let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
     let sheet = water_material(&mut waters, SEA);
-    // Where the sea is, so a picture can be aimed at it. A hunt that finds
-    // nothing says so rather than printing a NaN somebody has to work out
-    // the meaning of.
-    let says = match shore(&world, eye) {
-        Some(s) => format!(", the shore {:.0} m off at {s:.0}", (s - eye).length()),
-        None => ", no shore within a quarter turn".to_string(),
-    };
-    info!(
-        "planet of {} m, the sea at {} m, {} levels of {} m to {} m cells, the eye at {:.0}{}",
-        RADIUS,
-        SEA,
-        args.levels,
-        lat.cell(0),
-        lat.cell(args.levels - 1),
-        eye,
-        says,
-    );
-    commands.insert_resource(Streamer::new(
-        lat,
-        eye,
-        args.levels,
-        SEA,
-        material.clone(),
-        sheet,
-    ));
+    say_world(&world, start_eye, &lat, args.levels);
     // The towns are drawn once and never again: models, not chunks.
     city::spawn_towns(
         &mut commands,
@@ -298,7 +300,32 @@ fn spawn_world(
         &Frame::default(),
         SEA,
         towns,
+        &mut standard,
     );
+    let mut planets = planets::Planets::load(Arc::new(world));
+    planets.bodies[0].material = material;
+    planets.bodies[0].water = sheet;
+    planet_view::spawn(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &mut waters,
+        &mut standard,
+        &mut planets,
+    );
+    planets.active = planets.nearest(eye);
+    let body = &planets.bodies[planets.active];
+    let mut streamer = Streamer::new(
+        lat,
+        eye - body.centre,
+        args.levels,
+        body.material.clone(),
+        body.water.clone(),
+        compute.0.take(),
+        tuning.clone(),
+    );
+    streamer.centre = body.centre;
+    commands.insert_resource(streamer);
     // The sun, and everything that reads it: the WORLD's own start decides
     // which way it points and never `--eye`, so two pictures taken from
     // two places are lit the same and only the camera moved. The light,
@@ -311,12 +338,34 @@ fn spawn_world(
         &mut meshes,
         &mut skies,
         &mut images,
-        eye,
-        sun,
+        eye - body.centre,
+        sky::Weather {
+            air: body.air,
+            sea: body.world.sea.radius,
+            sun,
+        },
     );
-    spawn_camera(&mut commands, &world, &args, eye, look, env);
+    spawn_camera(&mut commands, body, &args, eye, look, env, &flight);
     commands.insert_resource(Eye(WorldPos(eye)));
-    commands.insert_resource(Ground(Arc::new(world)));
+    commands.insert_resource(Ground(body.world.clone(), body.centre));
+    commands.insert_resource(planets);
+}
+
+fn say_world(world: &World, eye: DVec3, lat: &Lattice, levels: u8) {
+    let says = match shore(world, eye) {
+        Some(s) => format!(", the shore {:.0} m off at {s:.0}", (s - eye).length()),
+        None => ", no shore within a quarter turn".to_string(),
+    };
+    info!(
+        "planet of {} m, the sea at {} m, {} levels of {} m to {} m cells, the eye at {:.0}{}",
+        RADIUS,
+        SEA,
+        levels,
+        lat.cell(0),
+        lat.cell(levels - 1),
+        eye,
+        says
+    );
 }
 
 /// The sky this world stands under: the air and the sun as one resource,
@@ -329,7 +378,7 @@ fn spawn_sky(
     skies: &mut Assets<sky::Sky>,
     images: &mut Assets<Image>,
     eye: DVec3,
-    sun: DVec3,
+    weather: sky::Weather,
 ) -> Handle<Image> {
     commands.insert_resource(GlobalAmbientLight {
         // Nearly nothing: what fills a shadow is the SKY, through the
@@ -341,11 +390,6 @@ fn spawn_sky(
         brightness: 8.0,
         ..default()
     });
-    let weather = sky::Weather {
-        air: freeport_core::atmos::Air::round(RADIUS, RELIEF),
-        sea: SEA,
-        sun,
-    };
     sky::spawn_dome(commands, meshes, skies, &weather);
     let lit = Instant::now();
     let env = images.add(sky::bake_env(&weather.air, weather.sun, eye));
@@ -366,6 +410,7 @@ fn spawn_light(commands: &mut Commands, sun: DVec3) {
             shadows_enabled: true,
             ..default()
         },
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
         CascadeShadowConfigBuilder {
             num_cascades: 4,
             first_cascade_far_bound: 12.0,
@@ -391,6 +436,7 @@ fn spawn_status(commands: &mut Commands) {
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(12.0),
+            right: Val::Px(12.0),
             bottom: Val::Px(10.0),
             ..default()
         },
@@ -402,20 +448,19 @@ fn spawn_status(commands: &mut Commands) {
 /// under `eye` facing `look`.
 fn spawn_camera(
     commands: &mut Commands,
-    world: &World,
+    body: &planets::Body,
     args: &Args,
     eye: DVec3,
     look: DVec3,
     env: Handle<Image>,
+    flight: &FlightSettings,
 ) {
     let d = (look - eye).normalize_or(DVec3::NEG_Z);
-    let fly = Fly {
-        yaw: (-d.x as f32).atan2(-d.z as f32),
-        pitch: (d.y as f32).clamp(-1.0, 1.0).asin(),
-        at: eye,
-    };
+    let local = eye - body.centre;
+    let world = &body.world;
+    let fly = Fly::new(eye, d, local.normalize_or(DVec3::Y), flight.speed);
     if !args.fly {
-        let w = Walker::enter(&world.underfoot(eye, 8.0), &world.bounds, eye, d);
+        let w = Walker::enter(&world.underfoot(local, 8.0), &world.bounds, local, d);
         commands.insert_resource(OnFoot(w));
     }
     commands.spawn((
@@ -424,6 +469,10 @@ fn spawn_camera(
             ..default()
         },
         DepthPrepass,
+        Projection::Perspective(PerspectiveProjection {
+            far: 100_000_000.0,
+            ..default()
+        }),
         Exposure { ev100: 10.5 },
         // The sky lights the world: what fills a shadow is the air over
         // it, off the same march the dome is drawn by, which is why a
@@ -456,49 +505,6 @@ fn grab_mouse(
     }
 }
 
-/// Fly the camera while nobody is on foot: the mouse turns it while it is
-/// taken, and the keys move it in its own frame, in the world frame's
-/// `f64`.
-fn fly(
-    mut controls: Controls,
-    on_foot: Option<Res<OnFoot>>,
-    mut cam: Query<&mut Fly>,
-    mut eye: ResMut<Eye>,
-    mut status: ResMut<Status>,
-) {
-    let look = controls.look();
-    if on_foot.is_some() {
-        return;
-    }
-    let Ok(mut fly) = cam.single_mut() else {
-        return;
-    };
-    fly.yaw -= look.x;
-    fly.pitch = (fly.pitch - look.y).clamp(-1.5, 1.5);
-    let rot = Quat::from_euler(EulerRot::YXZ, fly.yaw, fly.pitch, 0.0);
-    let keys = &controls.keys;
-    let mut v = Vec3::ZERO;
-    let axis =
-        |neg: KeyCode, pos: KeyCode| (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f32;
-    v += (rot * Vec3::NEG_Z) * axis(KeyCode::KeyS, KeyCode::KeyW);
-    v += (rot * Vec3::X) * axis(KeyCode::KeyA, KeyCode::KeyD);
-    v += Vec3::Y * axis(KeyCode::KeyQ, KeyCode::KeyE);
-    let speed = if keys.pressed(KeyCode::ShiftLeft) {
-        SPEED * SPRINT
-    } else {
-        SPEED
-    };
-    let step = v.normalize_or_zero().as_dvec3() * speed * controls.time.delta_secs_f64().min(0.1);
-    if step.is_finite() {
-        fly.at += step;
-    }
-    eye.0 = WorldPos(fly.at);
-    status.walker = format!(
-        "flying at {:.1} m over the mean radius",
-        fly.at.length() - RADIUS
-    );
-}
-
 /// The camera at the eye through the origin: looking where the walker
 /// looks with the local up as up, or along the fly camera's heading.
 fn place_eye(
@@ -515,32 +521,23 @@ fn place_eye(
         Some(w) => {
             Transform::from_translation(at).looking_to(w.0.look().as_vec3(), w.0.dir.as_vec3())
         }
-        None => Transform::from_translation(at).with_rotation(Quat::from_euler(
-            EulerRot::YXZ,
-            fly.yaw,
-            fly.pitch,
-            0.0,
-        )),
+        None => Transform::from_translation(at).with_rotation(fly.rotation),
     };
 }
 
 fn show_status(
     status: Res<Status>,
     streamer: Option<Res<Streamer>>,
+    walker: Option<Res<OnFoot>>,
     mut text: Query<&mut Text, With<Stat>>,
 ) {
     let what = streamer.map(|s| s.status()).unwrap_or_default();
+    let mode = if walker.is_some() { "fly" } else { "walk" };
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
-            "{}   |   {}   |   F fly, Tab wire, Esc mouse",
+            "{}\n{}   |   F {mode}, Tab wire, L LOD, Esc mouse",
             status.walker, what
         );
-    }
-}
-
-fn toggle_wireframe(keys: Res<ButtonInput<KeyCode>>, mut config: ResMut<WireframeConfig>) {
-    if keys.just_pressed(KeyCode::Tab) {
-        config.global = !config.global;
     }
 }
 
@@ -575,27 +572,62 @@ fn take_shot(
     mut commands: Commands,
     args: Res<Args>,
     streamer: Option<Res<Streamer>>,
-    mut frame: Local<u32>,
-    mut taken: Local<Option<u32>>,
+    mut shot: Local<ShotState>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Some(path) = &args.shot else {
         return;
     };
-    *frame += 1;
+    shot.frame += 1;
+    let now = Instant::now();
+    if let Some(last) = shot.last.replace(now) {
+        shot.times.push((now - last).as_secs_f64() * 1000.0);
+    }
     // The picture waits for the ground: every chunk the rings want drawn
     // once, or ten times the frames asked for, whichever comes first.
     let ready = match &streamer {
-        Some(s) => s.idle() || *frame >= args.frames * 10,
+        Some(s) => s.idle() || shot.frame >= args.frames * 10,
         None => true,
     };
-    if taken.is_none() && *frame >= args.frames && ready {
+    if shot.taken.is_none() && shot.frame >= args.frames && ready {
         commands
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(path.clone()));
-        *taken = Some(*frame);
+        shot.taken = Some(shot.frame);
+        shot.save_metrics(path, streamer.as_deref());
     }
-    if taken.is_some_and(|t| *frame >= t + 12) {
+    if shot.taken.is_some_and(|t| shot.frame >= t + 12) {
         exit.write(AppExit::Success);
+    }
+}
+
+#[derive(Default)]
+struct ShotState {
+    frame: u32,
+    taken: Option<u32>,
+    last: Option<Instant>,
+    times: Vec<f64>,
+}
+
+impl ShotState {
+    fn save_metrics(&self, path: &str, streamer: Option<&Streamer>) {
+        let mut times = self.times.clone();
+        times.sort_by(f64::total_cmp);
+        let percentile = |p: f64| {
+            times
+                .get(((times.len().saturating_sub(1)) as f64 * p) as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
+        let value = serde_json::json!({
+            "frames": self.frame, "frame_p50_ms": percentile(0.5), "frame_p95_ms": percentile(0.95),
+            "frame_max_ms": times.last(), "terrain": streamer.map(Streamer::measurement),
+        });
+        let destination = std::path::Path::new(path).with_extension("metrics.json");
+        if let Ok(bytes) = serde_json::to_vec_pretty(&value) {
+            if let Err(e) = std::fs::write(destination, bytes) {
+                warn!("could not write screenshot metrics: {e}");
+            }
+        }
     }
 }
