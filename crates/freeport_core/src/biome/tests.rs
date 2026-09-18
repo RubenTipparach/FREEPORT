@@ -367,7 +367,7 @@ fn harness() -> (crate::field::Planet, f64) {
         // and this test is what keeps them one: the core cannot read the
         // app's constant, so it asserts the property the constant is set
         // for, and a sea moved there fails here.
-        1_000_000.0 + 820.0,
+        1_000_000.0 + 1000.0,
     )
 }
 
@@ -459,5 +459,242 @@ fn no_town_stands_on_the_ice() {
     println!(
         "{} towns, the coldest at {coldest:.2} against a freezing line of {FREEZING}",
         towns.len()
+    );
+}
+
+/// Every connected piece of LAND on a body, by the share of the whole
+/// sphere's area each covers, biggest first.
+///
+/// An equirect grid because that is what the chart is and what a picture
+/// of the body shows; the rows are weighted by the cosine of their own
+/// latitude, or a speck at the pole would count for as much ground as a
+/// continent at the equator. Row nought is a ring of cells round the pole
+/// and every one of them is joined to the next going east, so the pole
+/// needs no case of its own.
+fn landmasses(planet: &crate::field::Planet, sea: f64, w: usize, h: usize) -> Land {
+    let shape = Shape::of(planet);
+    let mut land = vec![false; w * h];
+    let row = |v: usize| std::f64::consts::PI * ((v as f64 + 0.5) / h as f64 - 0.5);
+    let area: Vec<f64> = (0..h).map(|v| row(v).cos()).collect();
+    for v in 0..h {
+        let lat = row(v);
+        for u in 0..w {
+            let lon = std::f64::consts::TAU * (u as f64 + 0.5) / w as f64;
+            let dir = DVec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin());
+            land[v * w + u] = planet.radius + shape.height(dir) >= sea;
+        }
+    }
+    // Union find, joined east (wrapping) and south.
+    let mut up: Vec<usize> = (0..w * h).collect();
+    fn root(up: &mut [usize], mut i: usize) -> usize {
+        while up[i] != i {
+            up[i] = up[up[i]];
+            i = up[i];
+        }
+        i
+    }
+    let join = |up: &mut [usize], a: usize, b: usize| {
+        let (a, b) = (root(up, a), root(up, b));
+        if a != b {
+            up[a] = b;
+        }
+    };
+    for v in 0..h {
+        for u in 0..w {
+            let i = v * w + u;
+            if !land[i] {
+                continue;
+            }
+            let e = v * w + (u + 1) % w;
+            if land[e] {
+                join(&mut up, i, e);
+            }
+            if v + 1 < h && land[(v + 1) * w + u] {
+                join(&mut up, i, (v + 1) * w + u);
+            }
+        }
+    }
+    let whole: f64 = area.iter().sum::<f64>() * w as f64;
+    let mut size = std::collections::BTreeMap::new();
+    for (v, a) in area.iter().enumerate() {
+        for u in 0..w {
+            let i = v * w + u;
+            if land[i] {
+                *size.entry(root(&mut up, i)).or_insert(0.0) += a / whole;
+            }
+        }
+    }
+    // And the share each TEXEL's own piece is worth, so a town can be
+    // asked how big the land under it is.
+    let mut at = vec![0.0f64; w * h];
+    for v in 0..h {
+        for u in 0..w {
+            let i = v * w + u;
+            if land[i] {
+                at[i] = size[&root(&mut up, i)];
+            }
+        }
+    }
+    let mut pieces: Vec<f64> = size.into_values().collect();
+    pieces.sort_by(|a, b| b.total_cmp(a));
+    Land { pieces, at, w, h }
+}
+
+/// A body's land, as connected pieces and as a map of which piece is
+/// under a direction.
+struct Land {
+    /// The share of the whole sphere each piece covers, biggest first.
+    pieces: Vec<f64>,
+    /// The share the piece under each texel is worth, nought at sea.
+    at: Vec<f64>,
+    w: usize,
+    h: usize,
+}
+
+impl Land {
+    /// How big the landmass under a direction is, as a share of the whole
+    /// body. Nought if the direction is at sea.
+    fn under(&self, dir: DVec3) -> f64 {
+        let d = dir.normalize();
+        let v =
+            ((d.y.clamp(-1.0, 1.0).asin() / std::f64::consts::PI + 0.5) * self.h as f64) as usize;
+        let lon = d.z.atan2(d.x).rem_euclid(std::f64::consts::TAU);
+        let u = (lon / std::f64::consts::TAU * self.w as f64) as usize;
+        self.at[v.min(self.h - 1) * self.w + u.min(self.w - 1)]
+    }
+}
+
+/// The land on this body is a FEW CONTINENTS with a great many islands
+/// off them, which is the owner's own ask rather than anything a single
+/// fractal gives on its own.
+///
+/// What decides a continent is the SHELF (`biome::SHELF_AT` and its
+/// neighbours), and what it replaced could not have one. A continent term
+/// that is a smooth swell has a coastal gradient of about 22 m a
+/// kilometre here while the hills riding it are worth 34, so the hills
+/// decided land from water over most of the swell: the body came out as
+/// three hundred middling blobs, 6 of them over a per cent of it with the
+/// biggest 15.3%, and no continent anywhere. With a margin under the sea
+/// it is 7 continents and 217 islands.
+///
+/// And the count is a fact about how much LAND there is rather than about
+/// the noise: land is a level set of a fractal, so it percolates past
+/// about four tenths of the body and the seven become one.
+/// `measure_the_land_at_each_sea_level` is the sweep either side.
+#[test]
+fn the_land_is_a_few_continents_and_many_islands() {
+    let (planet, sea) = harness();
+    let land = landmasses(&planet, sea, 480, 240);
+    let pieces = &land.pieces;
+    let land: f64 = pieces.iter().sum();
+    // A CONTINENT is a piece worth a per cent of the whole body: on this
+    // radius that is 126,000 square kilometres, about the size of Greece
+    // and half of Britain, so the line is drawn where an island stops
+    // being somewhere you could drive across.
+    let big: Vec<f64> = pieces.iter().copied().filter(|&a| a >= 0.01).collect();
+    println!(
+        "{:.1}% land in {} pieces: {} continents at {:?}%, {} islands",
+        land * 100.0,
+        pieces.len(),
+        big.len(),
+        big.iter()
+            .map(|a| format!("{:.1}", a * 100.0))
+            .collect::<Vec<_>>(),
+        pieces.len() - big.len()
+    );
+    assert!(
+        (5..=9).contains(&big.len()),
+        "the body has {} continents, and the ask is six or seven",
+        big.len()
+    );
+    assert!(
+        pieces.len() - big.len() >= 40,
+        "only {} islands off {} continents",
+        pieces.len() - big.len(),
+        big.len()
+    );
+}
+
+/// What the land looks like at each sea level a body could be given, for
+/// picking one. Ignored, because it is a sweep rather than a rule.
+#[test]
+#[ignore]
+fn measure_the_land_at_each_sea_level() {
+    let (planet, _) = harness();
+    for over in [400.0f64, 700.0, 1000.0, 1300.0, 1600.0] {
+        let sea = planet.radius + over;
+        let pieces = landmasses(&planet, sea, 480, 240).pieces;
+        let land: f64 = pieces.iter().sum();
+        let big: Vec<String> = pieces
+            .iter()
+            .filter(|&&a| a >= 0.01)
+            .map(|a| format!("{:.1}", a * 100.0))
+            .collect();
+        println!(
+            "sea +{over:>6.0} m: {:.1}% water, {} continents {big:?}, {} islands",
+            (1.0 - land) * 100.0,
+            big.len(),
+            pieces.len() - big.len()
+        );
+    }
+}
+
+/// Towns stand ALL OVER a body: inland and on its plateaus as much as on
+/// its shores, and on its ISLANDS as much as on its continents. Both are
+/// the owner's own ask, and the second is why the first matters.
+///
+/// What this holds is the ORDER `town::in_order` takes qualifying sites
+/// in. Taken lowest first, which is what `plan` did, all 160 towns came
+/// out between 3 and 35 m over the sea on a body with eight kilometres of
+/// relief: a ring of ports round every coast and not one city inland.
+/// They span 3 m to 2,260 m now, with a quarter of them over a kilometre
+/// up.
+#[test]
+fn towns_stand_inland_and_on_islands() {
+    let (planet, sea) = harness();
+    let towns = crate::town::plan(&planet, sea, 80.0, 160, planet.seed);
+    assert_eq!(towns.len(), 160, "the body did not grow its towns");
+    let mut hs: Vec<f64> = towns.iter().map(|t| planet.radius + t.h - sea).collect();
+    hs.sort_by(f64::total_cmp);
+    let at = |q: f64| hs[((hs.len() - 1) as f64 * q) as usize];
+    println!(
+        "160 towns over the sea: min {:.0} p25 {:.0} median {:.0} p75 {:.0} max {:.0} m",
+        hs[0],
+        at(0.25),
+        at(0.5),
+        at(0.75),
+        hs[hs.len() - 1]
+    );
+    // The PORT is still the lowest ground on the body, because a port is
+    // the town this game is about.
+    let port = planet.radius + towns[0].h - sea;
+    assert!(
+        port <= hs[1] + 1e-9,
+        "the port at {port:.0} m is not the lowest town on the body"
+    );
+    // A quarter of them are a long way up, which is what says the height
+    // ceiling is doing anything at all.
+    assert!(
+        at(0.75) > planet.relief * 0.05,
+        "three quarters of the towns are under {:.0} m, which is a coastline",
+        at(0.75)
+    );
+    // And the ISLANDS have cities on them. A continent is a piece worth a
+    // per cent of the body; anything smaller is an island.
+    let land = landmasses(&planet, sea, 480, 240);
+    let on_islands = towns.iter().filter(|t| land.under(t.dir) < 0.01).count();
+    let tiny = towns
+        .iter()
+        .filter(|t| {
+            let a = land.under(t.dir);
+            a > 0.0 && a < 0.001
+        })
+        .count();
+    println!(
+        "{on_islands} of 160 towns stand on an island rather than a continent, {tiny} of them on one under a thousandth of the body"
+    );
+    assert!(
+        on_islands >= 10,
+        "only {on_islands} of 160 towns are on islands"
     );
 }

@@ -188,13 +188,16 @@ pub fn spawn_dome(
     );
 }
 
-/// The materials the fog is painted onto: the ground and the sea. One
-/// system hands both the same colour and the same density, because they
-/// stand under one sky.
+/// The materials the sky is painted onto: the ground, the sea and the
+/// bodies drawn from far off. One system hands the first two the same fog
+/// colour and the same density, because they stand under one sky, and the
+/// third the SUN, because which half of a body is in its own night is the
+/// same fact the dome is drawing.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Painted<'w> {
     pub ground: ResMut<'w, Assets<TerrainMaterial>>,
     pub water: ResMut<'w, Assets<WaterMaterial>>,
+    pub distant: ResMut<'w, Assets<crate::distant::DistantMaterial>>,
 }
 
 /// Every frame: the dome onto the eye, the planet's centre and the sun
@@ -252,6 +255,16 @@ pub fn drift_sky(
         if let Some(m) = painted.water.get_mut(id) {
             m.extension.fog = fog;
             m.extension.haze = haze;
+        }
+    }
+    // The SUN into every body drawn from far off, so the half of one that
+    // is in its own night is dark and its cities are lit. The w is the
+    // lamps' own strength and is the material's, not the weather's, so it
+    // is read back rather than written over.
+    let ids: Vec<_> = painted.distant.ids().collect();
+    for id in ids {
+        if let Some(m) = painted.distant.get_mut(id) {
+            m.extension.sun = weather.sun.as_vec3().extend(m.extension.sun.w);
         }
     }
 }

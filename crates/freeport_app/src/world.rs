@@ -165,7 +165,7 @@ pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
     // thousand waypoints is seconds of work every launch for an answer
     // that never changes. Planning here is the fallback, so a checkout
     // nobody has baked still runs and says so.
-    let baked = crate::atlas::load(HOME, &planet, TOWN_RADIUS);
+    let baked = crate::atlas::load(HOME, &planet, SEA, TOWN_RADIUS);
     let (towns, roads) = match &baked {
         Some(a) => (a.towns(), a.roads()),
         None => {

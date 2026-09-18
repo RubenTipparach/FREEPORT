@@ -36,6 +36,12 @@ pub struct Distant {
     /// x the water's reflectance, y spare.
     #[uniform(100)]
     pub sea: Vec4,
+    /// xyz the way the SUN lies, as a unit direction in the world, and w
+    /// how bright a city burns on the night side. A direction needs no
+    /// rebasing, because the render frame is a translation of the world's
+    /// and nothing else.
+    #[uniform(100)]
+    pub sun: Vec4,
     #[texture(101)]
     #[sampler(102)]
     pub chart: Handle<Image>,
@@ -77,6 +83,16 @@ impl Plugin for DistantPlugin {
 /// model.
 pub const CHART_W: usize = 1024;
 pub const CHART_H: usize = CHART_W / 2;
+
+/// How bright a body's cities burn on its night side, in the linear
+/// units the emissive is written in.
+///
+/// Well over one on purpose: it is what a city is worth against a
+/// hemisphere lit by nothing but the sky's own floor, and it is what
+/// carries a town through the bloom threshold at the two or three pixels
+/// one is drawn at from orbit. The chart's light mask is nought to one
+/// and this is what it scales.
+const LAMPS: f32 = 120.0;
 
 /// How far the chart's own slope bends the distant normal. It is what
 /// makes a range read on a sphere no mesh could hold one on, and at much
@@ -217,6 +233,11 @@ pub fn material(chart: Handle<Image>, slopes: Handle<Image>) -> DistantMaterial 
             centre: Vec4::new(0.0, 0.0, 0.0, BEND),
             fog: Vec4::ZERO,
             sea: Vec4::new(0.35, 0.0, 0.0, 0.0),
+            // Filled by `sky::drift_sky` every frame. Nought until then,
+            // which reads as a sun along no axis at all and so as a body
+            // wholly in its own day: a planet with no lights on rather
+            // than a planet lit from the wrong side.
+            sun: Vec4::new(0.0, 0.0, 0.0, LAMPS),
             chart,
             slopes,
         },

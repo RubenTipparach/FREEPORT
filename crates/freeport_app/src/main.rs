@@ -98,10 +98,22 @@ const OCTAVES: u32 = 18;
 /// body's own height distribution, not a number that means anything on
 /// its own. Over 40,000 directions of this planet the relief spans
 /// -2,920 to 4,358 m and its median is +351, so a sea at -400 m left the
-/// world 26.3% water, which is a continent with lakes in it. At +820 m
-/// it is 65%, which is an ocean world with continents in it, and
-/// `the_harness_planet_is_mostly_water` holds the half the ask names.
-const SEA: f64 = RADIUS + 820.0;
+/// world 26.3% water, which is a continent with lakes in it, and at
+/// +820 m it was 65%, which is an ocean with a few scraps in it.
+///
+/// It is +1,000 m now, which is 62.1% water: a little less than it was,
+/// and where this body's land is SEVEN continents rather than one blob
+/// and three hundred scraps. Which of those two things a sea level buys
+/// is not a property of the level at all, it is a property of the
+/// continental SHELF under it (`biome::SHELF_AT` and its neighbours), and
+/// the two were picked together off one sweep:
+/// `the_land_is_a_few_continents_and_many_islands` counts the body's
+/// connected landmasses, `measure_the_land_at_each_sea_level` is the
+/// sweep, and `the_harness_planet_is_mostly_water` holds the half the ask
+/// names. Lower, the continents MERGE: at +700 m the body is 54.6% water
+/// and nearly all of its land is one mass, which is percolation rather
+/// than a tuning mistake.
+const SEA: f64 = RADIUS + 1000.0;
 /// Towns: how many, and how far across each.
 /// How many towns are PLANNED on the planet. Every one of them levels its
 /// own ground and is painted on the body's chart, so a world with this
@@ -159,26 +171,48 @@ const SUN_UP: f64 = 32.0;
 const SUN_BEARING: f64 = 40.0;
 
 /// The sun's world direction for an eye starting at `dir`: ONE number,
-/// read by the light that casts the shadows, by the sky dome and by the
-/// fog, so the three cannot point three ways.
+/// read by the light that casts the shadows, by the sky dome, by the fog
+/// and by the bodies drawn from far off, so they cannot point four ways.
+///
+/// It is asked about the WALKER's own start and never about where `aim`
+/// put the camera, which is a circle: `--sunward` stands the camera along
+/// the sun, so a sun measured over that camera is a sun measured over
+/// itself. Measured on this planet, `--sunward 2.6 --around 150` put the
+/// camera 58 degrees from the sun rather than 150, and the picture of the
+/// body's own midnight came back three quarters lit.
 /// Where the camera starts: on a street of the port, or, with
-/// `--sunward`, that many radii off the body ALONG the sun and looking at
-/// its centre.
+/// `--sunward`, that many radii off the body and looking at its centre,
+/// `--around` degrees round from the sun.
 ///
 /// A camera for a picture is SOLVED and never hand aimed, which is
 /// tenebris's LODCAM lesson: the sun stands over wherever the world
 /// starts, so where it is depends on where the towns came out, and three
 /// runs of this were aimed by hand at a planet that turned out to be a
 /// different one, in its own night.
+///
+/// `--around` is the same rule for the NIGHT side. A body's dark half is
+/// a picture nobody can aim at either, because where it is depends on
+/// where the sun came out: turned 180 degrees the camera is at the body's
+/// own midnight and 140 leaves a crescent of day in the frame, which is
+/// what shows the lights and the ground they stand on in one picture.
 fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
     let (eye, look) = start(world);
     match args.sunward {
         Some(radii) => (
-            sun_over(eye) * world.planet.radius * radii.max(1.05),
+            turned(sun_over(eye), args.around.to_radians()) * world.planet.radius * radii.max(1.05),
             DVec3::ZERO,
         ),
         None => (eye, look),
     }
+}
+
+/// A direction turned `angle` away from itself, about whichever axis is
+/// square to it. Which axis does not matter for a picture of a sphere:
+/// what is being asked for is how much of the body's night is in frame,
+/// and that is the ANGLE alone.
+fn turned(dir: DVec3, angle: f64) -> DVec3 {
+    let (east, _) = town::frame_at(dir);
+    (dir * angle.cos() + east * angle.sin()).normalize_or(DVec3::Y)
 }
 
 fn sun_over(dir: DVec3) -> DVec3 {
@@ -363,6 +397,10 @@ fn spawn_world(
     } = assets;
     let (world, towns) = world::build(&args);
     let (start_eye, start_look) = aim(&world, &args);
+    // The sun, worked out while the world is still here to ask: it is a
+    // fact about where the WALKER starts, and `start_eye` is wherever the
+    // camera was aimed.
+    let sun = sun_over(world::start(&world).0);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
     // The lattice's origin sits half a fine cell off the half metre grid
@@ -421,7 +459,6 @@ fn spawn_world(
     // which way it points and never `--eye`, so two pictures taken from
     // two places are lit the same and only the camera moved. The light,
     // the dome and the fog are handed one direction worked out once.
-    let sun = sun_over(start_eye);
     spawn_light(&mut commands, sun);
     spawn_status(&mut commands);
     let env = spawn_sky(

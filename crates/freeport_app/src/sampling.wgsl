@@ -59,6 +59,7 @@ struct Shape {
     octaves: vec4<u32>,  // continent, belt, ridge, channel
     salts: vec4<u32>,    // the seeds those four are salted with
     hills: vec4<u32>,    // the hills term's salt and octaves
+    shelf: vec4<f32>,    // the shelf's centre, half width and share
 }
 @group(0) @binding(3) var<uniform> shape: Shape;
 
@@ -77,20 +78,32 @@ fn fbm(hi: vec3<f32>, lo: vec3<f32>, base: f32, seed: u32, octaves: u32) -> f32 
     return total / norm;
 }
 
-// `biome::signed`: the measured spread stretched to minus one through one.
-fn signed(v: f32) -> f32 {
+// `biome::signed`, under another NAME: `signed` is a reserved keyword
+// in WGSL, so a shader declaring one is refused outright at
+// `create_shader_module` and this whole sampler never compiled. The
+// core's function is `signed` and this is its transcription.
+fn stretch(v: f32) -> f32 {
     return clamp((v - shape.fbm.x) / shape.fbm.y, -1.0, 1.0);
+}
+
+// `biome::shelf`: the continent term with its own continental margin in
+// it, minus one on the abyssal plain and one on the plateau.
+fn shelf(n: f32) -> f32 {
+    let s = stretch(n);
+    let step = smoothstep(shape.shelf.x - shape.shelf.y, shape.shelf.x + shape.shelf.y, s)
+        * 2.0 - 1.0;
+    return step * shape.shelf.z + s * (1.0 - shape.shelf.z);
 }
 
 // `biome::ridged`.
 fn ridged(n: f32) -> f32 {
-    return pow(clamp(1.0 - abs(signed(n)), 0.0, 1.0), shape.belt.z);
+    return pow(clamp(1.0 - abs(stretch(n)), 0.0, 1.0), shape.belt.z);
 }
 
 // `biome::Shape::landform`, metres over the mean radius.
 fn landform(hi: vec3<f32>, lo: vec3<f32>) -> f32 {
     let half = shape.fbm.z;
-    let continent = signed(fbm(hi, lo, shape.freqs.x, settings.x + shape.salts.x, shape.octaves.x))
+    let continent = shelf(fbm(hi, lo, shape.freqs.x, settings.x + shape.salts.x, shape.octaves.x))
         * half * shape.shares.x;
     let belt = fbm(hi, lo, shape.freqs.y, settings.x + shape.salts.y, shape.octaves.y);
     let weight = smoothstep(shape.belt.x, shape.belt.y, belt);
@@ -108,7 +121,7 @@ fn cut(hi: vec3<f32>, lo: vec3<f32>, standing: f32) -> f32 {
         return 0.0;
     }
     let n = fbm(hi, lo, shape.channel.x, settings.x + shape.salts.w, shape.octaves.w);
-    let c = smoothstep(shape.channel.y, 1.0, clamp(1.0 - abs(signed(n)), 0.0, 1.0));
+    let c = smoothstep(shape.channel.y, 1.0, clamp(1.0 - abs(stretch(n)), 0.0, 1.0));
     if c <= 0.0 {
         return 0.0;
     }
@@ -156,8 +169,8 @@ fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
         var remaining = norm;
         var frequency = shape.freqs.w;
         for (var octave = 0u; octave < count; octave++) {
-            let low = density + signed(total / norm) * amp;
-            let high = density + signed((total + remaining) / norm) * amp;
+            let low = density + stretch(total / norm) * amp;
+            let high = density + stretch((total + remaining) / norm) * amp;
             let middle = 0.5 * (low + high);
             let reach = 0.5 * abs(high - low);
             if abs(middle) > reach + error {
@@ -169,7 +182,7 @@ fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
             octave_amp *= 0.5;
             frequency *= 2.0;
         }
-        density += signed(total / norm) * amp;
+        density += stretch(total / norm) * amp;
     }
     densities[i] = density;
 }

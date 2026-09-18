@@ -41,10 +41,11 @@ pub fn init_compute(
 }
 
 /// The relief's constants as the sampler's uniform reads them: five
-/// `vec4<f32>` and three `vec4<u32>`. The core cannot hand these over as
-/// bytes, because it depends on nothing but `std` and `glam`, so the one
-/// place they are laid out is here.
-const SHAPE_WORDS: usize = 32;
+/// `vec4<f32>`, three `vec4<u32>` and the shelf's own `vec4<f32>` last,
+/// which is the order `sampling.wgsl` declares them in. The core cannot
+/// hand these over as bytes, because it depends on nothing but `std` and
+/// `glam`, so the one place they are laid out is here.
+const SHAPE_WORDS: usize = 36;
 
 fn shape_words(g: &biome::Gpu) -> [u32; SHAPE_WORDS] {
     let mut w = [0u32; SHAPE_WORDS];
@@ -55,6 +56,9 @@ fn shape_words(g: &biome::Gpu) -> [u32; SHAPE_WORDS] {
     w[20..24].copy_from_slice(&g.octaves);
     w[24..28].copy_from_slice(&g.salts);
     w[28..32].copy_from_slice(&g.hills);
+    for (i, v) in g.shelf.iter().enumerate() {
+        w[32 + i] = v.to_bits();
+    }
     w
 }
 

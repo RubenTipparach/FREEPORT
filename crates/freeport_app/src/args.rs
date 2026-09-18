@@ -22,6 +22,10 @@ pub(crate) struct Args {
     /// hand at a planet that turned out to be a different one in its own
     /// night.
     pub(crate) sunward: Option<f64>,
+    /// Degrees round the body from the sun, for `--sunward`: nought is
+    /// the lit face, 180 the body's own midnight and 140 a crescent with
+    /// most of the night side in the frame.
+    pub(crate) around: f64,
     /// Plan the home body's cities and roads, write its atlas and stop.
     /// It runs BEFORE any of Bevy is built, so a bake needs no window, no
     /// device and no Xvfb: it is arithmetic and a file.
@@ -58,6 +62,7 @@ impl Default for Args {
             eye: None,
             look: None,
             sunward: None,
+            around: 0.0,
             bake_atlas: false,
             levels: LEVELS,
             shot: None,
@@ -92,6 +97,7 @@ pub(crate) fn parse_args() -> Args {
             "--profile-render" => args.profile_render = true,
             "--fly" => args.fly = true,
             "--sunward" => args.sunward = it.next().and_then(|v| v.parse().ok()),
+            "--around" => args.around = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0),
             "--bake-atlas" => args.bake_atlas = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),

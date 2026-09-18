@@ -316,7 +316,7 @@ rather than in any one of them:
 
 | the term | what it decides | its size |
 | --- | --- | --- |
-| continent | where the sea is, and so every coast and island | 0.38 of the planet's lumps, four octaves |
+| continent | where the sea is, and so every coast and island | 0.30 of the planet's lumps, three octaves, through a SHELF |
 | belt | whether a range is pushed up through a continent | 0.44, four octaves, a smoothstep between 0.85 and 1.75 standard deviations of its own noise |
 | ridge | the range itself, RIDGED so it is crests with flanks | 1.15, five octaves, the fold raised to 1.6 |
 | hills | the ground under a walker's feet | 3.1, and the planet's OWN octave count |
@@ -376,12 +376,56 @@ number.** A sea level means nothing on its own: it is where it falls in
 the body's own height distribution. This planet's relief spans -2,920 to
 4,358 m with its median at +351, so a sea 400 m UNDER the mean radius
 left the world 26.3% water, which is a continent with lakes in it. At
-+820 m it is 65%, an ocean with continents in it, and
++1,000 m it is 62.1%, an ocean with continents in it, and
 `the_harness_planet_is_mostly_water` holds the half the owner asked for
 rather than the constant that happens to give it.
 
-Of 8,000 directions this planet grows 4,668 ocean, 1,307 forest, 544
-snow, 530 ice, 433 grass, 345 desert, 131 savanna, 37 marsh and 5 beach.
+Of 8,000 directions this planet grows 4,239 ocean, 1,709 forest, 719
+ice, 452 grass, 392 snow, 313 desert, 122 savanna, 49 marsh and 5 beach.
+
+## A continent needs a SHELF, or the hills decide where the sea is
+
+`shelf` is the term that turns this body from three hundred middling
+blobs into a map. The owner asked for the land to group into six or
+seven continents with a lot of small islands off them, and no setting of
+the continent term's frequency, octaves or amplitude gave one: the count
+of pieces over a per cent of the body moved between one and ten and they
+were all the same size.
+
+**The reason is a gradient, and it is measurable.** A continent term
+that is a smooth `fbm` swings 2,480 m over about 220 km here, which is
+22 m a kilometre; the HILLS riding it swing 440 m over 13 km, which is
+34. The hills are steeper than the continents, so everywhere the swell
+came within a few hundred metres of the sea it was the hills that
+decided land from water, and on a body whose sea sits near the middle of
+the swell that is most of it. There was no coastLINE anywhere on the
+planet, only a wide band of noise, and every "continent" was whatever
+that noise happened to join up.
+
+**Real crust is bimodal and that is the fix.** An abyssal plain, a
+continental plateau, and a steep margin a few tens of kilometres wide
+between them: a `smoothstep` across the stretched continent noise is
+exactly that shape. Inside the margin the ground falls faster than the
+hills can lift it, so the shore FOLLOWS the shelf and the hills only
+fray it, which is what a coastline with bays, spits and islands off it
+is made of. `SHELF_SHARE` is how much of the term the step takes, and it
+is well under one on purpose: at one a plateau is dead flat and a
+continent is a mesa, so the rest is left as the swell it was and is what
+gives a continent an interior.
+
+Measured on the same body before and after: 6 pieces over a per cent of
+it, the biggest 15.3%, with 331 islands, against 7 continents of 17.9,
+5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% with 217 islands.
+
+**And how many continents there are is a fact about how much LAND there
+is.** Land is a level set of a fractal, so past about four tenths of the
+body it PERCOLATES and the seven become one: at a sea of +700 m this
+world is 54.6% water and nearly all of its land is a single mass, and at
++1,300 m it is 72.8% water and the biggest piece left is 4.7% of the
+body, with 415 islands off it. 37.8% land is where they are seven,
+which is why the sea and
+the shelf were picked together off one sweep
+(`measure_the_land_at_each_sea_level`) rather than one at a time.
 
 **Nothing is BUILT on frozen ground.** `Climate::frozen` is the one
 place the freezing line is read, so the ice a chart paints, the ground a
@@ -391,6 +435,18 @@ number to get wrong and would still allow a city on an equatorial ice
 cap. Measured on the chart: every one of the 160 cities and every road
 texel is inside 65 degrees of the equator, where the caps run from about
 70.
+
+**`sampling.wgsl` never compiled, and nothing said so.** `signed` is a
+RESERVED KEYWORD in WGSL, so a shader declaring `fn signed` is refused
+outright at `create_shader_module` and this whole compute sampler had
+been dead since it was written; the core's function is `signed` and the
+transcription is `stretch` now. What hid it is that the sampler is
+optional (`Compute(enabled.then(...))`) and the CPU path is what every
+picture was drawn from, so the only thing that ever saw the error was
+`gpu_preserves_cpu_signs_and_lod_seams`, which is `#[ignore]`d because it
+needs a device. An ignored test is a test nobody runs. Working, it agrees
+with the CPU to identical mesh geometry and does 74,088 samples in 13.97
+ms against the CPU's 37.82 on lavapipe.
 
 **`sampling.wgsl` transcribes `landform` and `cut`, and the GPU is why
 the split is where it is.** Terrain sampling is a compute pass, so a
@@ -837,8 +893,8 @@ architectural materials retain the normal crease rule.
   is built, and the machinery went with it rather than sitting there for a
   caller that no longer exists.
 - **The harness has no flag for which world**, because there is one.
-  `freeport_app` is the planet (`RADIUS` 1,000,000 m, the sea 820 m OVER
-  the mean radius, which is what leaves it 65% water, eleven levels of
+  `freeport_app` is the planet (`RADIUS` 1,000,000 m, the sea 1,000 m OVER
+  the mean radius, which is what leaves it 62.1% water, eleven levels of
   0.25 m to 256 m cells), eight towns of
   80 m, and the walker on a street of the port facing the middle of town. F
   swaps to the fly camera from wherever the walker is and back. Flight uses
@@ -1062,6 +1118,23 @@ is the coastal fringe and nothing else, so every town came out on a beach
 and the interior of every continent was empty. It is 3 m to three tenths
 of the relief now, and level ground at two thousand metres is a plateau.
 
+**A town's ORDER is what put every city on a shore, and the window was
+never the thing.** Candidates were sorted by height and the first hundred
+and sixty taken, so the lowest hundred and sixty won: measured, all 160
+towns stood between 3 and 35 m over the sea on a body with eight
+kilometres of relief, which means the ceiling this window was widened to
+had never once applied and the interior of every continent was still
+empty. `town::in_order` is the rule now: the PORT is the lowest ground on
+the body, because a port is the town this game is about, and every other
+town is taken on a HASH of its own candidate index. The spiral's own
+order is no better than the height's, because its index is monotone in
+latitude by construction and its first hundred and sixty are a cap round
+the north pole; a hash is an even sample of whatever qualified. The towns
+span 3 m to 2,332 m now, with a quarter of them over 820 m up, and 32 of
+the 160 stand on an ISLAND rather than a continent, 5 of those on one
+under a thousandth of the body. `towns_stand_inland_and_on_islands` holds
+all three.
+
 **A planet's sites are filtered once per CHUNK, never per sample.**
 `Planet::around` keeps only the sites whose levelling can reach a chunk,
 and `surface_blend` is asked for every one of a chunk's seven thousand
@@ -1075,10 +1148,9 @@ range as you fly is not built, so a far city is its own levelled plateau
 with no buildings on it until town streaming lands. The chunk streamer
 already does exactly this for ground and the shape of it is the same.
 
-Measured: 160 towns planned in 7.2 s (20,000 candidates, up from 4,000),
-8 of them built into 2,852,924 triangles, 147,157 collision boxes and
-1,346 lamps in 371 ms, and 159 city texels on the chart for 160 towns,
-because two of them share one.
+Measured: 160 towns planned in 7.4 s (20,000 candidates, up from 4,000),
+8 of them built into 2,836,252 triangles, 146,659 collision boxes and
+1,358 lamps in 687 ms, and 32 of the 160 standing on an island.
 
 ## Cities are JOINED, and the plan of a body is BAKED
 
@@ -1143,13 +1215,24 @@ changed, and would say nothing a reader could check; the placements are
 town through the file.
 
 **An atlas of another body is REFUSED rather than used.** The name, the
-seed, the radius, the town size and the OCTAVE COUNT all have to match,
-because `Shape::oct` caps every term by the octaves: a plan made at
+seed, the radius, the town size, the SEA and the OCTAVE COUNT all have to
+match, because `Shape::oct` caps every term by the octaves: a plan made at
 eighteen describes ground that fourteen does not have, and a road routed
 over the one can cross water on the other. A refusal is not fatal, it
 plans the body here and says so in the log, which is what keeps a
 checkout nobody has baked runnable, the same rule a missing texture set
 follows.
+
+**And none of those six says what SHAPE the body has**, which is what the
+PROBE is for. Every constant in `biome` is outside that fingerprint, so
+moving one moves every coast on the planet and leaves an atlas that still
+fits, with its cities standing in the new sea and nothing on screen to say
+so. It happened the first time the shelf landed. The atlas carries the
+body's own ground at twelve fixed directions off the golden spiral,
+sampled BARE because a town levels its own site and the plan is what puts
+the towns there, and a metre out at any of them is a different world. It
+is the cheapest thing in the file that cannot be stale, and the refusal
+prints what it read.
 
 **The roads are on the CHART**, drawn along their own lines at half a
 texel a step so the network cannot come out dotted, in `Kind::Road`, and
@@ -1157,9 +1240,34 @@ the CITIES are stamped over them. Painted the other way round each road
 erased the town it serves, because every road ends at a town's own
 centre: 37 city texels survived of 160, and the 123 missing were exactly
 the towns a road reaches.
-That is six kilometres of road a texel on this body, which is the same
-honest lie a city one texel across is: what a chart is for is saying that
-there is a road and where it runs.
+**And both are drawn WIDER than the ground, because a mark nobody can
+see says nothing.** A town is eighty metres across and a texel here is
+six kilometres, so a city drawn true is a seventy fifth of one texel;
+drawn one texel it exists on the chart and still cannot be seen, because
+a body from two and a half radii up is a disk about as many pixels across
+as the chart has texels round its equator. A city is `CITY_TEXELS` (2.2)
+and a road `ROAD_TEXELS` (0.9), measured against that PICTURE rather than
+against the ground: three pixels of the disk for a city and one solid
+pixel for a road. Both are round marks on the SPHERE and not squares of
+the image, because an equirect texel narrows as the cosine of its own
+latitude and a mark a fixed number of columns wide is a dot at the equator
+and a hundred texel smear at eighty degrees.
+
+**The cities and the roads are LIT, and the night side is DARK.** The
+slope map's blue channel was a constant 255 nobody read; it is the body's
+own LIGHTS now, written by the same `blot` that draws a city or a road and
+brightest at a mark's middle, maxed rather than overwritten so a crossing
+is not dimmed by the second road's falloff. `distant.wgsl` takes the sun
+as a direction, measures the night on the body's own RADIAL rather than on
+the bent normal (which half of a planet the sun is on is a fact about the
+planet, and a normal leaned off a mountain would put a patch of midnight
+on a slope at noon), and does two things with it: the albedo goes to
+`NIGHT_FLOOR` (a twentieth) of itself, and the lights burn as EMISSIVE at
+`LAMPS` (120) in sodium. A twentieth rather than nought, which is this
+file's own ambient lesson twice over: nought is a hole in the picture
+rather than a planet. What was making the dark side bright was never the
+sun, it was the sky's own environment light, and a body drawn with nothing
+but PBR is a lit blue ball with a terminator painted on it.
 
 **And the dumped chart is written RGB now.** Its alpha is the water mask,
 so the four channel dump opened with every scrap of land transparent and
@@ -1466,7 +1574,16 @@ painted it out, a pale blue disc with no ground in it at all. `dome_radius`
 is `(|eye| + top) * 2` now, which is the far limb of the shell with the
 margin doubled.
 
-**The sun stands over where the WORLD starts, not along a world axis.**
+**The sun stands over where the WORLD starts, not along a world axis,
+and never over the camera.** `sun_over` was asked about `start_eye`,
+which is what `aim` RETURNS, so with `--sunward` the camera stands along
+the sun and the sun is then measured over the camera: a circle. Measured,
+`--sunward 2.6 --around 150` put the camera 58 degrees from the sun
+rather than 150, and the picture of the body's own midnight came back
+three quarters lit. It is asked about the walker's own start now, which
+is what the next paragraph always claimed.
+
+
 `SUN_UP` (32 degrees over the local horizon) and `SUN_BEARING` (40 round
 from local north) are the numbers, and `sun_over` turns them into a world
 direction at the harness's own starting point. It was a fixed world
@@ -1610,7 +1727,16 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 # The sun stands over wherever the world starts, so where it is depends on
 # where the towns came out, and a hand aimed camera finds a planet in its
 # own night.
-./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --sunward 2.6 --shot orbit.png
+./target/release/freeport_app --fly --levels 5 --frames 30 --sunward 2.6 --shot orbit.png
+# The same camera turned round the body from the sun: 150 degrees is the
+# NIGHT side, where the cities and the roads are lit, and 100 is the
+# terminator with a lit hemisphere and a dark one in one frame. It is
+# `--sunward`'s own rule for a half nobody can aim at by hand either, and
+# the octaves are left alone here, because the ATLAS is refused at any
+# other count and a body with no roads on it is the one thing these two
+# pictures are of.
+./target/release/freeport_app --fly --levels 5 --frames 30 --sunward 2.6 --around 150 --shot night.png
+./target/release/freeport_app --fly --levels 5 --frames 30 --sunward 2.6 --around 100 --shot dusk.png
 # The body's cities and the roads joining them, planned once and written
 # beside the other assets. It runs BEFORE any of Bevy is built, so it
 # needs no window, no device and no Xvfb: it is arithmetic and a file.
@@ -1652,9 +1778,11 @@ Numbers in the commit message. What is measured so far:
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
-  with 8,000 m of relief on 18 octaves and the sea 820 m OVER the mean
-  radius. Its heights span -2,920 to 4,358 m with a median of +351, so
-  that sea leaves it 65.0% water; at -400 m, where it was, 26.3%.
+  with 8,000 m of relief on 18 octaves and the sea 1,000 m OVER the mean
+  radius, which leaves it 62.1% water in SEVEN continents (17.9, 5.3,
+  4.1, 2.2, 2.1, 2.0 and 1.2% of the body) and 217 islands. At +820 m,
+  where it was, 65.0% in 6 pieces with the biggest 15.3% and 331
+  islands; at -400 m, where it was before that, 26.3%.
 - The towns, on that planet: eight planned in 155 ms (four thousand
   candidates on a golden spiral, the port first), and 699 buildings and
   7,744 pieces of street MODELLED in 30 ms into 192,646 triangles, 6,635
@@ -1720,14 +1848,29 @@ Numbers in the commit message. What is measured so far:
   the equator's 0.103 once it was divided by a run that shrinks and not
   yet spanned over matched ground. As a picture, the whole body from 1.6
   radii up: 18.06% of pixels moved by more than 8 of 255, worst 180.
-- The towns: 160 planned in 7.2 s from 20,000 candidates, 8 built into
-  2,852,924 triangles, 147,157 boxes and 1,346 lamps in 371 ms, and 159
-  city texels on the chart. READ off a baked atlas instead they are 10 ms,
-  which is the whole argument for baking a plan that never changes.
-- The roads: 155 of them over 36,716 km joining 123 of the 160 towns,
+- The towns: 160 planned in 7.4 s from 20,000 candidates, 8 built into
+  2,836,252 triangles, 146,659 boxes and 1,358 lamps in 687 ms. READ off
+  a baked atlas instead they are 9 ms, which is the whole argument for
+  baking a plan that never changes. Where they STAND, taken lowest first
+  against taken on a hash: 3 to 35 m over the sea, every one of them on a
+  shore, against 3 to 2,332 m with a median of 448 and 32 of the 160 on
+  an island.
+- The land, before the shelf and after, on the same body: 6 pieces over a
+  per cent of it with the biggest 15.3% and 331 islands, against 7
+  continents of 17.9, 5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% with 217 islands.
+  Either side of that sea the seven are not seven: at +700 m the body is
+  54.6% water and its land is one percolated mass, at +1,300 m it is
+  72.8% water with nothing bigger than 4.7% of the body and 415 islands.
+- The GPU sampler, once it compiled at all: 74,088 samples in 13.97 ms
+  against the CPU's 37.82 on lavapipe, identical mesh geometry, and a
+  sign-only density deviation of 440 m, which is the interval arithmetic
+  doing its job rather than a disagreement.
+- The roads: 254 of them over 52,525 km joining 156 of the 160 towns,
   routed over 125,664 waypoints ten kilometres apart in one multi source
-  Dijkstra. It was 336 over 134,464 km joining 152 while the body was a
-  quarter water: an ocean world strands a third of its towns on islands.
+  Dijkstra. It was 155 over 36,716 km joining 123 while the body was 65%
+  water with no shelf under it, and 336 over 134,464 km joining 152 while
+  it was a quarter water: how many towns a network reaches is a fact
+  about how connected the LAND is, and the shelf is what joined it up.
   The bake is 23.7 s, and was 551 s while every one of those
   marches walked all 160 town sites instead of the nought or one
   `Planet::around` leaves at its own direction. The atlas is 1.7 MB of

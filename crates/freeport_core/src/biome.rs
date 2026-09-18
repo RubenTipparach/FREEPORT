@@ -40,7 +40,7 @@ mod share {
 /// channel network much finer, which is the whole of what makes them read
 /// as different things.
 mod freq {
-    pub const CONTINENT: f64 = 0.38;
+    pub const CONTINENT: f64 = 0.30;
     pub const BELT: f64 = 0.44;
     pub const RIDGE: f64 = 1.15;
     pub const HILLS: f64 = 3.1;
@@ -52,6 +52,53 @@ mod freq {
     pub const CHANNEL: f64 = 2.4;
     pub const CLIMATE: f64 = 0.7;
 }
+
+/// A continental SHELF: where the margin between the abyssal plain and
+/// the continental plateau falls, in stretched units of the continent
+/// noise, how wide it is, and how much of the continent term it takes.
+///
+/// A continent term that is a smooth swell has no shelf and therefore no
+/// COAST: near the sea its own gradient is about 22 m a kilometre on this
+/// body, while the hills riding it swing 440 m over thirteen, which is
+/// 34. The hills are STEEPER than the continents, so wherever the swell
+/// came within a few hundred metres of the sea it was the hills that
+/// decided land from water, and that band is most of the swell. The body
+/// came out as three hundred middling islands with no continent on it at
+/// any setting, which is exactly what the owner was looking at.
+///
+/// Real crust is bimodal: an abyssal plain, a plateau, and a steep margin
+/// a few tens of kilometres wide between them. A smoothstep across the
+/// stretched noise is that, and it is what makes a coastline a LINE:
+/// inside the margin the ground falls 100 m a kilometre, three times what
+/// the hills can lift, so the shore follows the shelf and the hills only
+/// fray it, which is what a coastline and its islands are.
+///
+/// `AT` is what decides how much of the body is land, because it is the
+/// percentile of the continent noise the margin sits at, and `SHARE` is
+/// how much of the term the step takes: at one the plateau is dead flat
+/// and a continent is a mesa, so the rest is left as the swell it was and
+/// is what gives a continent its interior.
+///
+/// Measured on the harness planet, the same body before and after: 6
+/// pieces over a per cent of it with the biggest 15.3% and 331 islands,
+/// against 7 continents of 17.9, 5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% with
+/// 217 islands. What the picture shows is the difference between three
+/// hundred middling blobs and a map with continents, bays, peninsulas
+/// and archipelagos on it.
+///
+/// And the thing this makes plain, which nothing before it did: seven
+/// SEPARATE continents is a fact about how much land there is. Land is a
+/// level set of a fractal, so past about four tenths of the body it
+/// PERCOLATES and the seven become one, which is what the sweep in
+/// `measure_the_land_at_each_sea_level` shows either side of this sea.
+/// 37.8% land is where they are seven.
+const SHELF_AT: f64 = -0.05;
+const SHELF_WIDE: f64 = 0.16;
+const SHELF_SHARE: f64 = 0.30;
+
+/// How much steeper the shelf makes the continent term, for the bound: a
+/// smoothstep climbs at one and a half across its own span.
+const SHELF_STEEP: f64 = SHELF_SHARE * 1.5 / (2.0 * SHELF_WIDE) + (1.0 - SHELF_SHARE);
 
 /// A gorge's own depth and half width, metres. They are ABSOLUTE rather
 /// than shares of the relief, because a gorge is the size a gorge is
@@ -170,7 +217,7 @@ pub struct Shape {
 /// like from orbit, and the metre of detail under the feet is the hills
 /// term, which keeps the planet's own octaves and the sampler's early out.
 mod oct {
-    pub const CONTINENT: u32 = 4;
+    pub const CONTINENT: u32 = 3;
     pub const BELT: u32 = 4;
     pub const RIDGE: u32 = 5;
     pub const CHANNEL: u32 = 5;
@@ -223,6 +270,15 @@ fn layer(dir: DVec3, f: f64, seed: u32, salt: u32, octaves: u32) -> f64 {
     fbm3(dir * f, seed.wrapping_add(salt), octaves)
 }
 
+/// The continent term with its SHELF in it, minus one on the abyssal
+/// plain and one on the plateau, with a steep margin between them and the
+/// swell's own variation left over both.
+fn shelf(n: f64) -> f64 {
+    let s = signed(n);
+    let step = smoothstep(SHELF_AT - SHELF_WIDE, SHELF_AT + SHELF_WIDE, s) * 2.0 - 1.0;
+    step * SHELF_SHARE + s * (1.0 - SHELF_SHARE)
+}
+
 /// A ridged fold: one along the crest, nought in the troughs, with the
 /// crest sharpened so the flanks fall away from it. The fold is taken of
 /// the STRETCHED noise, or it reads near one nearly everywhere and the
@@ -269,7 +325,7 @@ impl Shape {
     /// early on.
     pub fn landform(&self, dir: DVec3) -> f64 {
         let half = self.relief * 0.5;
-        signed(self.continent(dir)) * half * share::CONTINENT
+        shelf(self.continent(dir)) * half * share::CONTINENT
             + self.mountain(dir) * half * share::MOUNTAIN
     }
 
@@ -397,7 +453,7 @@ impl Shape {
             half * share::CONTINENT,
             freq::CONTINENT,
             self.oct(oct::CONTINENT),
-        );
+        ) * SHELF_STEEP;
         // A belt's own edge and the crest inside it both move; the product
         // is bounded by the sum of each moving at its own rate.
         let belt_edge = half * share::MOUNTAIN * 1.5 / (BELT_TO - BELT_FROM)
@@ -464,6 +520,9 @@ pub struct Gpu {
     pub salts: [u32; 4],
     /// The hills term's salt and octaves, and two spare.
     pub hills: [u32; 4],
+    /// The continental shelf: where its margin falls, how wide it is, how
+    /// much of the continent term it takes, and one spare.
+    pub shelf: [f32; 4],
 }
 
 impl Shape {
@@ -509,6 +568,7 @@ impl Shape {
             ],
             salts: [salt::CONTINENT, salt::BELT, salt::RIDGE, salt::CHANNEL],
             hills: [salt::HILLS, self.octaves.max(1), 0, 0],
+            shelf: [SHELF_AT as f32, SHELF_WIDE as f32, SHELF_SHARE as f32, 0.0],
         }
     }
 }

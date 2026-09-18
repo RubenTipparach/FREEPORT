@@ -2,9 +2,10 @@
 //!
 //! `planTowns` from the mockup, ported. A town can stand on land a little
 //! above the sea, on ground that is nearly level, and not on top of another
-//! town. Candidates come off a golden angle spiral round the planet, and
-//! the first that qualifies is the port, because a port is the town this
-//! game is about. A town is a local grid: blocks with streets between, a
+//! town. Candidates come off a golden angle spiral round the planet; the
+//! LOWEST that qualifies is the port, because a port is the town this game
+//! is about, and the rest are taken in a hashed order so a city is as
+//! likely to stand inland or on an island as on a coast (`in_order`). A town is a local grid: blocks with streets between, a
 //! lot per block, taller near the middle, a few blocks left as plazas; the
 //! ground under it is levelled to its height by the planet's own field
 //! (`Planet.sites`), and every building and every piece of street stands
@@ -166,6 +167,44 @@ pub fn site_of(town: &Town) -> Site {
     }
 }
 
+/// The order qualifying sites are taken in: the PORT first, which is the
+/// lowest ground on the body, and every other town on a HASH of its own
+/// candidate index.
+///
+/// Sorted by HEIGHT, which is what this did, the lowest hundred and sixty
+/// candidates win and every one of them is on a shore. Measured on the
+/// harness planet: all 160 towns stood between 3 and 35 m over the sea on
+/// a body with eight kilometres of relief and a two thousand metre
+/// ceiling, so the interior of every continent was empty and the ceiling
+/// the window was widened to had never once applied.
+///
+/// The spiral's OWN order is no better, because its index is monotone in
+/// latitude by construction: the first hundred and sixty of it are a cap
+/// round the north pole. A hash is an even sample of whatever qualified,
+/// so a town is as likely to stand inland, on a plateau or on an island
+/// as on a coast, in the proportion the body actually has of each.
+fn in_order(mut cands: Vec<(DVec3, f64, usize)>, seed: u32) -> Vec<(DVec3, f64)> {
+    let port = cands
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1 .1.total_cmp(&b.1 .1))
+        .map(|(at, _)| at);
+    let first = port.map(|at| cands.remove(at));
+    cands.sort_by(|a, b| {
+        hash3(a.2 as i64, seed as i64, 11, seed).total_cmp(&hash3(
+            b.2 as i64,
+            seed as i64,
+            11,
+            seed,
+        ))
+    });
+    first
+        .into_iter()
+        .chain(cands)
+        .map(|(dir, h, _)| (dir, h))
+        .collect()
+}
+
 /// Plan `count` towns of `radius` on `planet`: sites on land between
 /// `low` and `high` metres over the sea, nearly level across, apart from
 /// one another, the port first.
@@ -187,7 +226,7 @@ pub fn plan(planet: &Planet, sea: f64, radius: f64, count: usize, seed: u32) -> 
     // ground at two thousand metres is a plateau.
     let (low, high) = (3.0, (planet.relief * 0.3).max(40.0));
     let shape = planet.shape();
-    let mut cands: Vec<(DVec3, f64)> = Vec::new();
+    let mut cands: Vec<(DVec3, f64, usize)> = Vec::new();
     for i in 0..CANDIDATES {
         let y = 1.0 - 2.0 * (i as f64 + 0.5) / CANDIDATES as f64;
         let s = (1.0 - y * y).sqrt();
@@ -224,9 +263,9 @@ pub fn plan(planet: &Planet, sea: f64, radius: f64, count: usize, seed: u32) -> 
         if hi - lo > radius * 0.12 {
             continue;
         }
-        cands.push((dir, h));
+        cands.push((dir, h, i));
     }
-    cands.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let cands = in_order(cands, seed);
     let apart = ((2.0 * radius + 200.0) / big_r).cos();
     let mut towns: Vec<Town> = Vec::new();
     for (dir, h) in cands {
@@ -392,8 +431,10 @@ mod tests {
                 assert!(apart > 2.0 * 40.0 + 200.0, "towns {apart} m apart");
             }
         }
-        // The port is the lowest.
-        assert!(towns.windows(2).all(|w| w[0].h <= w[1].h));
+        // The PORT is the lowest, and only the port: the rest are taken
+        // in a hashed order, or every town on the body stands on a shore
+        // (`in_order`, and `biome::tests::towns_stand_inland_and_on_islands`).
+        assert!(towns[1..].iter().all(|u| towns[0].h <= u.h));
         // A lot's frame is plumb where it stands and keeps the town's east.
         let t = &towns[0];
         let f = lot_frame(planet.radius, t, 30.0, -20.0);

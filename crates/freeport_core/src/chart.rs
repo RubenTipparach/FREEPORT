@@ -32,9 +32,10 @@ pub struct Chart {
     pub height: usize,
     /// rgb the surface's colour, a the water mask.
     pub albedo: Vec<u8>,
-    /// rg the slope of the DRAWN surface in east and north, b flat, a
-    /// unused. East is where the chart's u grows and north where its v
-    /// shrinks, which is what `distant.wgsl` bends its normal along.
+    /// rg the slope of the DRAWN surface in east and north, b the
+    /// body's own LIGHTS, a unused. East is where the chart's u grows and
+    /// north where its v shrinks, which is what `distant.wgsl` bends its
+    /// normal along, and the lights are what it burns on the night side.
     pub normal: Vec<u8>,
 }
 
@@ -52,6 +53,30 @@ pub struct Chart {
 /// ground actually is, and the shader's own strength is what tunes how
 /// bumpy that reads.
 const SLOPE_SPAN: f64 = 0.99;
+
+/// How wide a CITY and a ROAD are drawn on a chart, in texels.
+///
+/// Both are a LIE about the ground and a deliberate one. A town is eighty
+/// metres across and a texel on the harness planet is six kilometres, so
+/// a city drawn true is a seventy fifth of one texel: nothing. Drawn one
+/// texel it exists on the chart and still cannot be SEEN, because a body
+/// from two and a half radii up is a disk about as many pixels across as
+/// the chart has texels round its own equator, so one texel is about one
+/// pixel and a road is a dotted hairline.
+///
+/// These are measured against that picture rather than against the
+/// ground: at 2.2 texels a city is three pixels of the disk and at 0.9 a
+/// road is one solid pixel wide. What a chart is for is saying THAT there
+/// is a city and where the roads run, and neither is said by a mark
+/// nobody can see.
+const CITY_TEXELS: f64 = 2.2;
+const ROAD_TEXELS: f64 = 0.9;
+
+/// How bright a city and a road burn on the body's night side, nought to
+/// one. A road is a thread of lamps between two towns and a town is the
+/// lamps themselves, so a road is worth a fraction of one.
+const CITY_LIGHT: f64 = 1.0;
+const ROAD_LIGHT: f64 = 0.34;
 
 /// How much darker the lowest ground is than the highest, and how much
 /// brighter. A shade over the biome's own colour is what makes a range
@@ -220,22 +245,57 @@ impl Chart {
                         kind: Kind::Road,
                         water: 0.0,
                     };
-                    self.paint(dir, &spot, relief);
+                    self.blot(dir, &spot, relief, ROAD_TEXELS, ROAD_LIGHT);
                 }
             }
         }
     }
 
-    /// One texel painted with what is at a direction, opaque and dry.
-    fn paint(&mut self, dir: DVec3, spot: &Spot, relief: f64) {
-        let Some(i) = self.texel(dir) else {
-            return;
-        };
+    /// A round mark `texels` across at a direction: the spot's own colour,
+    /// opaque and dry, with `light` burning brightest at the middle.
+    ///
+    /// A DISC on the sphere rather than a square of the image, because an
+    /// equirect texel narrows as the cosine of its own latitude: a mark a
+    /// fixed number of COLUMNS wide is a smear a hundred texels long at
+    /// eighty degrees and a dot at the equator. The rows it walks are the
+    /// radius in texels and the columns that radius over the cosine,
+    /// capped at half the image, which is the whole way round.
+    ///
+    /// The light is MAXED rather than written, so a road crossing another
+    /// road is not dimmed by the second one's own falloff.
+    fn blot(&mut self, dir: DVec3, spot: &Spot, relief: f64, texels: f64, light: f64) {
+        let d = dir.normalize_or(DVec3::Y);
+        let rows = (self.height as f64 * (0.5 - d.y.clamp(-1.0, 1.0).asin() / std::f64::consts::PI))
+            .floor() as isize;
+        let cols =
+            (self.width as f64 * (0.5 + d.z.atan2(d.x) / std::f64::consts::TAU)).floor() as isize;
+        let reach = texels * std::f64::consts::PI / self.height as f64;
+        let lat = (1.0 - d.y * d.y).max(1e-6).sqrt();
+        let wide = ((texels / lat).ceil() as isize).min(self.width as isize / 2);
         let c = spot_colour(spot, relief);
-        for (k, v) in c.iter().enumerate() {
-            self.albedo[i + k] = to_srgb(*v);
+        for y in rows - texels.ceil() as isize..=rows + texels.ceil() as isize {
+            if y < 0 || y >= self.height as isize {
+                continue;
+            }
+            for x in cols - wide..=cols + wide {
+                let here = wrap_dir(self.width, self.height, x, y);
+                let off = 2.0 * (0.5 * (here - d).length()).clamp(-1.0, 1.0).asin();
+                if off > reach {
+                    continue;
+                }
+                let i =
+                    ((y as usize) * self.width + x.rem_euclid(self.width as isize) as usize) * 4;
+                for (k, v) in c.iter().enumerate() {
+                    self.albedo[i + k] = to_srgb(*v);
+                }
+                self.albedo[i + 3] = 0;
+                // Brightest at the middle and out to nothing at the rim,
+                // so a city is a glow with a core rather than a disc with
+                // an edge on it.
+                let lit = light * (1.0 - (off / reach).clamp(0.0, 1.0).powi(2));
+                self.normal[i + 2] = self.normal[i + 2].max(to_byte(lit));
+            }
         }
-        self.albedo[i + 3] = 0;
     }
 
     /// The byte a direction's texel starts at.
@@ -262,7 +322,7 @@ impl Chart {
                 kind: Kind::City,
                 water: 0.0,
             };
-            self.paint(d, &spot, relief);
+            self.blot(d, &spot, relief, CITY_TEXELS, CITY_LIGHT);
         }
     }
 
@@ -287,7 +347,10 @@ impl Chart {
             albedo[i * 4 + 3] = to_byte(spot.water);
             normal[i * 4] = to_byte((east / full).clamp(-1.0, 1.0) * 0.5 + 0.5);
             normal[i * 4 + 1] = to_byte((north / full).clamp(-1.0, 1.0) * 0.5 + 0.5);
-            normal[i * 4 + 2] = 255;
+            // The LIGHTS, and a bare body has none: a city and a road
+            // are what write this channel, and what `distant.wgsl` burns
+            // on the night side.
+            normal[i * 4 + 2] = 0;
             normal[i * 4 + 3] = 255;
         }
         Chart {

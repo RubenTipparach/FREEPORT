@@ -19,6 +19,8 @@ fn world() -> (Planet, f64, Vec<Town>) {
     (planet, sea, towns)
 }
 
+const SEA: f64 = 40_000.0 - 40.0;
+
 fn atlas_of(planet: &Planet, towns: &[Town], roads: Vec<Line>) -> Atlas {
     Atlas {
         body: "Test".into(),
@@ -26,6 +28,8 @@ fn atlas_of(planet: &Planet, towns: &[Town], roads: Vec<Line>) -> Atlas {
         radius: planet.radius,
         octaves: planet.octaves,
         town_radius: 80.0,
+        sea: SEA,
+        probe: probe(planet),
         towns: towns
             .iter()
             .map(|t| Placed {
@@ -107,29 +111,53 @@ fn an_atlas_survives_being_written_and_read() {
 fn an_atlas_of_another_body_is_refused() {
     let (planet, _, towns) = world();
     let atlas = atlas_of(&planet, &towns, Vec::new());
-    assert!(atlas.fits("Test", &planet, 80.0));
+    assert!(atlas.fits("Test", &planet, SEA, 80.0));
     assert!(
-        atlas.fits("test", &planet, 80.0),
+        atlas.fits("test", &planet, SEA, 80.0),
         "the name is not case bound"
     );
     assert!(
-        !atlas.fits("Elsewhere", &planet, 80.0),
+        !atlas.fits("Elsewhere", &planet, SEA, 80.0),
         "another body fitted"
     );
     assert!(
-        !atlas.fits("Test", &planet, 90.0),
+        !atlas.fits("Test", &planet, SEA, 90.0),
         "another town size fitted"
+    );
+    assert!(
+        !atlas.fits("Test", &planet, SEA + 50.0, 80.0),
+        "another sea level fitted"
     );
     let mut reseeded = planet.clone();
     reseeded.seed += 1;
-    assert!(!atlas.fits("Test", &reseeded, 80.0), "another seed fitted");
+    assert!(
+        !atlas.fits("Test", &reseeded, SEA, 80.0),
+        "another seed fitted"
+    );
     let mut resized = planet.clone();
     resized.radius += 1000.0;
-    assert!(!atlas.fits("Test", &resized, 80.0), "another radius fitted");
+    assert!(
+        !atlas.fits("Test", &resized, SEA, 80.0),
+        "another radius fitted"
+    );
     let mut coarser = planet.clone();
     coarser.octaves -= 1;
     assert!(
-        !atlas.fits("Test", &coarser, 80.0),
+        !atlas.fits("Test", &coarser, SEA, 80.0),
         "an atlas of ground with more detail in it than this body has fitted"
+    );
+    // And a body of the same NAME, seed, size and octaves whose ground is
+    // a different shape. Nothing in the fingerprint above says what the
+    // relief looks like, so without the probe this is the atlas that gets
+    // through: cities standing where a coast used to be.
+    let mut reshaped = planet.clone();
+    reshaped.lumps *= 1.05;
+    assert!(
+        !atlas.fits("Test", &reshaped, SEA, 80.0),
+        "an atlas of ground a different shape fitted"
+    );
+    println!(
+        "the probe reads {:?} m",
+        atlas.probe.iter().map(|h| h.round()).collect::<Vec<_>>()
     );
 }

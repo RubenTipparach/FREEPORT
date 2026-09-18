@@ -26,7 +26,35 @@ struct Distant {
     fog: vec4<f32>,
     // x the water's specular strength, y its power, z spare, w spare.
     sea: vec4<f32>,
+    // xyz the way the sun lies, a unit direction in the world; w how
+    // bright a city burns on the night side.
+    sun: vec4<f32>,
 }
+
+// How dark the unlit half of a body goes, as a share of its own albedo.
+//
+// A body drawn with nothing but PBR has a night side the colour of the
+// sky's own ambient, which on a world with air is a lit blue ball with a
+// terminator painted on it: the owner asked for the dark side to be
+// DARK, and what was making it bright was never the sun. Nought would be
+// a hole in the picture rather than a planet, which is this repository's
+// own ambient lesson twice over, so it is a twentieth: enough to read a
+// silhouette against the stars and dark enough that a city on it is the
+// brightest thing there.
+const NIGHT_FLOOR: f32 = 0.05;
+
+// Where the terminator falls, in the cosine between the ground's own
+// radial and the sun. It is a BAND rather than a line because a planet
+// has air: the sun sets over a few degrees of longitude and a hard edge
+// reads as a shadow cast by something off screen.
+const DUSK_FROM: f32 = 0.14;
+const DUSK_TO: f32 = -0.10;
+
+// The colour a city burns, linear, and the colour of a road's lamps.
+// Sodium, warmer than anything the daylight side carries, because what
+// says a light is a light rather than a bright patch of ground is that it
+// is a colour the ground is not.
+const LAMP: vec3<f32> = vec3<f32>(1.0, 0.72, 0.36);
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> distant: Distant;
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var chart: texture_2d<f32>;
@@ -94,7 +122,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let bend = (slope.rg * 2.0 - 1.0) * distant.centre.w;
     let n = normalize(d - east * bend.x - north * bend.y);
 
-    pbr_input.material.base_color = vec4<f32>(albedo.rgb, 1.0);
+    // The NIGHT side, measured on the body's own radial rather than on
+    // the bent normal: which half of a planet the sun is on is a fact
+    // about the planet, and a normal leaned off a mountain would put a
+    // patch of midnight on a slope at noon.
+    let night = 1.0 - smoothstep(DUSK_TO, DUSK_FROM, dot(d, distant.sun.xyz));
+    pbr_input.material.base_color =
+        vec4<f32>(albedo.rgb * mix(1.0, NIGHT_FLOOR, night), 1.0);
+    // And the LIGHTS on it: the chart's own city and road mask, burning
+    // only where the sun is not. They are EMISSIVE, so nothing about the
+    // lighting takes them away, which is the whole point of a light.
+    pbr_input.material.emissive =
+        vec4<f32>(LAMP * (slope.b * night * distant.sun.w), 1.0);
     // Water is smooth and everything else is not, which is the whole of
     // why the mask is worth carrying: an ocean has to catch the sun where
     // the land beside it does not.
