@@ -22,7 +22,7 @@
 //! host and a text editor both read it and because a bake nobody can
 //! inspect is a bake nobody can review.
 
-use bevy::math::DVec3;
+use bevy::math::{DVec2, DVec3};
 use freeport_core::field::Planet;
 use freeport_core::road::{self, Road};
 use freeport_core::town::{self, Town};
@@ -98,12 +98,24 @@ fn probe(planet: &Planet) -> Vec<f64> {
         .collect()
 }
 
-/// Where one town stands: its direction and its level. Everything else
-/// about it is laid out again from these and its own index.
+/// Where one town stands: its direction, its level, how far across it is
+/// and which way it grows. Everything else about it, every lot and every
+/// piece of street, is laid out again from these and its own index.
+///
+/// The size is STORED rather than worked out again from the rank, because
+/// it is no longer a function of the rank: a town's size is how near the
+/// sea it stands (`town::coastal`) and its growth direction is which way
+/// the land falls there, and both are facts about the GROUND that the
+/// plan already had to go and measure. Recomputing them at load would be
+/// the site survey all over again, which is the thing baking exists to
+/// avoid.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Placed {
     pub dir: [f64; 3],
     pub h: f64,
+    pub r: f64,
+    /// East and north, in the town's own frame, of the way it grows.
+    pub along: [f64; 2],
 }
 
 /// One road: the towns it joins and the line it takes, a direction and a
@@ -119,13 +131,17 @@ pub(crate) struct Line {
 impl Atlas {
     /// Plan a body from nothing: its towns, and the roads between them.
     pub fn plan(body: &str, planet: &Planet, sea: f64, town_radius: f64, count: usize) -> Atlas {
-        let towns = town::plan(planet, sea, town_radius, count, planet.seed);
+        let mut towns = town::plan(planet, sea, town_radius, count, planet.seed);
         // Routed against the planet WITH its sites in, so a road is laid
         // over the ground a town has already levelled rather than over the
         // hill that was there before it.
         let mut levelled = planet.clone();
         levelled.sites = towns.iter().map(town::site_of).collect();
         let roads = road::connect(&levelled, sea, &towns, road::SPACING);
+        // And then the VILLAGES the roads grew, appended, so every road's
+        // own `from` and `to` still name the towns they named.
+        let wayside = road::waysides(&levelled, sea, &roads, &towns, town_radius, planet.seed);
+        towns.extend(wayside);
         Atlas {
             body: body.to_string(),
             seed: planet.seed,
@@ -139,6 +155,8 @@ impl Atlas {
                 .map(|t| Placed {
                     dir: t.dir.to_array(),
                     h: t.h,
+                    r: t.radius,
+                    along: t.along.to_array(),
                 })
                 .collect(),
             roads: roads
@@ -166,9 +184,8 @@ impl Atlas {
                 town::lay(
                     DVec3::from_array(p.dir).normalize_or(DVec3::Y),
                     p.h,
-                    // Its OWN size, off its rank, which is why the file
-                    // carries the biggest and not one radius a town.
-                    town::size_of(self.town_radius, i, self.seed),
+                    p.r,
+                    DVec2::from_array(p.along),
                     i,
                     self.seed,
                 )

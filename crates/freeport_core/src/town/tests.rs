@@ -25,17 +25,19 @@ fn drawn(town: &Town) -> String {
     out
 }
 
-/// The plan of a town at the harness's own scale, drawn, and the
-/// sizes the rank size law gives a body of a hundred and sixty.
-/// Ignored: a picture to look at rather than a rule.
+/// The plan of a town at the harness's own scale, drawn, at five heights
+/// over the sea. Ignored: a picture to look at rather than a rule.
 #[test]
 #[ignore]
-fn draw_a_town_at_every_rank() {
-    for index in [0usize, 1, 3, 12, 60, 159] {
-        let radius = size_of(170.0, index, 7);
-        let town = lay(DVec3::Y, 0.0, radius, index, 7);
+fn draw_a_town_at_every_height() {
+    for (index, over) in [0usize, 1, 2, 3, 4]
+        .into_iter()
+        .zip([4.0, 90.0, 300.0, 900.0, 2200.0])
+    {
+        let radius = size_of(170.0, over, &planet(), index, 7);
+        let town = lay(DVec3::Y, 0.0, radius, DVec2::new(1.0, 0.0), index, 7);
         println!(
-            "rank {index}: {radius:.0} m, {} lots, {} pieces of street",
+            "{over:.0} m over the sea: {radius:.0} m across, {} lots, {} pieces of street",
             town.lots.len(),
             town.pieces.len()
         );
@@ -109,16 +111,14 @@ fn a_town_has_towers_in_the_middle_and_suburbs_outside() {
     let t = &towns[0];
     println!("the port, a block a character, # over four storeys, + two or three, . one:");
     print!("{}", drawn(t));
-    let inner: Vec<&Lot> = t
-        .lots
-        .iter()
-        .filter(|l| l.x.hypot(l.z) < t.radius * 0.35)
-        .collect();
-    let outer: Vec<&Lot> = t
-        .lots
-        .iter()
-        .filter(|l| l.x.hypot(l.z) > t.radius * 0.8)
-        .collect();
+    // By the town's own DEMAND rather than by a plain radius, because a
+    // town is stretched along its shore: a lot four fifths of the radius
+    // out along the stretch is nearer the middle than the same distance
+    // across it, and a test that measured the plain radius was reading
+    // downtown as suburb wherever the town is long.
+    let zone = |l: &Lot| Zone::of(demand(l.x, l.z, t.radius, t.along, town_seed(7, t.index)));
+    let inner: Vec<&Lot> = t.lots.iter().filter(|l| zone(l) == Zone::Core).collect();
+    let outer: Vec<&Lot> = t.lots.iter().filter(|l| zone(l) == Zone::Suburb).collect();
     assert!(
         !inner.is_empty() && !outer.is_empty(),
         "no middle or no edge"
@@ -147,8 +147,12 @@ fn a_town_has_towers_in_the_middle_and_suburbs_outside() {
         v.len() as f64 / (std::f64::consts::PI * (r1 * r1 - r0 * r0))
     };
     let (mid, edge) = (
-        density(&inner, 0.0, t.radius * 0.35),
-        density(&outer, t.radius * 0.8, t.radius * (1.0 + super::REACH)),
+        density(&inner, 0.0, t.radius * (1.0 - CORE_AT)),
+        density(
+            &outer,
+            t.radius * (1.0 - TOWN_AT),
+            t.radius * (1.0 + super::REACH),
+        ),
     );
     println!("{mid:.4} lots a square metre in the middle, {edge:.4} on the edge");
     assert!(mid > edge * 1.5, "the suburb is as dense as downtown");
@@ -213,10 +217,14 @@ fn towns_stand_on_level_land_over_the_sea_and_apart() {
         towns[0].lots.len(),
         towns[towns.len() - 1].lots.len()
     );
-    // The PORT is the lowest, and only the port: the rest are taken
-    // in a hashed order, or every town on the body stands on a shore
-    // (`in_order`, and `biome::tests::towns_stand_inland_and_on_islands`).
-    assert!(towns[1..].iter().all(|u| towns[0].h <= u.h));
+    // The PORT is the BIGGEST, which is what its index nought means now:
+    // the list is sorted by size and size is how near the sea a town
+    // stands, so the port is the most coastal place the body grew, give
+    // or take its own jitter.
+    assert!(
+        towns[1..].iter().all(|u| towns[0].radius >= u.radius),
+        "the port is not the biggest town on the body"
+    );
     // A lot's frame is plumb where it stands and keeps the town's east.
     let t = &towns[0];
     let f = lot_frame(planet.radius, t, 30.0, -20.0);

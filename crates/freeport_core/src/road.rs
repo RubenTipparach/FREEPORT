@@ -471,5 +471,78 @@ fn seed_node(nodes: &[Node], dir: DVec3) -> usize {
     best.1
 }
 
+/// How far apart settlements on a road stand, metres of road between
+/// them. Twenty five kilometres is about a day's walk with a cart, which
+/// is the distance that puts an inn and then a village on a road, and on
+/// this body it leaves a long road with a handful of them rather than a
+/// ribbon of houses.
+const EVERY: f64 = 25_000.0;
+
+/// Villages ALONG the roads: a settlement wherever a road has run far
+/// enough since the last one and the ground there will take a town.
+///
+/// A road exists because two cities wanted to trade, and what grows on it
+/// afterwards is everybody who wanted to be on the way: that is the
+/// owner's ask and it is also the honest order, because the road has to
+/// be routed before anything can stand beside it. They come AFTER the
+/// cities in the list, so every road's own `from` and `to` still name the
+/// towns they named.
+///
+/// Their size is the same coastal law every settlement uses, cut by
+/// `town::WAYSIDE`: a place that grew because the road goes past it is a
+/// village whatever its shore, and one that could rival the city at
+/// either end would be a city nobody routed a road to.
+pub fn waysides(
+    planet: &Planet,
+    sea: f64,
+    roads: &[Road],
+    towns: &[Town],
+    biggest: f64,
+    seed: u32,
+) -> Vec<Town> {
+    let big_r = planet.radius;
+    let shape = planet.shape();
+    let (low, high) = crate::town::window(planet);
+    let mut taken: Vec<(DVec3, f64)> = towns.iter().map(|t| (t.dir, t.radius)).collect();
+    let mut placed = Vec::new();
+    for road in roads {
+        let mut since = EVERY * 0.5;
+        for pair in road.line.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            since += arc(a.0, b.0) * big_r;
+            if since < EVERY {
+                continue;
+            }
+            since = 0.0;
+            let dir = b.0;
+            let over = big_r + b.1 - sea;
+            if !(low..=high).contains(&over) || shape.climate(dir, over).frozen() {
+                continue;
+            }
+            let index = towns.len() + placed.len();
+            let radius =
+                crate::town::size_of(biggest, over, planet, index, seed) * crate::town::WAYSIDE;
+            if taken
+                .iter()
+                .any(|(d, r)| d.dot(dir) > ((r + radius + crate::town::BETWEEN) / big_r).cos())
+            {
+                continue;
+            }
+            // Filtered to the sites this ONE direction can reach, which
+            // is the rule this file already keeps for its own march: a
+            // survey is forty nine of them and each walked all hundred
+            // and sixty town sites, which took the bake from nineteen
+            // seconds to three hundred and seventeen.
+            let near = planet.around(dir, radius * 4.0 / big_r);
+            let Some(p) = crate::town::settle(&near, sea, dir, over, radius) else {
+                continue;
+            };
+            taken.push((dir, radius));
+            placed.push(p);
+        }
+    }
+    crate::town::lay_all_from(&placed, big_r, sea, seed, towns.len())
+}
+
 #[cfg(test)]
 mod tests;
