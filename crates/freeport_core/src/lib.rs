@@ -10,6 +10,7 @@
 
 pub mod atmos;
 pub mod audit;
+pub mod biome;
 pub mod dc;
 pub mod field;
 pub mod flight;
