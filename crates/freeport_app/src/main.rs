@@ -94,8 +94,32 @@ const OCTAVES: u32 = 18;
 /// The sea's level, metres under the mean radius.
 const SEA: f64 = RADIUS - 400.0;
 /// Towns: how many, and how far across each.
-const TOWNS: usize = 8;
+/// How many towns are PLANNED on the planet. Every one of them levels its
+/// own ground and is painted on the body's chart, so a world with this
+/// many has cities all over it from orbit and level ground waiting under
+/// each of them.
+const TOWNS: usize = 160;
 const TOWN_RADIUS: f64 = 80.0;
+
+/// How many of the planned towns are BUILT, nearest to where the world
+/// starts first.
+///
+/// A town is about 375,000 triangles of baked buildings, so the eight
+/// this world had were three million of them and a hundred and sixty
+/// would be sixty million, which is not a thing to hold. Planning is
+/// cheap and building is not, so every town is planned, levels its own
+/// ground and is painted on the body's chart, and the nearest few are
+/// built. A COUNT rather than a distance, because it is the count that
+/// bounds the cost: at a hundred and sixty towns on this planet the mean
+/// spacing is 280 km, so a reach of ninety thousand metres built exactly
+/// one of them.
+///
+/// What is MISSING and named rather than hidden: a town that comes into
+/// range as you fly is not built, so a far city is its own levelled
+/// plateau with no buildings on it until town streaming lands. The chunk
+/// streamer already does exactly this for ground and the shape of it is
+/// the same.
+const TOWNS_BUILT: usize = 8;
 /// The world's seed.
 const SEED: u32 = 7;
 /// Ten levels at 0.5 m preserve the previous 32.8 km streaming box while

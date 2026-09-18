@@ -154,6 +154,53 @@ impl Chart {
     /// slope comes off. Sampling it again per difference would treble the
     /// cost of the whole bake for an answer already in hand.
     pub fn bake(planet: &Planet, sea: f64, w: usize, h: usize) -> Chart {
+        // The body WITHOUT its towns, and then the towns stamped on.
+        //
+        // A town is eighty metres across and a texel on a thousand
+        // kilometre planet is six thousand, so asking `surface` about a
+        // texel's own middle finds a site one time in five thousand: the
+        // cities would be invisible on the chart, and the sites would
+        // still cost every one of half a million texels a walk over every
+        // town on the planet (84 million tests, which took the bake from
+        // 954 ms to 1,617). Baked bare and stamped after, the cities are
+        // ON it and the bake is back to what it was.
+        let bare = Planet {
+            sites: Vec::new(),
+            ..planet.clone()
+        };
+        let mut chart = Chart::bake_bare(&bare, sea, w, h);
+        chart.stamp(planet, sea);
+        chart
+    }
+
+    /// Every town on the body, painted at the texel it stands in. A city
+    /// is a whole texel here where it is a tenth of a millimetre of one
+    /// on the ground, which is what makes it a place a player can SEE
+    /// from orbit and steer at rather than a thing they have to be told
+    /// about.
+    pub fn stamp(&mut self, planet: &Planet, sea: f64) {
+        let relief = planet.shape().relief;
+        for site in &planet.sites {
+            let d = site.dir.normalize_or(DVec3::Y);
+            let u = 0.5 + d.z.atan2(d.x) / std::f64::consts::TAU;
+            let v = 0.5 - d.y.clamp(-1.0, 1.0).asin() / std::f64::consts::PI;
+            let x = ((u * self.width as f64) as usize).min(self.width - 1);
+            let y = ((v * self.height as f64) as usize).min(self.height - 1);
+            let i = (y * self.width + x) * 4;
+            let spot = Spot {
+                over_sea: planet.radius + site.h - sea,
+                kind: Kind::City,
+                water: 0.0,
+            };
+            let c = spot_colour(&spot, relief);
+            for (k, v) in c.iter().enumerate() {
+                self.albedo[i + k] = to_srgb(*v);
+            }
+            self.albedo[i + 3] = 0;
+        }
+    }
+
+    fn bake_bare(planet: &Planet, sea: f64, w: usize, h: usize) -> Chart {
         let shape = planet.shape();
         let alt: Vec<f64> = (0..w * h)
             .map(|i| planet.radius + planet.surface(pixel_dir(i % w, i / w, w, h)).0 - sea)

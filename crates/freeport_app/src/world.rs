@@ -119,12 +119,24 @@ pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
     let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
     planet.sites = towns.iter().map(town::site_of).collect();
     let planned = t0.elapsed();
-    let raised = raise(&towns);
+    // Every town is planned, and the ones near where the world starts are
+    // built. The rest are sites: their ground is levelled and the body's
+    // chart paints them, which is what puts cities all over the planet.
+    let home = towns.first().map_or(DVec3::Y, |t| t.dir);
+    let mut order: Vec<&Town> = towns.iter().collect();
+    order.sort_by(|a, b| (a.dir - home).length().total_cmp(&(b.dir - home).length()));
+    let near: Vec<Town> = order
+        .into_iter()
+        .take(crate::TOWNS_BUILT)
+        .cloned()
+        .collect();
+    let raised = raise(&near);
     say_port(&towns);
     info!(
-        "{} towns planned in {:.0} ms, {} buildings and {} pieces of street modelled in {:.0} ms: {} triangles, {} boxes, {} lamps",
+        "{} towns planned in {:.0} ms, {} of them built, {} buildings and {} pieces of street modelled in {:.0} ms: {} triangles, {} boxes, {} lamps",
         towns.len(),
         planned.as_secs_f64() * 1000.0,
+        near.len(),
         raised.buildings,
         raised.pieces,
         (t0.elapsed() - planned).as_secs_f64() * 1000.0,
