@@ -23,6 +23,7 @@
 
 use crate::biome::{Climate, Kind, BEACH_TO};
 use crate::field::Planet;
+use crate::road::Road;
 use glam::DVec3;
 
 /// A baked chart of a body: two equirectangular RGBA8 images.
@@ -165,7 +166,7 @@ impl Chart {
     /// times: for the colour, and for the two central differences the
     /// slope comes off. Sampling it again per difference would treble the
     /// cost of the whole bake for an answer already in hand.
-    pub fn bake(planet: &Planet, sea: f64, w: usize, h: usize) -> Chart {
+    pub fn bake(planet: &Planet, sea: f64, w: usize, h: usize, roads: &[Road]) -> Chart {
         // The body WITHOUT its towns, and then the towns stamped on.
         //
         // A town is eighty metres across and a texel on a thousand
@@ -182,7 +183,65 @@ impl Chart {
         };
         let mut chart = Chart::bake_bare(&bare, sea, w, h);
         chart.stamp(planet, sea);
+        chart.lay_roads(planet, sea, roads);
         chart
+    }
+
+    /// Every road on the body, drawn along its own line.
+    ///
+    /// Stepped at HALF a texel so a line cannot skip one: a road's
+    /// waypoints are ten kilometres apart and a texel is six, so drawing
+    /// only the points would leave a dotted network with gaps wider than
+    /// the marks.
+    ///
+    /// A road is drawn one texel wide, which on this body is six
+    /// kilometres of road, and that is the same honest lie a city one
+    /// texel across is: what the chart is for is saying THAT there is a
+    /// road and where it runs, and a mark under a texel wide would say
+    /// neither. The ground's own roads are the real width.
+    pub fn lay_roads(&mut self, planet: &Planet, sea: f64, roads: &[Road]) {
+        let relief = planet.shape().relief;
+        let texel = std::f64::consts::TAU / self.width as f64;
+        for road in roads {
+            for pair in road.line.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                let span = (a.0 - b.0).length();
+                let steps = ((span / (texel * 0.5)).ceil() as usize).max(1);
+                for k in 0..=steps {
+                    let t = k as f64 / steps as f64;
+                    let dir = (a.0 + (b.0 - a.0) * t).normalize_or(DVec3::Y);
+                    let h = a.1 + (b.1 - a.1) * t;
+                    let spot = Spot {
+                        over_sea: planet.radius + h - sea,
+                        kind: Kind::Road,
+                        water: 0.0,
+                    };
+                    self.paint(dir, &spot, relief);
+                }
+            }
+        }
+    }
+
+    /// One texel painted with what is at a direction, opaque and dry.
+    fn paint(&mut self, dir: DVec3, spot: &Spot, relief: f64) {
+        let Some(i) = self.texel(dir) else {
+            return;
+        };
+        let c = spot_colour(spot, relief);
+        for (k, v) in c.iter().enumerate() {
+            self.albedo[i + k] = to_srgb(*v);
+        }
+        self.albedo[i + 3] = 0;
+    }
+
+    /// The byte a direction's texel starts at.
+    fn texel(&self, dir: DVec3) -> Option<usize> {
+        let d = dir.normalize_or(DVec3::Y);
+        let u = 0.5 + d.z.atan2(d.x) / std::f64::consts::TAU;
+        let v = 0.5 - d.y.clamp(-1.0, 1.0).asin() / std::f64::consts::PI;
+        let x = ((u * self.width as f64) as usize).min(self.width - 1);
+        let y = ((v * self.height as f64) as usize).min(self.height - 1);
+        Some((y * self.width + x) * 4)
     }
 
     /// Every town on the body, painted at the texel it stands in. A city
@@ -194,21 +253,12 @@ impl Chart {
         let relief = planet.shape().relief;
         for site in &planet.sites {
             let d = site.dir.normalize_or(DVec3::Y);
-            let u = 0.5 + d.z.atan2(d.x) / std::f64::consts::TAU;
-            let v = 0.5 - d.y.clamp(-1.0, 1.0).asin() / std::f64::consts::PI;
-            let x = ((u * self.width as f64) as usize).min(self.width - 1);
-            let y = ((v * self.height as f64) as usize).min(self.height - 1);
-            let i = (y * self.width + x) * 4;
             let spot = Spot {
                 over_sea: planet.radius + site.h - sea,
                 kind: Kind::City,
                 water: 0.0,
             };
-            let c = spot_colour(&spot, relief);
-            for (k, v) in c.iter().enumerate() {
-                self.albedo[i + k] = to_srgb(*v);
-            }
-            self.albedo[i + 3] = 0;
+            self.paint(d, &spot, relief);
         }
     }
 
@@ -247,12 +297,9 @@ impl Chart {
     /// The albedo at a direction, for a test and for anything that wants
     /// the chart's own answer without a GPU.
     pub fn sample(&self, dir: DVec3) -> [u8; 4] {
-        let d = dir.normalize_or(DVec3::Y);
-        let u = 0.5 + d.z.atan2(d.x) / std::f64::consts::TAU;
-        let v = 0.5 - d.y.clamp(-1.0, 1.0).asin() / std::f64::consts::PI;
-        let x = ((u * self.width as f64) as usize).min(self.width - 1);
-        let y = ((v * self.height as f64) as usize).min(self.height - 1);
-        let i = (y * self.width + x) * 4;
+        let Some(i) = self.texel(dir) else {
+            return [0; 4];
+        };
         [
             self.albedo[i],
             self.albedo[i + 1],

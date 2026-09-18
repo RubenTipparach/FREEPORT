@@ -270,7 +270,16 @@ pub fn dump(chart: &Chart, name: &str) {
     let (w, h) = (chart.width as u32, chart.height as u32);
     for (what, data) in [("albedo", &chart.albedo), ("slope", &chart.normal)] {
         let path = out.join(format!("{name}-{what}.png"));
-        let Some(buffer) = image::RgbaImage::from_raw(w, h, data.clone()) else {
+        // Written RGB, with the alpha DROPPED. The albedo's alpha is the
+        // water mask, so a four channel dump opens with every scrap of
+        // land transparent and every ocean opaque: the one picture that
+        // exists so a person can look at the chart showed the planet
+        // inside out in every viewer.
+        let rgb: Vec<u8> = data
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
+        let Some(buffer) = image::RgbImage::from_raw(w, h, rgb) else {
             continue;
         };
         match buffer.save(&path) {

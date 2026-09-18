@@ -620,6 +620,7 @@ pub enum Kind {
     Rock,
     Snow,
     City,
+    Road,
 }
 
 /// Over the sea by less than this is a beach, metres. The shader's own
@@ -691,6 +692,9 @@ impl Kind {
             Kind::Rock => [0.26, 0.24, 0.22],
             Kind::Snow => [0.82, 0.85, 0.88],
             Kind::City => [0.35, 0.34, 0.33],
+            // Darker than a city and browner: a road is worn ground, and
+            // it has to read against the city at either end of it.
+            Kind::Road => [0.20, 0.18, 0.16],
         }
     }
 
@@ -708,12 +712,13 @@ impl Kind {
             Kind::Rock => "rock",
             Kind::Snow => "snow",
             Kind::City => "city",
+            Kind::Road => "road",
         }
     }
 
     /// Every kind, for a test that has to cover them and a legend that has
     /// to list them.
-    pub fn all() -> [Kind; 11] {
+    pub fn all() -> [Kind; 12] {
         [
             Kind::Ocean,
             Kind::Ice,
@@ -726,6 +731,7 @@ impl Kind {
             Kind::Rock,
             Kind::Snow,
             Kind::City,
+            Kind::Road,
         ]
     }
 }

@@ -1062,6 +1062,98 @@ Measured: 160 towns planned in 7.2 s (20,000 candidates, up from 4,000),
 1,346 lamps in 371 ms, and 159 city texels on the chart for 160 towns,
 because two of them share one.
 
+## Cities are JOINED, and the plan of a body is BAKED
+
+`road.rs` routes the network and `atlas.rs` is the file it is kept in.
+The owner's ask was a system that generates cities across a planet and
+connects them with roads, statically, loaded into the procedural planet
+at run time, and those are the two halves of it.
+
+**A road network is not a line between every pair.** It is what wears in
+when everyone walks toward the nearest town, so that is how it is built:
+waypoints spread evenly over the whole body on the same golden angle
+spiral `town::plan` picks its candidates off, ONE multi source Dijkstra
+outward from every town at once, and a road wherever two towns'
+territories meet. One search labels the whole planet, and the border rule
+gets three things for free that a road per pair has to be told:
+
+- **Two towns on different continents are never joined**, because no
+  chain of land waypoints runs between them. 152 of this planet's 160
+  towns are on the network; the other eight are on islands.
+- **A road round a bay is shorter than a road across it**, without
+  anything knowing what a bay is.
+- **The network is SPARSE and it is planar looking.** 336 roads for 160
+  towns, against 12,720 pairs. A town ringed by others is joined to its
+  ring and to nothing past it, which is a road network rather than a
+  spiderweb, and no rule says how many roads a town may have.
+
+An edge is refused into the sea (`DRY`, two metres over it) and up
+anything past `STEEPEST` (one in ten, which is about the steepest a road
+is built at), and it costs its distance times `GRADE` (eight) on its own
+grade, so a route goes a long way round a range rather than over it.
+
+**Three defects, and the first two came back as nothing at all:**
+
+- **The waypoint count was over FOUR rather than over four pi.** A
+  sphere's area is 4 pi, so asking for `4 / spacing^2` points spreads
+  them 1.77 times as wide as asked, which is wider than the neighbour
+  reach: not one waypoint on the body had a neighbour and the search
+  returned nought roads.
+- **A town seeded the waypoint NEAREST it, and half of them are
+  offshore.** Waypoints are ten kilometres apart and a town stands on the
+  coast because that is where level land near the sea is, so the point of
+  the grid nearest one is as likely to be in the water as on the land. A
+  town that seeds a wet node owns no ground, meets no border and gets no
+  road: 6 of 12 towns on the test planet were stranded, and 11 of 12 once
+  a town seeds the nearest DRY waypoint.
+- **And the bake took 551 seconds**, because `surface_radius` marches
+  tens of samples down through the band and every one of them walked all
+  hundred and sixty town sites. It is the rule this file already keeps
+  for chunks, arriving at a new caller: a march is along ONE direction,
+  so `Planet::around` filters the sites to that direction once and the
+  whole bake is 29.4 s for the same 336 roads.
+
+**What is BAKED is the PLAN and never the geometry.** A town's lots, its
+streets, its buildings and its lamps are a pure function of where it
+stands and its seed (`town::lay`), so the atlas keeps the placement and
+the game lays the grid out again in milliseconds. The triangles would be
+sixty million for one body, would be reshipped whenever a building kind
+changed, and would say nothing a reader could check; the placements are
+1.7 MB of JSON beside `planets.json`, and
+`a_town_read_back_is_the_town_that_was_baked` holds every lot of every
+town through the file.
+
+**An atlas of another body is REFUSED rather than used.** The name, the
+seed, the radius, the town size and the OCTAVE COUNT all have to match,
+because `Shape::oct` caps every term by the octaves: a plan made at
+eighteen describes ground that fourteen does not have, and a road routed
+over the one can cross water on the other. A refusal is not fatal, it
+plans the body here and says so in the log, which is what keeps a
+checkout nobody has baked runnable, the same rule a missing texture set
+follows.
+
+**The roads are on the CHART**, drawn along their own lines at half a
+texel a step so the network cannot come out dotted, in `Kind::Road`.
+That is six kilometres of road a texel on this body, which is the same
+honest lie a city one texel across is: what a chart is for is saying that
+there is a road and where it runs.
+
+**And the dumped chart is written RGB now.** Its alpha is the water mask,
+so the four channel dump opened with every scrap of land transparent and
+every ocean opaque: the one picture that exists so a person can look at
+the chart showed the planet inside out in every viewer.
+
+**What is MISSING, named rather than hidden:** a road is data, a levelled
+corridor is not, and there is no ribbon on the ground yet. A road shows
+from orbit and is in the world's own state, and walking one means
+generalising a `Site` from a circle to an ARC so the corridor under it is
+levelled the way a town's ground is, plus the same streaming a far town
+still waits on.
+
+Measured on this planet: 160 towns and 336 roads over 134,464 km joining
+152 of them, baked in 29.4 s and READ in 14 ms, against 7,200 ms to plan
+the towns alone.
+
 ## The sets on the field, and the walker on it, in Bevy
 
 **A triangle carries what it is made of, and there are seven.** `TERRAIN`,
@@ -1470,7 +1562,9 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 100, the core, about 30 s
+cargo test -p freeport_core                       # 105, the core, about 53 s
+cargo test -p freeport_app                        # 43, the harness. It was NOT in this list and
+                                                  # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -1494,6 +1588,12 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 # where the towns came out, and a hand aimed camera finds a planet in its
 # own night.
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --sunward 2.6 --shot orbit.png
+# The body's cities and the roads joining them, planned once and written
+# beside the other assets. It runs BEFORE any of Bevy is built, so it
+# needs no window, no device and no Xvfb: it is arithmetic and a file.
+# The game reads it at startup and plans the body itself, slowly and with
+# no roads, only when there is no atlas that fits.
+./target/release/freeport_app --bake-atlas
 # The charts themselves, written beside the assets as PNGs.
 FREEPORT_DUMP_CHARTS=1 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 3 --shot n.png
 ```
@@ -1525,7 +1625,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 100 tests in about 30 s. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 105 tests in about 53 s, and `freeport_app` 43 in 15. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across, with
@@ -1597,7 +1697,14 @@ Numbers in the commit message. What is measured so far:
   radii up: 18.06% of pixels moved by more than 8 of 255, worst 180.
 - The towns: 160 planned in 7.2 s from 20,000 candidates, 8 built into
   2,852,924 triangles, 147,157 boxes and 1,346 lamps in 371 ms, and 159
-  city texels on the chart.
+  city texels on the chart. READ off a baked atlas instead they are 14 ms,
+  which is the whole argument for baking a plan that never changes.
+- The roads: 336 of them over 134,464 km joining 152 of the 160 towns,
+  routed over 125,664 waypoints ten kilometres apart in one multi source
+  Dijkstra. The bake is 29.4 s, and was 551 s while every one of those
+  marches walked all 160 town sites instead of the nought or one
+  `Planet::around` leaves at its own direction. The atlas is 1.7 MB of
+  JSON, which is placements and road lines and not one triangle.
 - The sea's ripple coordinate, before and after: four values a metre on
   0.67 m features, against one continuous noise over a two thousand
   kilometre body at the precision of a fraction. The A/B at 800 m is

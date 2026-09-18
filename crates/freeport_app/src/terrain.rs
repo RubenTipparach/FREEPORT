@@ -456,7 +456,7 @@ mod tests {
             materials: vec![TERRAIN; 2],
             ..default()
         };
-        let rendered = to_mesh(&mesh, |p| (p, 0.0));
+        let rendered = to_mesh(&mesh, |p| Vertex::built(p, 0.0));
         let Some(VertexAttributeValues::Float32x3(normals)) =
             rendered.attribute(Mesh::ATTRIBUTE_NORMAL)
         else {
@@ -465,7 +465,7 @@ mod tests {
         assert!(normals.iter().all(|n| *n == [0.0, 1.0, 0.0]));
         // Architectural creases still retain their hard edges.
         mesh.materials = vec![CONCRETE; 2];
-        let rendered = to_mesh(&mesh, |p| (p, 0.0));
+        let rendered = to_mesh(&mesh, |p| Vertex::built(p, 0.0));
         let Some(VertexAttributeValues::Float32x3(normals)) =
             rendered.attribute(Mesh::ATTRIBUTE_NORMAL)
         else {

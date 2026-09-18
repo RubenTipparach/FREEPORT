@@ -40,7 +40,14 @@ pub(crate) fn spawn(
             .map(|body| {
                 let planet = body.world.planet.clone();
                 let sea = body.world.sea.radius;
-                scope.spawn(move || Chart::bake(&planet, sea, distant::CHART_W, distant::CHART_H))
+                // A body's roads are painted on its own chart, so the
+                // network reads from orbit: a road is six kilometres of
+                // texel here and a few metres of ground down there, which
+                // is the same honest width a city one texel across has.
+                let roads = body.world.roads.clone();
+                scope.spawn(move || {
+                    Chart::bake(&planet, sea, distant::CHART_W, distant::CHART_H, &roads)
+                })
             })
             .collect();
         handles

@@ -54,7 +54,7 @@ fn a_pixel_and_a_direction_are_inverses() {
 #[test]
 fn a_chart_has_sea_land_and_more_than_one_biome_on_it() {
     let (planet, sea) = world();
-    let chart = Chart::bake(&planet, sea, 256, 128);
+    let chart = Chart::bake(&planet, sea, 256, 128, &[]);
     let texels = chart.width * chart.height;
     let wet = (0..texels).filter(|i| chart.albedo[i * 4 + 3] > 8).count();
     let mut colours = std::collections::BTreeSet::new();
@@ -86,7 +86,7 @@ fn a_chart_has_sea_land_and_more_than_one_biome_on_it() {
 #[test]
 fn the_chart_agrees_with_the_field_it_was_baked_from() {
     let (planet, sea) = world();
-    let chart = Chart::bake(&planet, sea, 256, 128);
+    let chart = Chart::bake(&planet, sea, 256, 128, &[]);
     let mut checked = 0;
     for i in (0..chart.width * chart.height).step_by(97) {
         let dir = pixel_dir(i % chart.width, i / chart.width, chart.width, chart.height);
@@ -135,7 +135,7 @@ fn a_town_is_painted_as_a_city() {
 #[test]
 fn the_slope_map_is_flat_on_flat_ground_and_not_on_a_slope() {
     let (planet, sea) = world();
-    let chart = Chart::bake(&planet, sea, 256, 128);
+    let chart = Chart::bake(&planet, sea, 256, 128, &[]);
     let mut steepest = 0i32;
     let mut flat = 0;
     for i in 0..chart.width * chart.height {
@@ -179,7 +179,7 @@ fn frame(d: DVec3) -> (DVec3, DVec3) {
 fn the_sea_carries_no_slope_because_the_sea_is_what_is_drawn() {
     let (planet, sea) = world();
     let (w, h) = (256usize, 128usize);
-    let chart = Chart::bake(&planet, sea, w, h);
+    let chart = Chart::bake(&planet, sea, w, h, &[]);
     let wet =
         |x: usize, y: usize| planet.radius + planet.surface(pixel_dir(x, y, w, h)).0 - sea < 0.0;
     let (mut open, mut worst) = (0usize, 0i32);
@@ -221,7 +221,7 @@ fn the_sea_carries_no_slope_because_the_sea_is_what_is_drawn() {
 fn a_charted_slope_leans_the_normal_away_from_its_hill() {
     let (planet, sea) = world();
     let (w, h) = (256usize, 128usize);
-    let chart = Chart::bake(&planet, sea, w, h);
+    let chart = Chart::bake(&planet, sea, w, h, &[]);
     let bend_of = |i: usize| {
         (
             (chart.normal[i * 4] as f64 - 128.0) / 127.0,

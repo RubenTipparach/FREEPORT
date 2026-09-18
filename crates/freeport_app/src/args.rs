@@ -22,6 +22,10 @@ pub(crate) struct Args {
     /// hand at a planet that turned out to be a different one in its own
     /// night.
     pub(crate) sunward: Option<f64>,
+    /// Plan the home body's cities and roads, write its atlas and stop.
+    /// It runs BEFORE any of Bevy is built, so a bake needs no window, no
+    /// device and no Xvfb: it is arithmetic and a file.
+    pub(crate) bake_atlas: bool,
     pub(crate) levels: u8,
     pub(crate) shot: Option<String>,
     pub(crate) frames: u32,
@@ -54,6 +58,7 @@ impl Default for Args {
             eye: None,
             look: None,
             sunward: None,
+            bake_atlas: false,
             levels: LEVELS,
             shot: None,
             frames: 30,
@@ -87,6 +92,7 @@ pub(crate) fn parse_args() -> Args {
             "--profile-render" => args.profile_render = true,
             "--fly" => args.fly = true,
             "--sunward" => args.sunward = it.next().and_then(|v| v.parse().ok()),
+            "--bake-atlas" => args.bake_atlas = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),
             "--levels" => {

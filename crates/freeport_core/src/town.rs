@@ -235,7 +235,7 @@ pub fn plan(planet: &Planet, sea: f64, radius: f64, count: usize, seed: u32) -> 
 
 /// A town on a local grid: a lot per block, taller near the middle, a few
 /// blocks left as plazas, and every street in pieces.
-fn lay(dir: DVec3, h: f64, radius: f64, index: usize, seed: u32) -> Town {
+pub fn lay(dir: DVec3, h: f64, radius: f64, index: usize, seed: u32) -> Town {
     let (east, north) = frame_at(dir);
     let n = (radius / PITCH).floor() as i64;
     let hash = |i: i64, j: i64, k: i64| hash3(i, j, k, seed.wrapping_add(index as u32 * 977));

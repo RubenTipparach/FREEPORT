@@ -187,6 +187,7 @@ impl Body {
                 groups: vec![],
                 lamps: vec![],
                 towns: vec![],
+                roads: vec![],
                 bounds: Bounds {
                     radius: d.radius,
                     floor: floor - 2.0,

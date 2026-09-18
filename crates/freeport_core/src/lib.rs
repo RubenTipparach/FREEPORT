@@ -21,6 +21,7 @@ pub mod model;
 pub mod noise;
 pub mod pos;
 pub mod qef;
+pub mod road;
 pub mod sphere;
 pub mod tables;
 pub mod town;

@@ -16,7 +16,7 @@
 //! ```text
 //! freeport_app [--wire] [--lod-wire] [--fly] [--eye x,y,z] [--look x,y,z] [--levels N]
 //!              [--fps N] [--octaves N] [--walk N] [--shot out.png]
-//!              [--frames N]
+//!              [--frames N] [--bake-atlas]
 //! ```
 //!
 //! Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
@@ -28,6 +28,7 @@
 //! the system origin (on foot, the spot under it) and `--look` what to
 //! face; both default to the port.
 mod args;
+mod atlas;
 mod buildings;
 mod city;
 mod compute;
@@ -185,6 +186,10 @@ pub(crate) const LOOK: f32 = 0.0022;
 
 fn main() {
     let args = parse_args();
+    if args.bake_atlas {
+        world::bake_atlas(&args);
+        return;
+    }
     let lod_debug = lod_debug::LodDebug {
         enabled: args.lod_wire,
         frozen: false,
