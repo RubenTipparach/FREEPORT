@@ -405,12 +405,48 @@ two is the thing the owner could see.
   shallows and a height shade on top, and its ALPHA is the water mask the
   shader gates a sun glint on, so an ocean catches the light where the
   land beside it stays matte.
-- **The slope map** is the altitude's own gradient across a texel, which
-  is what puts a mountain range on a sphere no mesh at that size could
-  hold one on. It is normalised to the body's own 99th percentile,
+- **The slope map** is the drawn surface's own gradient across a texel,
+  which is what puts a mountain range on a sphere no mesh at that size
+  could hold one on. It is normalised to the body's own 99th percentile,
   MEASURED rather than set: a fixed number came out flat, a hundredth of
   the relief across a kilometre of texel encoding as 7 of a possible 127,
   and the whole world shading as a smooth ball.
+- **The sea is FLAT, because the sea is what is drawn.** The slope came
+  off the raw altitude, which runs NEGATIVE under an ocean, so every
+  ocean was shaded with the relief of its own sea BED: 13,844 sea texels
+  at a mean bend of 45 of 127 and a worst of 128, against the land's own
+  50. `distant::sphere` displaces its vertices to `ground.max(sea)`, so
+  that is the only surface there is to have a slope, and the map and the
+  mesh disagreed everywhere the ground fell under the water. The owner
+  saw it as water with normals on it.
+- **A slope leans its normal AWAY from what it climbs**, on BOTH axes.
+  The shader built a tangent frame and ADDED the north term: on the
+  steepest northward texel of the test planet the normal came out 0.41
+  along north where it had to be negative, so every body was lit from
+  the wrong side along one axis and a ridge read as a gully. It is
+  -0.42 now, which is the same number the other way up. The frame is
+  the CHART's own too, east where u grows and north where v shrinks,
+  built from the derivative of `pixel_dir`: what it replaces swapped its
+  reference axis wherever `|y| >= 0.9` to keep a cross product well
+  conditioned, which is 64 degrees of latitude, and everything poleward
+  of that was shaded in a frame that was not east and north at all with
+  a hard ring where it switched.
+- **A difference is not a SLOPE until it is divided by its own run**,
+  and on an equirectangular chart that run is a function of latitude. A
+  raw east difference understates the slope by the cosine of the
+  latitude: the polar band measured 0.121 where the true gradient is
+  0.297, two and a half times too flat, while the equator's 0.146 and
+  0.148 agreed. It is the same number the steepness handed to `Kind` is
+  read through.
+- **And both axes are measured over the same GROUND**, which is what
+  `east_span` is for. Dividing by the run alone swaps one bias for
+  another: at eighty degrees two neighbouring texels are a kilometre
+  apart where the rows above and below are still six, ground is
+  fractal, so the shorter baseline is the steeper gradient and the
+  polar band read 0.203 against the equator's 0.103 with all of it in
+  east. That drew as horizontal streaks across both ice caps, which a
+  picture found and no number had. Reaching `1 / cos(latitude)` texels
+  holds the run at about one texel of ground at every latitude.
 - **The albedo is written sRGB.** `Kind::colour` is linear, because that
   is what a shader does arithmetic in, and the chart binds as an sRGB
   texture, because most of a planet is dark and that is where sRGB spends
@@ -1434,7 +1470,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 98, the core, about 27 s
+cargo test -p freeport_core                       # 100, the core, about 30 s
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -1489,7 +1525,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 98 tests in about 27 s. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 100 tests in about 30 s. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across, with
@@ -1542,11 +1578,23 @@ Numbers in the commit message. What is measured so far:
   edges, 81 pinches and 1,192 triangles facing in. `MAX_SLOPE` is 20; the
   harness planet asks for 9.95.
 - The charts: four bodies at 1024 by 512, baked on their own threads in
-  954 to 991 ms, one `Planet::surface` a texel. Baked with the sites in
-  the field it was 1,617 ms, because half a million texels walked 160
-  towns each. The distant spheres are 24, 48 and 79 subdivisions picked by
-  distance, 79 being Bevy's own icosphere cap (144 comes back
-  `TooManyVertices` with 210,252 points).
+  851 to 894 ms, one `Planet::surface` a texel. It was 954 to 991 ms
+  while `spot_at` sampled the field a second time for the colour beside
+  the one the slope already held, which is half a bake spent on an
+  answer in hand and a loop comment that claimed it was not happening.
+  Baked with the sites in the field it was 1,617 ms, because half a
+  million texels walked 160 towns each. The distant spheres are 24, 48
+  and 79 subdivisions picked by distance, 79 being Bevy's own icosphere
+  cap (144 comes back `TooManyVertices` with 210,252 points).
+- What the chart's slope map was measuring, in three wrongs: an ocean
+  carried its own sea bed at a mean bend of 45 of 127 against the land's
+  50, and carries 0 now over 10,811 texels of open sea; a normal leaned
+  +0.41 INTO the steepest northward hill on the body and leans -0.42 out
+  of it now, on 400 of 400 of the steepest texels; and the east gradient
+  read 0.121 where the truth was 0.297 at the poles, then 0.203 against
+  the equator's 0.103 once it was divided by a run that shrinks and not
+  yet spanned over matched ground. As a picture, the whole body from 1.6
+  radii up: 18.06% of pixels moved by more than 8 of 255, worst 180.
 - The towns: 160 planned in 7.2 s from 20,000 candidates, 8 built into
   2,852,924 triangles, 147,157 boxes and 1,346 lamps in 371 ms, and 159
   city texels on the chart.

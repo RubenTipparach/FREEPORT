@@ -153,3 +153,128 @@ fn the_slope_map_is_flat_on_flat_ground_and_not_on_a_slope() {
     );
     assert!(flat > 100, "no texel on this planet is flat");
 }
+
+/// East and north at a direction, as `distant.wgsl` builds them to bend
+/// its normal along. **It is the reference and this is its
+/// transcription**: the shader is what draws, and this is here so the
+/// frame can be checked without a GPU.
+fn frame(d: DVec3) -> (DVec3, DVec3) {
+    let flat = (d.x * d.x + d.z * d.z).sqrt();
+    let east = if flat > 1e-6 {
+        DVec3::new(-d.z, 0.0, d.x) / flat
+    } else {
+        DVec3::Z
+    };
+    (east, east.cross(d))
+}
+
+/// The sea is FLAT. The slope map is taken off the surface that is drawn,
+/// and over an ocean the drawn surface is the water, so a texel with sea
+/// all round it has no slope whatever the sea bed under it does.
+///
+/// Taken off the raw altitude, the ocean carried the sea BED's relief: on
+/// this planet 13,844 sea texels came out at a mean bend of 45 of 127 and
+/// a worst of 128, against the land's own 50.
+#[test]
+fn the_sea_carries_no_slope_because_the_sea_is_what_is_drawn() {
+    let (planet, sea) = world();
+    let (w, h) = (256usize, 128usize);
+    let chart = Chart::bake(&planet, sea, w, h);
+    let wet =
+        |x: usize, y: usize| planet.radius + planet.surface(pixel_dir(x, y, w, h)).0 - sea < 0.0;
+    let (mut open, mut worst) = (0usize, 0i32);
+    for y in 1..h - 1 {
+        // The east difference reaches as far as the projection makes it,
+        // so the neighbourhood this checks reaches exactly as far.
+        let span = east_span(w, h, y as isize) as usize;
+        for x in 0..w {
+            let (l, r) = ((x + w - span) % w, (x + span) % w);
+            // Only where every sample the difference reads is under the
+            // sea: a texel within reach of a shore is half land and its
+            // slope is the coast, which is real.
+            if !(wet(x, y) && wet(l, y) && wet(r, y) && wet(x, y - 1) && wet(x, y + 1)) {
+                continue;
+            }
+            let i = (y * w + x) * 4;
+            let bend = (chart.normal[i] as i32 - 128)
+                .abs()
+                .max((chart.normal[i + 1] as i32 - 128).abs());
+            open += 1;
+            worst = worst.max(bend);
+        }
+    }
+    println!("{open} texels of open sea, worst bend {worst} of 127");
+    assert!(open > 500, "only {open} texels of open sea to check");
+    assert_eq!(worst, 0, "the open sea carries a bend of {worst} of 127");
+}
+
+/// A slope leans its normal AWAY from the hill, along both axes, and the
+/// axes are the chart's own.
+///
+/// The first cut built the north axis and ADDED it: on the steepest
+/// northward texel the normal came out 0.41 along north where it had to
+/// be negative, so every body was lit from the wrong side along one axis
+/// and a ridge read as a gully. It also swapped its reference axis at
+/// 64 degrees of latitude, so every ice cap was shaded in a frame that
+/// was not east and north at all.
+#[test]
+fn a_charted_slope_leans_the_normal_away_from_its_hill() {
+    let (planet, sea) = world();
+    let (w, h) = (256usize, 128usize);
+    let chart = Chart::bake(&planet, sea, w, h);
+    let bend_of = |i: usize| {
+        (
+            (chart.normal[i * 4] as f64 - 128.0) / 127.0,
+            (chart.normal[i * 4 + 1] as f64 - 128.0) / 127.0,
+        )
+    };
+    let mut steep: Vec<usize> = (0..w * h)
+        .filter(|i| {
+            let (e, n) = bend_of(*i);
+            e.hypot(n) > 0.3
+        })
+        .collect();
+    steep.sort_by_key(|i| {
+        let (e, n) = bend_of(*i);
+        -(e.hypot(n) * 1000.0) as i64
+    });
+    assert!(
+        steep.len() > 100,
+        "only {} texels carry a slope",
+        steep.len()
+    );
+    let (mut leaned, mut worst_lean) = (0usize, f64::NEG_INFINITY);
+    for &i in steep.iter().take(400) {
+        let (x, y) = (i % w, i / w);
+        let d = pixel_dir(x, y, w, h);
+        let (east, north) = frame(d);
+        // The frame is the CHART's: east goes the way u grows and north
+        // the way v shrinks, which is what the two differences measure.
+        let along_u = pixel_dir((x + 1) % w, y, w, h) - d;
+        assert!(
+            along_u.dot(east) > 0.0,
+            "east does not follow u at texel {x},{y}"
+        );
+        if y > 0 {
+            let along_v = pixel_dir(x, y - 1, w, h) - d;
+            assert!(
+                along_v.dot(north) > 0.0,
+                "north does not follow v at texel {x},{y}"
+            );
+        }
+        let (be, bn) = bend_of(i);
+        let n = (d - east * be * 0.45 - north * bn * 0.45).normalize();
+        let uphill = (east * be + north * bn).normalize();
+        let lean = n.dot(uphill);
+        worst_lean = worst_lean.max(lean);
+        if lean < 0.0 {
+            leaned += 1;
+        }
+    }
+    println!("{leaned} of 400 steep texels lean downhill, worst lean {worst_lean:.4}");
+    assert_eq!(leaned, 400, "a normal leaned INTO its own hill");
+    assert!(
+        worst_lean < 0.0,
+        "worst lean {worst_lean:.4} is not downhill"
+    );
+}

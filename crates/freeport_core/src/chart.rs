@@ -31,7 +31,9 @@ pub struct Chart {
     pub height: usize,
     /// rgb the surface's colour, a the water mask.
     pub albedo: Vec<u8>,
-    /// rg the tangent space slope, b flat, a unused.
+    /// rg the slope of the DRAWN surface in east and north, b flat, a
+    /// unused. East is where the chart's u grows and north where its v
+    /// shrinks, which is what `distant.wgsl` bends its normal along.
     pub normal: Vec<u8>,
 }
 
@@ -94,9 +96,19 @@ pub struct Spot {
 /// Everything a chart pixel and a distant vertex both need, off the same
 /// field the chunks are contoured from.
 pub fn spot_at(planet: &Planet, sea: f64, dir: DVec3, slope: f64) -> Spot {
-    let shape = planet.shape();
     let over_sea = planet.radius + planet.surface(dir).0 - sea;
-    let climate = shape.climate(dir, over_sea);
+    spot_of(planet, over_sea, dir, slope)
+}
+
+/// The same answer as `spot_at` from an altitude already in hand.
+///
+/// A bake samples the field ONCE a texel and reads that one number for
+/// the colour and for the two central differences the slope comes off.
+/// `spot_at` asking `surface` again here was half the cost of the whole
+/// bake spent on an answer already held, and the loop's own comment
+/// claimed it was not happening.
+pub fn spot_of(planet: &Planet, over_sea: f64, dir: DVec3, slope: f64) -> Spot {
+    let climate = planet.shape().climate(dir, over_sea);
     // A town levels its own ground, and that is what makes it a place
     // rather than a patch of colour: where the site is levelling right
     // across, what is there is a CITY.
@@ -205,26 +217,15 @@ impl Chart {
         let alt: Vec<f64> = (0..w * h)
             .map(|i| planet.radius + planet.surface(pixel_dir(i % w, i / w, w, h)).0 - sea)
             .collect();
-        // The slope across one texel, which is all a chart can see: east
-        // from the central difference in x, north in y.
-        let slopes: Vec<(f64, f64)> = (0..w * h)
-            .map(|i| {
-                let (x, y) = ((i % w) as isize, (i / w) as isize);
-                (
-                    wrap_alt(&alt, w, h, x + 1, y) - wrap_alt(&alt, w, h, x - 1, y),
-                    wrap_alt(&alt, w, h, x, y - 1) - wrap_alt(&alt, w, h, x, y + 1),
-                )
-            })
-            .collect();
+        let slopes = slopes_of(&alt, w, h, planet.radius);
         let full = percentile(&slopes, SLOPE_SPAN);
-        let texel = std::f64::consts::TAU * planet.radius / w as f64;
         let mut albedo = vec![0u8; w * h * 4];
         let mut normal = vec![0u8; w * h * 4];
         for i in 0..w * h {
             let (east, north) = slopes[i];
             let dir = pixel_dir(i % w, i / w, w, h);
-            let slope = (east * east + north * north).sqrt() / (2.0 * texel);
-            let spot = spot_at(planet, sea, dir, slope.min(1.0));
+            let slope = (east * east + north * north).sqrt();
+            let spot = spot_of(planet, alt[i], dir, slope.min(1.0));
             let c = spot_colour(&spot, shape.relief);
             for k in 0..3 {
                 albedo[i * 4 + k] = to_srgb(c[k]);
@@ -261,6 +262,83 @@ impl Chart {
     }
 }
 
+/// The SLOPE of the drawn surface across one texel: east from the central
+/// difference in x, north in y, each divided by the ground the difference
+/// was measured over.
+///
+/// **Divided by its own run, which is what makes it a slope.** The run
+/// between two longitude texels narrows as the cosine of the latitude, so
+/// a raw difference understates the east slope by exactly that: measured
+/// on the test planet, the polar band encoded a mean east of 0.121 where
+/// the true slope there is 0.297, two and a half times too flat, while
+/// the equator's 0.146 and 0.148 agreed. Every ice cap shaded smooth. It
+/// is the same factor the steepness handed to `Kind` is read through, so
+/// a chart normalised on raw differences was wrong about how steep the
+/// ground is as well as about how it should shade.
+///
+/// The run is the straight line between the two directions actually
+/// differenced rather than a small angle formula, so a row clamped at the
+/// pole is divided by the one row it really spans and not by two.
+///
+/// **Off the ground held UP AT THE SEA**, which is what `distant::sphere`
+/// displaces its vertices to and therefore the only surface there is to
+/// have a slope. Taken off the raw altitude instead, an ocean carried the
+/// SEA BED's relief as shading: on the test planet 13,844 sea texels came
+/// out with a mean bend of 45 of 127 and a worst of 128, which is the
+/// land's own 50, so every ocean on every body was as bumpy as the
+/// continent beside it and the map disagreed with the mesh it was drawn
+/// on everywhere the ground fell under the sea.
+fn slopes_of(alt: &[f64], w: usize, h: usize, radius: f64) -> Vec<(f64, f64)> {
+    let drawn: Vec<f64> = alt.iter().map(|a| a.max(0.0)).collect();
+    let rise_over_run = |ax, ay, bx, by| {
+        let rise = wrap_alt(&drawn, w, h, ax, ay) - wrap_alt(&drawn, w, h, bx, by);
+        let run = (wrap_dir(w, h, ax, ay) - wrap_dir(w, h, bx, by)).length() * radius;
+        rise / run.max(1e-9)
+    };
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as isize, (i / w) as isize);
+            let span = east_span(w, h, y);
+            (
+                rise_over_run(x + span, y, x - span, y),
+                rise_over_run(x, y - 1, x, y + 1),
+            )
+        })
+        .collect()
+}
+
+/// How many texels the east difference reaches over, so that it spans the
+/// same GROUND the north one does.
+///
+/// An equirectangular chart oversamples longitude toward the poles: at
+/// eighty degrees two neighbouring texels are a kilometre apart where the
+/// row above and below are still six. Ground is fractal, so a gradient
+/// measured over the shorter baseline is the steeper one, and the two
+/// axes then disagree by scale rather than by what the ground does: the
+/// polar band came out at 0.203 against the equator's 0.103, all of it in
+/// east, which drew as horizontal streaks across both ice caps.
+///
+/// Reaching `1 / cos(latitude)` texels holds the run at about one texel
+/// of ground whatever the latitude, so the two axes measure the same
+/// thing. It is capped at a quarter of the image so the two samples can
+/// never meet round the far side; at the pole that is a chord across a
+/// cap a few kilometres wide, which is the honest answer where east has
+/// stopped meaning anything at all.
+fn east_span(w: usize, h: usize, y: isize) -> isize {
+    let d = wrap_dir(w, h, 0, y);
+    let cos_lat = (1.0 - d.y * d.y).sqrt();
+    ((1.0 / cos_lat.max(1e-6)).round() as isize).clamp(1, (w / 4) as isize)
+}
+
+/// The direction `wrap_alt` reads at a texel, so a rise and the run it is
+/// divided by are measured between the same two samples, clamped rows and
+/// wrapped columns alike.
+fn wrap_dir(w: usize, h: usize, x: isize, y: isize) -> DVec3 {
+    let yy = y.clamp(0, h as isize - 1) as usize;
+    let xx = x.rem_euclid(w as isize) as usize;
+    pixel_dir(xx, yy, w, h)
+}
+
 /// An altitude at a texel, with longitude wrapping round and latitude
 /// clamped at the poles: a central difference at the edge of the image is
 /// still a difference across real ground.
@@ -270,8 +348,8 @@ fn wrap_alt(alt: &[f64], w: usize, h: usize, x: isize, y: isize) -> f64 {
     alt[yy * w + xx]
 }
 
-/// The magnitude at a share of the way up a chart's own slopes, metres
-/// of altitude across two texels. Never nought, so a body with no relief
+/// The magnitude at a share of the way up a chart's own slopes, as a
+/// gradient in metres of rise per metre of ground. Never nought, so a body with no relief
 /// at all encodes as flat rather than as a division by zero.
 fn percentile(slopes: &[(f64, f64)], share: f64) -> f64 {
     let mut m: Vec<f64> = slopes.iter().map(|(a, b)| a.abs().max(b.abs())).collect();

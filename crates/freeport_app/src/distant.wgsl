@@ -70,17 +70,29 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let albedo = textureSampleGrad(chart, chart_sampler, uv, dx, dy);
     let slope = textureSampleGrad(slopes, slopes_sampler, uv, dx, dy);
 
-    // The chart's slope, applied in a tangent frame built on the radial.
-    // The reference axis swaps near the poles, where a frame built on the
-    // world's own up has nothing to cross with.
-    var reference = vec3<f32>(0.0, 1.0, 0.0);
-    if abs(d.y) >= 0.9 {
-        reference = vec3<f32>(1.0, 0.0, 0.0);
+    // The chart's slope, applied along the axes it was MEASURED along:
+    // east is where u grows and north where v shrinks, which is exactly
+    // what `chart::slopes_of` takes its two central differences over.
+    // They are the derivative of `pixel_dir` itself, so they degenerate
+    // only at a pole, where the chart's own longitude is undefined too.
+    //
+    // What this replaces swapped its reference axis at |y| >= 0.9 to keep
+    // one cross product well conditioned. That is 64 degrees of latitude,
+    // and everything poleward of it was then shaded in a frame that was
+    // not east and north at all, with a hard ring where it switched.
+    let flat = length(vec2<f32>(d.x, d.z));
+    var east = vec3<f32>(0.0, 0.0, 1.0);
+    if flat > 1e-6 {
+        east = vec3<f32>(-d.z, 0.0, d.x) / flat;
     }
-    let tangent = normalize(cross(reference, d));
-    let bitangent = cross(d, tangent);
+    let north = cross(east, d);
+    // SUBTRACTED, both of them: ground tilts its normal AWAY from what it
+    // climbs. The first cut added the north term, and on the steepest
+    // northward texel of the test planet the normal came out 0.41 ALONG
+    // north where it had to be negative, so every slope on every body was
+    // lit from the wrong side along one axis and a ridge read as a gully.
     let bend = (slope.rg * 2.0 - 1.0) * distant.centre.w;
-    let n = normalize(d + tangent * bend.x + bitangent * bend.y);
+    let n = normalize(d - east * bend.x - north * bend.y);
 
     pbr_input.material.base_color = vec4<f32>(albedo.rgb, 1.0);
     // Water is smooth and everything else is not, which is the whole of
