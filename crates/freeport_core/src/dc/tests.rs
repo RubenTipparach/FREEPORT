@@ -212,9 +212,18 @@ impl Density for Shifted<'_> {
 /// A small planet with a slab and a wall built on its top, the rings
 /// round the site, as the app draws it.
 fn built_planet() -> (Planet, Vec<Block>, Lattice, Rings) {
+    // A gentle ball, because what this test is about is a BUILT thing
+    // meeting the ground: the slab's own flatness and the crease round its
+    // foot. Its relief came down from 2.0 when the terrain became a few
+    // composed terms, which are stretched to reach the amplitude they
+    // claim and so are about six times steeper on a body this small; at
+    // the old figure the ground under the slab stood near vertical and the
+    // seam pinched on it, which is a fact about steep ground rather than
+    // about a slab, and `rough_planet_lod_boundaries_have_no_open_edges`
+    // is where steep ground belongs.
     let planet = Planet {
         radius: 20.0,
-        relief: 2.0,
+        relief: 0.35,
         lumps: 3.0,
         octaves: 4,
         overhang: 0.6,

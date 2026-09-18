@@ -302,3 +302,49 @@ fn measure_the_fbm_spread() {
         );
     }
 }
+/// What each planet in this repository's tests asks for, against the
+/// `MAX_SLOPE` the mesher can close. A body over the line has every term
+/// scaled back; the harness planet is well under it.
+#[test]
+#[ignore]
+fn measure_the_slope_bound_on_each_test_planet() {
+    use crate::biome::Shape;
+    for (name, s) in [
+        (
+            "harness 1000 km",
+            Shape {
+                relief: 8000.0,
+                lumps: 12.0,
+                octaves: 18,
+                seed: 7,
+                radius: 1.0e6,
+            },
+        ),
+        (
+            "rough test ball",
+            Shape {
+                relief: 4.0,
+                lumps: 6.0,
+                octaves: 6,
+                seed: 7,
+                radius: 20.0,
+            },
+        ),
+        (
+            "slab test ball",
+            Shape {
+                relief: 4.0,
+                lumps: 3.0,
+                octaves: 3,
+                seed: 1,
+                radius: 100.0,
+            },
+        ),
+    ] {
+        println!(
+            "{name}: relief/radius {:.4}, slope bound {:.3}",
+            s.relief / s.radius,
+            s.slope()
+        );
+    }
+}

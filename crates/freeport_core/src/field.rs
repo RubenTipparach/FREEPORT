@@ -183,14 +183,22 @@ impl Planet {
     /// The relief at a direction, metres over the mean radius, sites
     /// applied, and how much of the overhang is kept there. On a levelled
     /// site the relief is the site's height and the noise is not asked.
+    ///
+    /// The relief itself is `biome::Shape::height`, which is a few terms
+    /// of different characters rather than one fractal, and
+    /// `sampling.wgsl` transcribes that function so the mesher's own
+    /// samples and this one are the same ground.
     pub fn surface(&self, dir: DVec3) -> (f64, f64) {
         let (bias, keep) = self.surface_blend(dir);
         if keep == 0.0 {
             return (bias, keep);
         }
-        let relief =
-            (fbm3(dir * self.lumps, self.seed, self.octaves) * 2.0 - 1.0) * self.relief * 0.5;
-        (bias + relief * keep, keep)
+        (bias + self.shape().height(dir) * keep, keep)
+    }
+
+    /// The terms this planet's relief is made of.
+    pub fn shape(&self) -> crate::biome::Shape {
+        crate::biome::Shape::of(self)
     }
 }
 
@@ -271,11 +279,13 @@ impl Planet {
         (value.abs() > (1.0 + relief + carve) * reach + roundoff).then_some(value > 0.0)
     }
 
-    /// The radii the surface stays between: the mean less and plus half the
-    /// relief and half the overhang.
+    /// The radii the surface stays between: what the relief's own terms can
+    /// reach, and half the overhang either side of that. A site levels the
+    /// ground to a height the relief already allowed, so it widens nothing.
     pub fn band(&self) -> (f64, f64) {
-        let reach = self.relief * 0.5 + self.overhang * 0.5;
-        (self.radius - reach, self.radius + reach)
+        let (floor, top) = self.shape().band();
+        let carve = self.overhang * 0.5;
+        (floor - carve, top + carve)
     }
 }
 
@@ -294,8 +304,7 @@ impl Planet {
     /// keeps towns further apart than a site reaches), so the worst site
     /// bounds them all.
     fn steepest(&self) -> f64 {
-        let octaves = self.octaves.max(1) as f64;
-        let relief = self.relief * NOISE_SLOPE * self.lumps * octaves / self.radius;
+        let relief = self.shape().slope();
         let carve = if self.ledge > 0.0 {
             self.overhang * NOISE_SLOPE / self.ledge
         } else {
@@ -702,7 +711,26 @@ mod tests {
             seed: 1,
             sites: vec![],
         };
-        assert_eq!(planet.band(), (97.5, 102.5));
+        // The band's INVARIANT rather than its arithmetic: every direction's
+        // ground is inside it, and it is not so wide that ruling is
+        // pointless. The pair itself moved when the relief became a few
+        // composed terms rather than one fractal, and a pin on the pair
+        // would have read as a defect when what changed was the planet.
+        let (floor, top) = planet.band();
+        assert!(floor < planet.radius && top > planet.radius);
+        assert!(
+            top - floor < planet.relief * 2.0 + planet.overhang * 2.0,
+            "the band {floor} to {top} is wider than the relief can reach"
+        );
+        for i in 0..2000 {
+            let t = i as f64 * 0.618;
+            let d = DVec3::new(t.sin(), (t * 0.37).cos(), (t * 1.3).sin()).normalize();
+            let r = planet.radius + planet.surface(d).0;
+            assert!(
+                (floor..=top).contains(&r),
+                "ground at {r} is outside the band {floor} to {top}"
+            );
+        }
         let deep = (
             DVec3::new(-10.0, -10.0, -10.0),
             DVec3::new(10.0, 10.0, 10.0),

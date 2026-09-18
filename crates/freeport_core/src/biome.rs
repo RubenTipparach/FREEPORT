@@ -44,17 +44,30 @@ mod freq {
     pub const BELT: f64 = 0.44;
     pub const RIDGE: f64 = 1.15;
     pub const HILLS: f64 = 3.1;
+    /// A channel network is cut at the size of a VALLEY rather than of a
+    /// continent: at the planet's own twelve lumps this is a base
+    /// wavelength of about two hundred kilometres, which its five octaves
+    /// take down to thirteen, so a gorge is a feature of a landscape
+    /// rather than a crack across a hemisphere.
     pub const CHANNEL: f64 = 2.4;
     pub const CLIMATE: f64 = 0.7;
 }
 
-/// A gorge's own depth and half width, metres, which are ABSOLUTE rather
-/// than shares of the relief: a river is the size a river is whatever the
-/// planet's mountains are worth, and on a world of eight kilometres of
-/// relief a channel written as a share of that would be a rift nobody
-/// could walk out of.
+/// A gorge's own depth and half width, metres. They are ABSOLUTE rather
+/// than shares of the relief, because a gorge is the size a gorge is
+/// whatever the planet's mountains are worth: written as a share of eight
+/// kilometres it would be a rift nobody could walk out of.
+///
+/// CAPPED by the planet's own relief, which the first cut was not, and a
+/// test planet said so at once: a hundred metre ball with four metres of
+/// relief was handed a thirty four metre gorge, which is most of the way
+/// to its centre, and the mesher pinched on the wall of it. An absolute
+/// number is a number that is wrong on some body, so it is a number with
+/// a share beside it.
 const GORGE_DEEP: f64 = 34.0;
 const GORGE_WIDE: f64 = 90.0;
+/// The most of a planet's own relief a gorge may take.
+const GORGE_SHARE: f64 = 0.25;
 
 /// How near a channel's own middle the gorge is cut, as a share of the
 /// channel function's top: the network is a ridge of the channel noise and
@@ -105,6 +118,20 @@ fn signed(v: f64) -> f64 {
 /// The slope a stretch multiplies by, which the bound has to carry.
 const STRETCH: f64 = 1.0 / (FBM_SD * FBM_REACH);
 
+/// The steepest ground this model will make, metres of rise per metre
+/// along the surface, before every term is scaled back to fit.
+///
+/// MEASURED against the mesher rather than chosen: the dual contoured
+/// seam closes on a bound of 18.7 (the rough test ball as it was) and
+/// does not on 94.7 (the same ball once the terms were stretched), which
+/// came back as 32 open edges and 81 pinches. A body whose own numbers
+/// ask for more than this is asking for ground no mesher can close, and
+/// the honest answer is to give it less rather than to leave a hole in
+/// it. The thousand kilometre planet asks for 9.95 and is untouched; it
+/// is the twenty metre balls with a fifth of their radius in relief, a
+/// planetoid rather than a planet, that this catches.
+const MAX_SLOPE: f64 = 20.0;
+
 /// How much steeper a RIDGED term is than the noise under it. `1 - |2n-1|`
 /// doubles the slope, and the power sharpening its crest is at its own
 /// steepest at the crest, where it multiplies by the exponent.
@@ -135,6 +162,62 @@ pub struct Shape {
     pub radius: f64,
 }
 
+/// How many octaves each term is summed over, and the seed each is salted
+/// with. They are HERE, in one table, because `sampling.wgsl` transcribes
+/// this function and a term whose octave count or salt differed between
+/// the two would be ground the walker stands on and the mesher never drew.
+/// The counts are small on purpose: these terms are what a planet looks
+/// like from orbit, and the metre of detail under the feet is the hills
+/// term, which keeps the planet's own octaves and the sampler's early out.
+mod oct {
+    pub const CONTINENT: u32 = 4;
+    pub const BELT: u32 = 4;
+    pub const RIDGE: u32 = 5;
+    pub const CHANNEL: u32 = 5;
+    pub const CLIMATE: u32 = 4;
+}
+
+impl Shape {
+    /// A term's octaves, never finer than the PLANET's own. The planet's
+    /// `octaves` is what ties its detail to its size (`log2(2 pi R / lumps
+    /// / 2 m)`, eighteen on the thousand kilometre world and three on a
+    /// twenty metre test ball), and a term that ignored it would put
+    /// features under the lattice's own cell on any small body: the first
+    /// cut of this handed a four metre test planet five octaves of channel
+    /// at two and a half times its base frequency, which is a one metre
+    /// slot four cells wide, and the mesher came back with 32 open edges,
+    /// 81 pinches and 1,192 triangles facing in. A term is as fine as the
+    /// body says and no finer.
+    fn oct(&self, want: u32) -> u32 {
+        want.min(self.octaves.max(1))
+    }
+}
+
+mod salt {
+    pub const CONTINENT: u32 = 0x00C0;
+    pub const BELT: u32 = 0x8E17;
+    pub const RIDGE: u32 = 5;
+    pub const HILLS: u32 = 0x51ED;
+    pub const CHANNEL: u32 = 5;
+    pub const WARM: u32 = 0x7A31;
+    pub const DAMP: u32 = 0x1D55;
+}
+
+impl Shape {
+    /// A planet's own numbers, read off it, so a body's size and roughness
+    /// are written down once and the chart, the mesher and the walker all
+    /// ask the same shape.
+    pub fn of(planet: &crate::field::Planet) -> Shape {
+        Shape {
+            relief: planet.relief,
+            lumps: planet.lumps,
+            octaves: planet.octaves,
+            seed: planet.seed,
+            radius: planet.radius,
+        }
+    }
+}
+
 /// A noise in nought to one, on its own seed offset.
 fn layer(dir: DVec3, f: f64, seed: u32, salt: u32, octaves: u32) -> f64 {
     fbm3(dir * f, seed.wrapping_add(salt), octaves)
@@ -158,6 +241,21 @@ impl Shape {
     /// a range is pushed up through it; hills ride everything; and a
     /// channel network cuts down through whatever is above the sea.
     pub fn height(&self, dir: DVec3) -> f64 {
+        self.raw_height(dir) * self.gain()
+    }
+
+    /// How far every term is scaled back so this body's ground stays
+    /// inside `MAX_SLOPE`. One on any planet worth the name.
+    pub fn gain(&self) -> f64 {
+        let raw = self.raw_slope();
+        if raw <= MAX_SLOPE {
+            1.0
+        } else {
+            MAX_SLOPE / raw
+        }
+    }
+
+    fn raw_height(&self, dir: DVec3) -> f64 {
         let half = self.relief * 0.5;
         let continent = signed(self.continent(dir)) * half * share::CONTINENT;
         let mountain = self.mountain(dir) * half * share::MOUNTAIN;
@@ -165,7 +263,7 @@ impl Shape {
             dir,
             self.lumps * freq::HILLS,
             self.seed,
-            0x51ED,
+            salt::HILLS,
             self.octaves,
         )) * half
             * share::HILLS;
@@ -179,8 +277,8 @@ impl Shape {
             dir,
             self.lumps * freq::CONTINENT,
             self.seed,
-            0x00C0,
-            self.octaves.min(6),
+            salt::CONTINENT,
+            self.oct(oct::CONTINENT),
         )
     }
 
@@ -191,8 +289,8 @@ impl Shape {
             dir,
             self.lumps * freq::BELT,
             self.seed,
-            0x8E17,
-            self.octaves.min(5),
+            salt::BELT,
+            self.oct(oct::BELT),
         );
         let weight = smoothstep(BELT_FROM, BELT_TO, belt);
         if weight <= 0.0 {
@@ -202,8 +300,8 @@ impl Shape {
             dir,
             self.lumps * freq::RIDGE,
             self.seed,
-            0x2B93,
-            self.octaves.min(8),
+            salt::RIDGE,
+            self.oct(oct::RIDGE),
         ));
         crest * weight
     }
@@ -215,8 +313,8 @@ impl Shape {
             dir,
             self.lumps * freq::CHANNEL,
             self.seed,
-            0x3F17,
-            self.octaves.min(7),
+            salt::CHANNEL,
+            self.oct(oct::CHANNEL),
         );
         let fold = 1.0 - signed(n).abs();
         smoothstep(CHANNEL_LIP, 1.0, fold.clamp(0.0, 1.0))
@@ -243,10 +341,15 @@ impl Shape {
         if over <= 0.0 {
             return 0.0;
         }
-        let reach = smoothstep(0.0, self.relief * 0.04 + GORGE_DEEP, over);
+        let deep = self.gorge();
+        let reach = smoothstep(0.0, self.relief * 0.04 + deep, over);
         let broad = self.relief * 0.5 * share::VALLEY * c;
-        let gorge = GORGE_DEEP * c;
-        (broad + gorge) * reach
+        (broad + deep * c) * reach
+    }
+
+    /// How deep a gorge cuts on this body, metres.
+    fn gorge(&self) -> f64 {
+        GORGE_DEEP.min(self.relief * GORGE_SHARE)
     }
 
     /// Where the sea stands in the same metres `height` answers in. The
@@ -264,6 +367,10 @@ impl Shape {
     /// chunk a few samples it did not need, and an understated one rules a
     /// chunk empty that the surface crosses, which is a hole in the world.
     pub fn slope(&self) -> f64 {
+        self.raw_slope() * self.gain()
+    }
+
+    fn raw_slope(&self) -> f64 {
         let half = self.relief * 0.5;
         let per = |amp: f64, f: f64, octaves: u32| {
             amp * NOISE_SLOPE * STRETCH * self.lumps * f * octaves.max(1) as f64 / self.radius
@@ -271,7 +378,7 @@ impl Shape {
         let continent = per(
             half * share::CONTINENT,
             freq::CONTINENT,
-            self.octaves.min(6),
+            self.oct(oct::CONTINENT),
         );
         // A belt's own edge and the crest inside it both move; the product
         // is bounded by the sum of each moving at its own rate.
@@ -279,21 +386,21 @@ impl Shape {
             * NOISE_SLOPE
             * self.lumps
             * freq::BELT
-            * self.octaves.min(5) as f64
+            * self.oct(oct::BELT) as f64
             / self.radius;
         // The channel's own fold is stretched too, and its lip is a
         // smoothstep across what is left of a cell.
         let crest = per(
             half * share::MOUNTAIN * RIDGE_SLOPE,
             freq::RIDGE,
-            self.octaves.min(8),
+            self.oct(oct::RIDGE),
         );
         let hills = per(half * share::HILLS, freq::HILLS, self.octaves);
         // The gorge is the steep one: its whole depth over the width of
         // its own lip, which is a fraction of one channel cell.
         let channel_cell = self.radius / (self.lumps * freq::CHANNEL * STRETCH).max(1e-9);
         let lip = (channel_cell * (1.0 - CHANNEL_LIP)).max(GORGE_WIDE);
-        let cut = (half * share::VALLEY + GORGE_DEEP) * 1.5 / lip;
+        let cut = (half * share::VALLEY + self.gorge()) * 1.5 / lip;
         continent + belt_edge + crest + hills + cut
     }
 
@@ -302,9 +409,10 @@ impl Shape {
     /// worst cases and the band is wider than the ground ever is: the cost
     /// is chunks that are sampled and found empty, never a hole.
     pub fn band(&self) -> (f64, f64) {
-        let half = self.relief * 0.5;
+        let half = self.relief * 0.5 * self.gain();
         let up = half * (share::CONTINENT + share::MOUNTAIN + share::HILLS);
-        let down = half * (share::CONTINENT + share::HILLS + share::VALLEY) + GORGE_DEEP;
+        let down =
+            half * (share::CONTINENT + share::HILLS + share::VALLEY) + self.gorge() * self.gain();
         (self.radius - down, self.radius + up)
     }
 }
@@ -351,8 +459,8 @@ impl Shape {
             dir,
             self.lumps * freq::CLIMATE,
             self.seed,
-            0x7A31,
-            self.octaves.min(4),
+            salt::WARM,
+            self.oct(oct::CLIMATE),
         ) * 2.0
             - 1.0)
             * WANDER;
@@ -362,8 +470,8 @@ impl Shape {
             dir,
             self.lumps * freq::CLIMATE * 1.7,
             self.seed,
-            0x1D55,
-            self.octaves.min(5),
+            salt::DAMP,
+            self.oct(oct::CLIMATE),
         );
         // How far inland: the continent term over the sea's own level is
         // the cheapest measure of it there is, and it is already computed
