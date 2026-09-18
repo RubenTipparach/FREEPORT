@@ -371,9 +371,26 @@ equator's snow line near five thousand metres and a temperate mountain's
 near two and a half thousand. A planet with five hundred metres of relief
 then has snow by LATITUDE alone, which is also right.
 
-Of 8,000 directions this planet grows 2,609 forest, 1,935 ocean, 1,854
-snow, 1,031 grass, 604 desert, 346 savanna, 180 ice, 38 marsh and 5
-beach.
+**And the body is MOSTLY WATER, which is a percentile and not a
+number.** A sea level means nothing on its own: it is where it falls in
+the body's own height distribution. This planet's relief spans -2,920 to
+4,358 m with its median at +351, so a sea 400 m UNDER the mean radius
+left the world 26.3% water, which is a continent with lakes in it. At
++820 m it is 65%, an ocean with continents in it, and
+`the_harness_planet_is_mostly_water` holds the half the owner asked for
+rather than the constant that happens to give it.
+
+Of 8,000 directions this planet grows 4,668 ocean, 1,307 forest, 544
+snow, 530 ice, 433 grass, 345 desert, 131 savanna, 37 marsh and 5 beach.
+
+**Nothing is BUILT on frozen ground.** `Climate::frozen` is the one
+place the freezing line is read, so the ice a chart paints, the ground a
+town may stand on and the ground a road may cross are one answer: no
+city on a glacier, and no road over one. A latitude would be a second
+number to get wrong and would still allow a city on an equatorial ice
+cap. Measured on the chart: every one of the 160 cities and every road
+texel is inside 65 degrees of the equator, where the caps run from about
+70.
 
 **`sampling.wgsl` transcribes `landform` and `cut`, and the GPU is why
 the split is where it is.** Terrain sampling is a compute pass, so a
@@ -820,8 +837,9 @@ architectural materials retain the normal crease rule.
   is built, and the machinery went with it rather than sitting there for a
   caller that no longer exists.
 - **The harness has no flag for which world**, because there is one.
-  `freeport_app` is the planet (`RADIUS` 1,000,000 m, the sea 400 m under
-  the mean radius, eleven levels of 0.25 m to 256 m cells), eight towns of
+  `freeport_app` is the planet (`RADIUS` 1,000,000 m, the sea 820 m OVER
+  the mean radius, which is what leaves it 65% water, eleven levels of
+  0.25 m to 256 m cells), eight towns of
   80 m, and the walker on a street of the port facing the middle of town. F
   swaps to the fly camera from wherever the walker is and back. Flight uses
   quaternion orientation: Q/E rolls, Space/Ctrl moves along camera up/down,
@@ -1078,11 +1096,12 @@ territories meet. One search labels the whole planet, and the border rule
 gets three things for free that a road per pair has to be told:
 
 - **Two towns on different continents are never joined**, because no
-  chain of land waypoints runs between them. 152 of this planet's 160
-  towns are on the network; the other eight are on islands.
+  chain of land waypoints runs between them. 123 of this planet's 160
+  towns are on the network and the other 37 are on islands, which is what
+  an ocean world looks like: at 26% water it was 152 of 160.
 - **A road round a bay is shorter than a road across it**, without
   anything knowing what a bay is.
-- **The network is SPARSE and it is planar looking.** 336 roads for 160
+- **The network is SPARSE and it is planar looking.** 155 roads for 160
   towns, against 12,720 pairs. A town ringed by others is joined to its
   ring and to nothing past it, which is a road network rather than a
   spiderweb, and no rule says how many roads a town may have.
@@ -1133,7 +1152,11 @@ checkout nobody has baked runnable, the same rule a missing texture set
 follows.
 
 **The roads are on the CHART**, drawn along their own lines at half a
-texel a step so the network cannot come out dotted, in `Kind::Road`.
+texel a step so the network cannot come out dotted, in `Kind::Road`, and
+the CITIES are stamped over them. Painted the other way round each road
+erased the town it serves, because every road ends at a town's own
+centre: 37 city texels survived of 160, and the 123 missing were exactly
+the towns a road reaches.
 That is six kilometres of road a texel on this body, which is the same
 honest lie a city one texel across is: what a chart is for is saying that
 there is a road and where it runs.
@@ -1150,8 +1173,8 @@ generalising a `Site` from a circle to an ARC so the corridor under it is
 levelled the way a town's ground is, plus the same streaming a far town
 still waits on.
 
-Measured on this planet: 160 towns and 336 roads over 134,464 km joining
-152 of them, baked in 29.4 s and READ in 14 ms, against 7,200 ms to plan
+Measured on this planet: 160 towns and 155 roads over 36,716 km joining
+123 of them, baked in 23.7 s and READ in 10 ms, against 7,200 ms to plan
 the towns alone.
 
 ## The sets on the field, and the walker on it, in Bevy
@@ -1562,7 +1585,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 105, the core, about 53 s
+cargo test -p freeport_core                       # 107, the core, about 53 s
 cargo test -p freeport_app                        # 43, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
@@ -1625,11 +1648,13 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 105 tests in about 53 s, and `freeport_app` 43 in 15. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 107 tests in about 53 s, and `freeport_app` 43 in 12. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
-- The planet is 1,000,000 m of radius, two thousand kilometres across, with
-  8,000 m of relief on 18 octaves and the sea 400 m under the mean radius.
+- The planet is 1,000,000 m of radius, two thousand kilometres across,
+  with 8,000 m of relief on 18 octaves and the sea 820 m OVER the mean
+  radius. Its heights span -2,920 to 4,358 m with a median of +351, so
+  that sea leaves it 65.0% water; at -400 m, where it was, 26.3%.
 - The towns, on that planet: eight planned in 155 ms (four thousand
   candidates on a golden spiral, the port first), and 699 buildings and
   7,744 pieces of street MODELLED in 30 ms into 192,646 triangles, 6,635
@@ -1697,11 +1722,13 @@ Numbers in the commit message. What is measured so far:
   radii up: 18.06% of pixels moved by more than 8 of 255, worst 180.
 - The towns: 160 planned in 7.2 s from 20,000 candidates, 8 built into
   2,852,924 triangles, 147,157 boxes and 1,346 lamps in 371 ms, and 159
-  city texels on the chart. READ off a baked atlas instead they are 14 ms,
+  city texels on the chart. READ off a baked atlas instead they are 10 ms,
   which is the whole argument for baking a plan that never changes.
-- The roads: 336 of them over 134,464 km joining 152 of the 160 towns,
+- The roads: 155 of them over 36,716 km joining 123 of the 160 towns,
   routed over 125,664 waypoints ten kilometres apart in one multi source
-  Dijkstra. The bake is 29.4 s, and was 551 s while every one of those
+  Dijkstra. It was 336 over 134,464 km joining 152 while the body was a
+  quarter water: an ocean world strands a third of its towns on islands.
+  The bake is 23.7 s, and was 551 s while every one of those
   marches walked all 160 town sites instead of the nought or one
   `Planet::around` leaves at its own direction. The atlas is 1.7 MB of
   JSON, which is placements and road lines and not one triangle.

@@ -93,7 +93,15 @@ const RELIEF: f64 = 8_000.0;
 const LUMPS: f64 = 12.0;
 const OCTAVES: u32 = 18;
 /// The sea's level, metres under the mean radius.
-const SEA: f64 = RADIUS - 400.0;
+/// The sea's radius. MEASURED rather than picked: the owner's ask is a
+/// body at least half water, and a sea level is a percentile of the
+/// body's own height distribution, not a number that means anything on
+/// its own. Over 40,000 directions of this planet the relief spans
+/// -2,920 to 4,358 m and its median is +351, so a sea at -400 m left the
+/// world 26.3% water, which is a continent with lakes in it. At +820 m
+/// it is 65%, which is an ocean world with continents in it, and
+/// `the_harness_planet_is_mostly_water` holds the half the ask names.
+const SEA: f64 = RADIUS + 820.0;
 /// Towns: how many, and how far across each.
 /// How many towns are PLANNED on the planet. Every one of them levels its
 /// own ground and is painted on the body's chart, so a world with this

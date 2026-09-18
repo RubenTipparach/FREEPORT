@@ -186,6 +186,7 @@ pub fn plan(planet: &Planet, sea: f64, radius: f64, count: usize, seed: u32) -> 
     // was empty. A city sits wherever the ground is level, and level
     // ground at two thousand metres is a plateau.
     let (low, high) = (3.0, (planet.relief * 0.3).max(40.0));
+    let shape = planet.shape();
     let mut cands: Vec<(DVec3, f64)> = Vec::new();
     for i in 0..CANDIDATES {
         let y = 1.0 - 2.0 * (i as f64 + 0.5) / CANDIDATES as f64;
@@ -194,6 +195,14 @@ pub fn plan(planet: &Planet, sea: f64, radius: f64, count: usize, seed: u32) -> 
         let dir = DVec3::new(s * a.cos(), y, s * a.sin());
         let h = surface_radius(planet, dir) - sea;
         if !(low..=high).contains(&h) {
+            continue;
+        }
+        // Nobody builds a city on an ICE CAP. The gate is the climate's
+        // own `frozen`, which is the same threshold that paints the ice
+        // and the snow, so a town can never stand on ground its own chart
+        // draws white. A latitude would be a second number to get wrong,
+        // and would still allow a city on a glacier at the equator.
+        if shape.climate(dir, h).frozen() {
             continue;
         }
         let (east, north) = frame_at(dir);

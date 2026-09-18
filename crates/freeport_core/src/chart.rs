@@ -182,8 +182,12 @@ impl Chart {
             ..planet.clone()
         };
         let mut chart = Chart::bake_bare(&bare, sea, w, h);
-        chart.stamp(planet, sea);
+        // The roads FIRST and the cities over them. Every road ends at a
+        // town's own centre, so painted the other way round each road
+        // erased the city it serves: 37 city texels survived of 160, and
+        // the 123 missing were exactly the towns a road reaches.
         chart.lay_roads(planet, sea, roads);
+        chart.stamp(planet, sea);
         chart
     }
 

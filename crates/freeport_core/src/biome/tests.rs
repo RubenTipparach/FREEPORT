@@ -348,3 +348,116 @@ fn measure_the_slope_bound_on_each_test_planet() {
         );
     }
 }
+
+/// The harness planet as the app builds it, so a rule about THAT body is
+/// held where the field is rather than where the window is.
+fn harness() -> (crate::field::Planet, f64) {
+    (
+        crate::field::Planet {
+            radius: 1_000_000.0,
+            relief: 8_000.0,
+            lumps: 12.0,
+            octaves: 18,
+            overhang: 3.0,
+            ledge: 12.0,
+            seed: 7,
+            sites: vec![],
+        },
+        // `freeport_app`'s own SEA. The two are one number in two crates
+        // and this test is what keeps them one: the core cannot read the
+        // app's constant, so it asserts the property the constant is set
+        // for, and a sea moved there fails here.
+        1_000_000.0 + 820.0,
+    )
+}
+
+/// An even spread of directions over a body: the golden angle spiral,
+/// which is what every other sampler here uses.
+fn spread(n: usize) -> impl Iterator<Item = DVec3> {
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    (0..n).map(move |i| {
+        let y = 1.0 - 2.0 * (i as f64 + 0.5) / n as f64;
+        let s = (1.0 - y * y).max(0.0).sqrt();
+        let a = golden * i as f64;
+        DVec3::new(s * a.cos(), y, s * a.sin())
+    })
+}
+
+/// The harness planet is MOSTLY WATER, which is the owner's ask: at least
+/// half of it under the sea.
+///
+/// A sea level is a percentile of the body's own heights and not a number
+/// that means anything by itself. The relief here spans -2,920 to 4,358 m
+/// with its median at +351, so the sea at -400 m left the world 26.3%
+/// water: a continent with lakes in it rather than an ocean with
+/// continents in it.
+#[test]
+fn the_harness_planet_is_mostly_water() {
+    let (planet, sea) = harness();
+    let shape = Shape::of(&planet);
+    let n = 20_000;
+    let wet = spread(n)
+        .filter(|d| planet.radius + shape.height(*d) < sea)
+        .count();
+    let share = wet as f64 / n as f64;
+    println!(
+        "{:.1}% of the harness planet is under the sea",
+        share * 100.0
+    );
+    assert!(
+        share >= 0.5,
+        "the body is {:.1}% water, and the ask is at least half",
+        share * 100.0
+    );
+    // And not ALL water: a world with no land is not a world to land on.
+    assert!(
+        share < 0.9,
+        "the body is {:.1}% water, which is a sea with nothing in it",
+        share * 100.0
+    );
+    // What the body is MADE of, for the record: a sea level is the one
+    // number that moves every one of these at once.
+    let mut count = std::collections::BTreeMap::new();
+    for d in spread(8_000) {
+        let over = planet.radius + shape.height(d) - sea;
+        *count
+            .entry(shape.climate(d, over).kind(over, 0.0).name())
+            .or_insert(0usize) += 1;
+    }
+    let mut by_size: Vec<_> = count.into_iter().collect();
+    by_size.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    println!("of 8,000 directions: {by_size:?}");
+}
+
+/// No city stands on FROZEN ground. The ice caps are what the owner
+/// pointed at, and the gate is the climate's own `frozen`, so a town can
+/// never stand where the chart paints snow or ice.
+#[test]
+fn no_town_stands_on_the_ice() {
+    let (mut planet, sea) = harness();
+    // A smaller body, so the plan is a test and not a bake, with the same
+    // relief in proportion and the same sea level as a share of it.
+    planet.radius = 60_000.0;
+    planet.relief = 900.0;
+    planet.octaves = 9;
+    let sea = planet.radius + (sea - 1_000_000.0) * 900.0 / 8_000.0;
+    let shape = Shape::of(&planet);
+    let towns = crate::town::plan(&planet, sea, 80.0, 16, 5);
+    assert!(!towns.is_empty(), "the test body grew no town at all");
+    let mut coldest: f64 = 1.0;
+    for t in &towns {
+        let over = planet.radius + t.h - sea;
+        let climate = shape.climate(t.dir, over);
+        coldest = coldest.min(climate.temp);
+        assert!(
+            !climate.frozen(),
+            "a town stands on frozen ground at {:.2} temp, {:.0} m over the sea",
+            climate.temp,
+            over
+        );
+    }
+    println!(
+        "{} towns, the coldest at {coldest:.2} against a freezing line of {FREEZING}",
+        towns.len()
+    );
+}

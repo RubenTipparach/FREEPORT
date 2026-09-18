@@ -638,18 +638,30 @@ const SWAMPY: f64 = 0.78;
 const WOODED: f64 = 0.52;
 
 impl Climate {
+    /// Whether the ground here is FROZEN: the ice cap, and anything high
+    /// enough that the lapse rate has taken it under the same line.
+    ///
+    /// The one place the threshold is read, so the ice a chart paints,
+    /// the ground a town may stand on and the ground a road may cross are
+    /// the same answer. Nobody builds a city on a glacier, and a second
+    /// copy of this number somewhere would be a city the map draws as
+    /// snow.
+    pub fn frozen(&self) -> bool {
+        self.temp < FREEZING
+    }
+
     /// What is on the ground, given how far over the sea it stands and how
     /// steep it is (nought flat, one a wall). Steep ground is rock at any
     /// climate, because nothing holds on a cliff.
     pub fn kind(&self, over_sea: f64, slope: f64) -> Kind {
         if over_sea < 0.0 {
-            return if self.temp < FREEZING {
+            return if self.frozen() {
                 Kind::Ice
             } else {
                 Kind::Ocean
             };
         }
-        if self.temp < FREEZING {
+        if self.frozen() {
             return Kind::Snow;
         }
         if slope > 0.55 {

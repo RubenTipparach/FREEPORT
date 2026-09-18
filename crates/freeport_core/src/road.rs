@@ -91,6 +91,11 @@ struct Node {
     dir: DVec3,
     /// Metres over the sea, negative under it.
     over: f64,
+    /// Whether the ground here is under the ice line. A road does not
+    /// cross a glacier, and without this a route between two temperate
+    /// towns takes the short way OVER the cap, which is what put a
+    /// network across both poles of the first baked planet.
+    frozen: bool,
 }
 
 /// The great circle angle between two directions, radians. Through the
@@ -149,6 +154,7 @@ fn waypoints(planet: &Planet, sea: f64, spacing: f64) -> Vec<Node> {
     // neighbour, and the search came back with nought roads.
     let want = (4.0 * std::f64::consts::PI / (spacing * spacing)) as usize;
     let count = want.clamp(2, MOST_NODES);
+    let shape = planet.shape();
     let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
     (0..count)
         .map(|i| {
@@ -159,9 +165,11 @@ fn waypoints(planet: &Planet, sea: f64, spacing: f64) -> Vec<Node> {
             // A march is along ONE direction, so the sites that can reach
             // any of its samples are the sites that reach that direction.
             let here = planet.around(dir, 0.0);
+            let over = surface_radius(&here, dir) - sea;
             Node {
                 dir,
-                over: surface_radius(&here, dir) - sea,
+                over,
+                frozen: shape.climate(dir, over).frozen(),
             }
         })
         .collect()
@@ -232,7 +240,7 @@ fn neighbours(nodes: &[Node], spacing: f64) -> Vec<Vec<u32>> {
 /// What an edge costs, or nothing where a road cannot go: into the sea,
 /// or up a grade no road is built at.
 fn cost(a: &Node, b: &Node, radius: f64) -> Option<f64> {
-    if a.over < DRY || b.over < DRY {
+    if a.over < DRY || b.over < DRY || a.frozen || b.frozen {
         return None;
     }
     let run = arc(a.dir, b.dir) * radius;
@@ -300,7 +308,7 @@ fn spread(nodes: &[Node], near: &[Vec<u32>], seeds: &[usize], radius: f64) -> Ve
     ];
     let mut queue: BinaryHeap<Reverse<Step>> = BinaryHeap::new();
     for (t, &n) in seeds.iter().enumerate() {
-        if nodes[n].over < DRY {
+        if nodes[n].over < DRY || nodes[n].frozen {
             continue;
         }
         reach[n] = Reach {
@@ -452,7 +460,7 @@ fn walk_back(field: &[Reach], mut at: usize) -> Vec<usize> {
 fn seed_node(nodes: &[Node], dir: DVec3) -> usize {
     let mut best = (f64::INFINITY, 0);
     for (i, n) in nodes.iter().enumerate() {
-        if n.over < DRY {
+        if n.over < DRY || n.frozen {
             continue;
         }
         let d = (n.dir - dir).length();
