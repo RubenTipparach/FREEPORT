@@ -11,6 +11,7 @@
 //! tenebris's `water.yaml`.
 
 use bevy::asset::{embedded_asset, RenderAssetUsages};
+use bevy::math::DVec3;
 use bevy::mesh::PrimitiveTopology;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
@@ -104,7 +105,7 @@ pub fn sheet_ext(sea: f64) -> WaterExt {
     let nits = freeport_core::atmos::NITS as f32;
     WaterExt {
         centre: Vec4::new(0.0, 0.0, 0.0, sea as f32),
-        wave: Vec4::new(0.75, 1.5, 0.65, 0.5),
+        wave: Vec4::new(0.75, RIPPLE, 0.65, 0.5),
         deep: Vec4::new(0.02, 0.10, 0.22, 2.0),
         // The three the shader takes through the camera's exposure are in
         // CANDELA, `atmos::NITS` times the colour they are authored as, or
@@ -146,9 +147,25 @@ pub fn water_material(materials: &mut Assets<WaterMaterial>, sea: f64) -> Handle
     })
 }
 
+/// The ripple coordinate's scale, noise cells a metre, and the only place
+/// it is written down: `sheet_ext` hands it to the shader in `wave.y` and
+/// this works the cell out with it in `f64`.
+///
+/// Two thirds of a metre a cell, which is what a ripple on this sea is.
+pub const RIPPLE: f32 = 1.35;
+
 /// A chunk's sea surface as a Bevy mesh: the surface triangles only,
 /// vertices shared, normals the field's. None if nothing is drawn.
-pub fn to_sheet(m: &DcMesh) -> Option<Mesh> {
+///
+/// Every vertex also carries the chunk's own RIPPLE CELL and the fraction
+/// inside it, worked out here in `f64` from the chunk's planet relative
+/// corner. The shader adds the vertex's own offset and doubles the pair
+/// exactly per octave, so the sea's noise is continuous over a body two
+/// thousand kilometres across at the precision of the fraction. What it
+/// replaces is `world_position - centre` formed in the fragment out of a
+/// planet's radius held in one float: 6.25 cm steps on 0.67 m features,
+/// which is the pixelation.
+pub fn to_sheet(m: &DcMesh, corner: DVec3) -> Option<Mesh> {
     let mut indices: Vec<u32> = Vec::new();
     for (t, material) in m.indices.chunks(3).zip(&m.materials) {
         if *material == SURFACE {
@@ -158,6 +175,14 @@ pub fn to_sheet(m: &DcMesh) -> Option<Mesh> {
     if indices.is_empty() {
         return None;
     }
+    let base = corner * RIPPLE as f64;
+    let cell = base.floor();
+    let frac = (base - cell).as_vec3();
+    // A cell is an exact whole number in an f32 up to sixteen million, and
+    // a thousand kilometre planet at this scale reaches 1.35 million, which
+    // the shader's own two doublings take to 5.4 million.
+    let cell = cell.as_vec3();
+    let n = m.positions.len();
     Some(
         Mesh::new(
             PrimitiveTopology::TriangleList,
@@ -165,6 +190,12 @@ pub fn to_sheet(m: &DcMesh) -> Option<Mesh> {
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, m.positions.clone())
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, m.normals.clone())
+        .with_inserted_attribute(
+            Mesh::ATTRIBUTE_COLOR,
+            vec![[cell.x, cell.y, cell.z, 1.0]; n],
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[frac.x, frac.y]; n])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, vec![[frac.z, 0.0]; n])
         .with_inserted_indices(bevy::mesh::Indices::U32(indices)),
     )
 }

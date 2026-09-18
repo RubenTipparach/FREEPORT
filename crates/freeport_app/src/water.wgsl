@@ -17,12 +17,17 @@
     view_transformations::{position_world_to_clip, depth_ndc_to_view_z},
     prepass_utils::prepass_depth,
 }
-#import freeport::water::{fbm3, swell}
+#import freeport::water::{fbm3_at, swell}
 
 struct Water {
     // The planet's centre in the render frame; w the sea's radius.
     centre: vec4<f32>,
-    // x: time scale, y: ripple scale, z: wave steepness, w: swell amplitude.
+    // x: time scale, y: the RIPPLE COORDINATE's scale, cells a metre, and
+    // the whole of it: tenebris's own 0.9 inside its `fbm3` is folded in
+    // here so there is one number, and `water::RIPPLE` is that number on
+    // the CPU, which works the cell out in f64. Two would be two places
+    // to change it and a sea that pixelated again on the next tune.
+    // z: wave steepness, w: swell amplitude.
     wave: vec4<f32>,
     // rgb: the deep water's colour under the surface; w: swell frequency.
     deep: vec4<f32>,
@@ -59,10 +64,31 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var wp = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
     let q = wp.xyz - water.centre.xyz;
     let radial = normalize(q);
+    // The SWELL keeps the imprecise q on purpose: its wavelengths are tens
+    // of metres, so six centimetres of quantisation is a thousandth of a
+    // wave and nothing an eye can find. It is the RIPPLES, at two thirds
+    // of a metre, that the same six centimetres wrecks.
     wp = vec4<f32>(wp.xyz + radial * swell(q, water.wave, water.deep.w, globals.time), 1.0);
     out.world_position = wp;
     out.position = position_world_to_clip(wp.xyz);
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    // The ripple coordinate, as an exact cell and a fraction. The cell is
+    // the CHUNK's, worked out in f64 on the CPU and the same at all three
+    // corners of every triangle in it; the fraction carries this vertex's
+    // own offset inside the chunk, which is a few metres and exact, and
+    // interpolates across the triangle because it is affine in position.
+#ifdef VERTEX_COLORS
+    out.color = vertex.color;
+#endif
+#ifdef VERTEX_UVS_A
+    let inside = vertex.position * water.wave.y;
+#ifdef VERTEX_UVS_B
+    out.uv = vertex.uv + inside.xy;
+    out.uv_b = vec2<f32>(vertex.uv_b.x + inside.z, 0.0);
+#else
+    out.uv = vertex.uv + inside.xy;
+#endif
+#endif
 #ifdef VERTEX_OUTPUT_INSTANCE_INDEX
     out.instance_index = vertex.instance_index;
 #endif
@@ -71,16 +97,37 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    // The vertex COLOUR is not a colour on this surface: it carries the
+    // ripple cell, which is a whole number over a million. Bevy's standard
+    // material multiplies its base colour by the vertex colour, so handing
+    // it straight through drew the sea at a million times white, which is
+    // what the first render of this was: a blank sheet from the shore to
+    // the horizon. It is a channel this shader owns, so it is masked out
+    // before the standard material ever sees it.
+    var plain = in;
+#ifdef VERTEX_COLORS
+    plain.color = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+#endif
     let q = in.world_position.xyz - water.centre.xyz;
     let radial = normalize(q);
     let t = globals.time * water.wave.x;
-    let p = q * water.wave.y;
-    let h = fbm3(p, t);
+    // The ripple coordinate off the vertex: a cell the CPU worked out in
+    // f64 and a fraction, never `q * scale` formed here out of a planet's
+    // own radius held in one float.
+    var cell = vec3<f32>(0.0);
+    var frac = q * water.wave.y;
+#ifdef VERTEX_COLORS
+    cell = in.color.xyz;
+#ifdef VERTEX_UVS_B
+    frac = vec3<f32>(in.uv, in.uv_b.x);
+#endif
+#endif
+    let h = fbm3_at(cell, frac, t);
     let e = 0.08;
     var grad = vec3<f32>(
-        fbm3(p + vec3<f32>(e, 0.0, 0.0), t) - h,
-        fbm3(p + vec3<f32>(0.0, e, 0.0), t) - h,
-        fbm3(p + vec3<f32>(0.0, 0.0, e), t) - h,
+        fbm3_at(cell, frac + vec3<f32>(e, 0.0, 0.0), t) - h,
+        fbm3_at(cell, frac + vec3<f32>(0.0, e, 0.0), t) - h,
+        fbm3_at(cell, frac + vec3<f32>(0.0, 0.0, e), t) - h,
     ) * 12.5;
     grad = grad - radial * dot(grad, radial);
     let steep = length(grad);
@@ -118,7 +165,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let thickness = 2.0;
 #endif
 
-    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    var pbr_input = pbr_input_from_standard_material(plain, is_front);
     pbr_input.N = n;
     pbr_input.material.thickness = thickness;
     var color = apply_pbr_lighting(pbr_input);

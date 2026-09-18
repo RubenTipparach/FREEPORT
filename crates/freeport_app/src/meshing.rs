@@ -118,7 +118,10 @@ impl Job {
         }
         let water = self.world.water(&field);
         if water.solid(lo, hi).is_none() {
-            done.sheet = to_sheet(&contour(&water, &self.lat, self.id, &*self.rings));
+            done.sheet = to_sheet(
+                &contour(&water, &self.lat, self.id, &*self.rings),
+                self.id.corner(&self.lat),
+            );
             done.triangles += done
                 .sheet
                 .as_ref()
