@@ -31,6 +31,7 @@ mod args;
 mod buildings;
 mod city;
 mod compute;
+mod distant;
 mod flight_bench;
 mod fly;
 mod lamps;
@@ -127,6 +128,26 @@ const SUN_BEARING: f64 = 40.0;
 /// The sun's world direction for an eye starting at `dir`: ONE number,
 /// read by the light that casts the shadows, by the sky dome and by the
 /// fog, so the three cannot point three ways.
+/// Where the camera starts: on a street of the port, or, with
+/// `--sunward`, that many radii off the body ALONG the sun and looking at
+/// its centre.
+///
+/// A camera for a picture is SOLVED and never hand aimed, which is
+/// tenebris's LODCAM lesson: the sun stands over wherever the world
+/// starts, so where it is depends on where the towns came out, and three
+/// runs of this were aimed by hand at a planet that turned out to be a
+/// different one, in its own night.
+fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
+    let (eye, look) = start(world);
+    match args.sunward {
+        Some(radii) => (
+            sun_over(eye) * world.planet.radius * radii.max(1.05),
+            DVec3::ZERO,
+        ),
+        None => (eye, look),
+    }
+}
+
 fn sun_over(dir: DVec3) -> DVec3 {
     let (east, north) = town::frame_at(dir);
     let up = SUN_UP.to_radians();
@@ -166,6 +187,7 @@ fn main() {
     app.add_plugins((
         WireframePlugin::default(),
         TerrainPlugin,
+        distant::DistantPlugin,
         WaterPlugin,
         sky::SkyPlugin,
     ))
@@ -282,6 +304,7 @@ struct WorldAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
     skies: ResMut<'w, Assets<sky::Sky>>,
     standard: ResMut<'w, Assets<StandardMaterial>>,
+    distants: ResMut<'w, Assets<distant::DistantMaterial>>,
 }
 
 fn spawn_world(
@@ -297,11 +320,12 @@ fn spawn_world(
         mut materials,
         mut waters,
         mut meshes,
+        mut distants,
         mut skies,
         mut standard,
     } = assets;
     let (world, towns) = world::build(&args);
-    let (start_eye, start_look) = start(&world);
+    let (start_eye, start_look) = aim(&world, &args);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
     // The lattice's origin sits half a fine cell off the half metre grid
@@ -339,7 +363,8 @@ fn spawn_world(
         &mut meshes,
         &mut materials,
         &mut waters,
-        &mut standard,
+        &mut images,
+        &mut distants,
         &mut planets,
     );
     planets.active = planets.nearest(eye);

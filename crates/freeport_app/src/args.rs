@@ -15,6 +15,13 @@ pub(crate) struct Args {
     pub(crate) fly: bool,
     pub(crate) eye: Option<DVec3>,
     pub(crate) look: Option<DVec3>,
+    /// Stand this many radii off the home body, ALONG the sun, looking at
+    /// its centre. A camera for a picture is solved and never hand aimed:
+    /// the sun stands over where the world starts, so where it is depends
+    /// on where the towns came out, and three runs of this were aimed by
+    /// hand at a planet that turned out to be a different one in its own
+    /// night.
+    pub(crate) sunward: Option<f64>,
     pub(crate) levels: u8,
     pub(crate) shot: Option<String>,
     pub(crate) frames: u32,
@@ -46,6 +53,7 @@ impl Default for Args {
             fly: false,
             eye: None,
             look: None,
+            sunward: None,
             levels: LEVELS,
             shot: None,
             frames: 30,
@@ -78,6 +86,7 @@ pub(crate) fn parse_args() -> Args {
             "--cpu-terrain" => args.cpu_terrain = true,
             "--profile-render" => args.profile_render = true,
             "--fly" => args.fly = true,
+            "--sunward" => args.sunward = it.next().and_then(|v| v.parse().ok()),
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),
             "--levels" => {

@@ -256,18 +256,36 @@ impl Shape {
     }
 
     fn raw_height(&self, dir: DVec3) -> f64 {
+        let landform = self.landform(dir);
+        landform - self.cut(dir, landform) + self.hills(dir)
+    }
+
+    /// What the LANDFORM is at a direction, metres over the mean radius:
+    /// the continent and whatever range is pushed up through it, and
+    /// nothing finer. It is what the channel network cuts into, because
+    /// whether a river runs here is a question about the shape of the land
+    /// and not about the hills on it, and it is what `sampling.wgsl`
+    /// evaluates in full before it starts the detail octaves it can stop
+    /// early on.
+    pub fn landform(&self, dir: DVec3) -> f64 {
         let half = self.relief * 0.5;
-        let continent = signed(self.continent(dir)) * half * share::CONTINENT;
-        let mountain = self.mountain(dir) * half * share::MOUNTAIN;
-        let hills = signed(layer(
+        signed(self.continent(dir)) * half * share::CONTINENT
+            + self.mountain(dir) * half * share::MOUNTAIN
+    }
+
+    /// The hills on everything, metres. The one term fine enough to be
+    /// the ground under a walker's feet, so it keeps the planet's own
+    /// octave count.
+    pub fn hills(&self, dir: DVec3) -> f64 {
+        signed(layer(
             dir,
             self.lumps * freq::HILLS,
             self.seed,
             salt::HILLS,
             self.octaves,
-        )) * half
-            * share::HILLS;
-        continent + mountain + hills - self.cut(dir, continent + mountain + hills)
+        )) * self.relief
+            * 0.5
+            * share::HILLS
     }
 
     /// The continent term alone, nought to one, which is what the sea is
@@ -417,6 +435,84 @@ impl Shape {
     }
 }
 
+/// Every number `sampling.wgsl` needs to evaluate `landform` and `cut` for
+/// one body, laid out as the uniform it binds.
+///
+/// The shader carries the SHAPE of the function and this carries every
+/// constant in it, so a threshold cannot be tuned here and left stale
+/// there: a planet whose mesher and whose walker disagreed about where a
+/// mountain belt starts would be ground you fall through.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Gpu {
+    /// continent, mountain, hills, valley, as shares of half the relief.
+    pub shares: [f32; 4],
+    /// The base frequencies, as multiples of the body's own lumps:
+    /// continent, belt, ridge, hills.
+    pub freqs: [f32; 4],
+    /// The channel's frequency and lip, the gorge's depth in metres, and
+    /// how far over the sea a cut reaches its full depth.
+    pub channel: [f32; 4],
+    /// A belt's two thresholds, a ridge's power, and the stretch.
+    pub belt: [f32; 4],
+    /// The fbm's measured mean and the span it is stretched by, half the
+    /// relief, and the gain every term is scaled by.
+    pub fbm: [f32; 4],
+    /// The octaves of continent, belt, ridge and channel.
+    pub octaves: [u32; 4],
+    /// The seeds those four are salted with.
+    pub salts: [u32; 4],
+    /// The hills term's salt and octaves, and two spare.
+    pub hills: [u32; 4],
+}
+
+impl Shape {
+    /// This body's own numbers, for the sampler.
+    pub fn gpu(&self) -> Gpu {
+        let gain = self.gain();
+        Gpu {
+            shares: [
+                share::CONTINENT as f32,
+                share::MOUNTAIN as f32,
+                share::HILLS as f32,
+                share::VALLEY as f32,
+            ],
+            freqs: [
+                freq::CONTINENT as f32,
+                freq::BELT as f32,
+                freq::RIDGE as f32,
+                freq::HILLS as f32,
+            ],
+            channel: [
+                freq::CHANNEL as f32,
+                CHANNEL_LIP as f32,
+                self.gorge() as f32,
+                (self.relief * 0.04 + self.gorge()) as f32,
+            ],
+            belt: [
+                BELT_FROM as f32,
+                BELT_TO as f32,
+                RIDGE_POWER as f32,
+                STRETCH as f32,
+            ],
+            fbm: [
+                FBM_MEAN as f32,
+                (FBM_SD * FBM_REACH) as f32,
+                (self.relief * 0.5) as f32,
+                gain as f32,
+            ],
+            octaves: [
+                self.oct(oct::CONTINENT),
+                self.oct(oct::BELT),
+                self.oct(oct::RIDGE),
+                self.oct(oct::CHANNEL),
+            ],
+            salts: [salt::CONTINENT, salt::BELT, salt::RIDGE, salt::CHANNEL],
+            hills: [salt::HILLS, self.octaves.max(1), 0, 0],
+        }
+    }
+}
+
 /// What the weather is at a place: how warm and how wet, nought to one
 /// each. It is what decides whether ground at the same height and slope is
 /// ice, hay, scrub or sand, and the shader reads it off the vertex rather
@@ -429,16 +525,32 @@ pub struct Climate {
     pub wet: f64,
 }
 
-/// How much colder it is at the top of the relief than at the sea, in
-/// units of `temp`. Earth's lapse rate is about 6.5 degrees a kilometre,
-/// which over eight kilometres of relief is most of the range a planet's
-/// latitude covers, and that is why mountains have snow on them at the
-/// equator.
-const LAPSE: f64 = 0.85;
+/// How many METRES of altitude cost a whole unit of temperature.
+///
+/// It was a share of the RELIEF, and the first chart of the planet said
+/// what that does: a body with eight kilometres of relief lost most of a
+/// unit of temperature over its own mountains, so everything above the
+/// plains froze and the world came out white from the poles to the
+/// tropics with no desert anywhere on it.
+///
+/// Altitude is not a share of anything. Earth's lapse rate is about 6.5
+/// degrees a kilometre, and this range spans about sixty, which puts a
+/// unit at nine kilometres; at six the equator's snow line lands near
+/// five thousand metres, which is Kilimanjaro's, and a temperate
+/// mountain's near two and a half thousand. Six it is, and a planet with
+/// five hundred metres of relief has snow by LATITUDE alone, which is
+/// also right.
+const LAPSE_M: f64 = 6_100.0;
 
 /// How far the climate bands are pushed about by noise, in units of
 /// `temp`. Without it every planet is a set of perfect stripes.
 const WANDER: f64 = 0.22;
+
+/// How fast temperature falls off the equator. Higher keeps the tropics
+/// broad and the cold band tight: at 1.8 the ground freezes by latitude
+/// alone past about 65 degrees, which is roughly Earth's own tree line
+/// and leaves a fifth of the planet frozen rather than a third.
+const BAND_FALL: f64 = 1.8;
 
 /// How much drier the middle of a continent is than its shore, in units of
 /// `wet`. It is what puts a desert inland and a marsh on the coast.
@@ -454,7 +566,7 @@ impl Shape {
     /// wetter again in the low ground where water collects.
     pub fn climate(&self, dir: DVec3, over_sea: f64) -> Climate {
         let lat = dir.y.clamp(-1.0, 1.0).abs();
-        let banded = 1.0 - lat.powf(1.35);
+        let banded = 1.0 - lat.powf(BAND_FALL);
         let wander = (layer(
             dir,
             self.lumps * freq::CLIMATE,
@@ -464,15 +576,20 @@ impl Shape {
         ) * 2.0
             - 1.0)
             * WANDER;
-        let lapse = (over_sea.max(0.0) / self.relief.max(1.0)) * LAPSE * 2.0;
+        let lapse = over_sea.max(0.0) / LAPSE_M;
         let temp = (banded + wander - lapse).clamp(0.0, 1.0);
-        let damp = layer(
+        // Stretched, like every other term: a raw fbm sits inside a third
+        // of its own range, so an unstretched moisture never reaches
+        // either a desert or a marsh and the whole planet comes out the
+        // one green in the middle.
+        let damp = signed(layer(
             dir,
             self.lumps * freq::CLIMATE * 1.7,
             self.seed,
             salt::DAMP,
             self.oct(oct::CLIMATE),
-        );
+        )) * 0.5
+            + 0.5;
         // How far inland: the continent term over the sea's own level is
         // the cheapest measure of it there is, and it is already computed
         // for the height.
@@ -512,8 +629,8 @@ pub const BEACH_TO: f64 = 2.8;
 /// Colder than this is ice at the sea and snow on the ground.
 const FREEZING: f64 = 0.18;
 /// Warmer than this and drier than the second is desert.
-const HOT: f64 = 0.55;
-const ARID: f64 = 0.28;
+const HOT: f64 = 0.45;
+const ARID: f64 = 0.36;
 /// Wetter than this on low ground is marsh.
 const SWAMPY: f64 = 0.78;
 /// Wetter than this is forest rather than open grass.

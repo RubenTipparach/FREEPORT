@@ -1,31 +1,61 @@
-//! Whole-body distant silhouettes, behind the streamed volumetric surface.
+//! Whole-body distant surfaces, behind the streamed volumetric terrain.
+//!
+//! One sphere a body, displaced by that body's own relief and painted from
+//! the equirectangular chart `freeport_core::chart` bakes off the same
+//! field the chunks are contoured from. `distant` owns the material, the
+//! mesh and the levels; this is where a body gets one.
 
+use crate::distant::{self, DistantLod, DistantMaterial};
 use crate::planets::Planets;
 use crate::stream::Anchored;
 use crate::terrain::TerrainMaterial;
 use crate::water::{water_material, WaterMaterial};
-use bevy::math::DVec3;
-use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
+use freeport_core::chart::Chart;
 use freeport_core::pos::WorldPos;
+use std::time::Instant;
 
 pub(crate) fn spawn(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<TerrainMaterial>,
     waters: &mut Assets<WaterMaterial>,
-    standard: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+    distants: &mut Assets<DistantMaterial>,
     planets: &mut Planets,
 ) {
     let template = materials
         .get(&planets.bodies[0].material)
         .expect("home terrain material exists at startup")
         .clone();
-    let distant = standard.add(StandardMaterial {
-        perceptual_roughness: 1.0,
-        ..default()
+    // Every body's chart at once. A bake is one `Planet::surface` a texel
+    // and the surface is the whole biome model, so four bodies in series
+    // is four times a second nobody has to spend: they share nothing, so
+    // they go on their own threads.
+    let started = Instant::now();
+    let charts: Vec<Chart> = std::thread::scope(|scope| {
+        let handles: Vec<_> = planets
+            .bodies
+            .iter()
+            .map(|body| {
+                let planet = body.world.planet.clone();
+                let sea = body.world.sea.radius;
+                scope.spawn(move || Chart::bake(&planet, sea, distant::CHART_W, distant::CHART_H))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("a chart bake cannot panic"))
+            .collect()
     });
-    for (index, body) in planets.bodies.iter_mut().enumerate() {
+    info!(
+        "{} charts of {} by {} baked in {:.0} ms",
+        charts.len(),
+        distant::CHART_W,
+        distant::CHART_H,
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    for (index, (body, chart)) in planets.bodies.iter_mut().zip(&charts).enumerate() {
         if index > 0 {
             let mut material = template.clone();
             material.extension.params.z = 0.0;
@@ -34,43 +64,38 @@ pub(crate) fn spawn(
             body.material = materials.add(material);
             body.water = water_material(waters, body.world.sea.radius);
         }
-        // This is an interior backing surface, never a second surface over
-        // the near terrain. It fills the distant disk while chunks stream.
-        let radius = body.world.planet.band().0 - 2.0;
-        let mut mesh = Sphere::new(radius as f32)
-            .mesh()
-            .ico(48)
-            .expect("48 edge subdivisions fit an icosphere");
-        if let Some(VertexAttributeValues::Float32x3(positions)) =
-            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-        {
-            let colours: Vec<[f32; 4]> = positions
-                .iter()
-                .map(|p| {
-                    let dir = DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64).normalize();
-                    let height = body.world.planet.surface(dir).0;
-                    let wet = body.world.planet.radius + height < body.world.sea.radius;
-                    let colour = if wet {
-                        [0.025, 0.12, 0.22]
-                    } else {
-                        body.colour
-                    };
-                    let shade = (0.8 + height / body.world.planet.relief.max(1.0) * 0.4) as f32;
-                    [colour[0] * shade, colour[1] * shade, colour[2] * shade, 1.0]
-                })
-                .collect();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
-        }
+        let (albedo, slopes) = distant::images(chart);
+        let surface = distants.add(distant::material(images.add(albedo), images.add(slopes)));
+        body.distant = surface.clone();
+        let built: Vec<Handle<Mesh>> = distant::levels()
+            .map(|n| {
+                meshes.add(distant::sphere(
+                    &body.world.planet,
+                    body.world.sea.radius,
+                    n,
+                ))
+            })
+            .collect();
         commands.spawn((
             Name::new(format!("{} distant surface", body.name)),
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(distant.clone()),
+            Mesh3d(built[0].clone()),
+            MeshMaterial3d(surface),
             Transform::from_translation(body.centre.as_vec3()),
             Anchored {
                 at: WorldPos(body.centre),
             },
+            DistantLod {
+                meshes: built,
+                centre: body.centre,
+                radius: body.world.planet.radius,
+            },
             bevy::light::NotShadowCaster,
         ));
+    }
+    if std::env::var("FREEPORT_DUMP_CHARTS").is_ok() {
+        for (body, chart) in planets.bodies.iter().zip(&charts) {
+            distant::dump(chart, &body.name.to_lowercase());
+        }
     }
 }
 
@@ -81,6 +106,7 @@ pub(crate) fn recentre(
     frame: Res<crate::stream::Frame>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
     mut waters: ResMut<Assets<WaterMaterial>>,
+    mut distants: ResMut<Assets<DistantMaterial>>,
 ) {
     for body in &planets.bodies {
         let centre = frame.0.local(WorldPos(body.centre));
@@ -94,5 +120,21 @@ pub(crate) fn recentre(
             }
         }
         crate::water::recentre(&mut waters, &body.water, centre);
+        // The distant sphere reasons in planet local coordinates too: it
+        // is the same tenebris rule, and a chart looked up from a centre
+        // a rebase had moved would spin the whole planet under its own
+        // coastline.
+        let bend = distants
+            .get(&body.distant)
+            .map_or(0.0, |m| m.extension.centre.w);
+        let want = centre.extend(bend);
+        let moved = distants
+            .get(&body.distant)
+            .is_some_and(|m| m.extension.centre != want);
+        if moved {
+            if let Some(material) = distants.get_mut(&body.distant) {
+                material.extension.centre = want;
+            }
+        }
     }
 }

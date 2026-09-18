@@ -90,8 +90,11 @@ pub const STREET: f64 = 4.0;
 pub const PIECE: f64 = 3.5;
 /// How far the levelling reaches past a town's radius.
 const APRON: f64 = 12.0;
-/// Candidates round the planet.
-const CANDIDATES: usize = 4000;
+/// How many directions are looked at for a town site. It is also the
+/// densest cities can ever be: 20,000 points on a thousand kilometre
+/// planet are about 25 km apart, which is a world with a town over most
+/// horizons and wilderness between them.
+const CANDIDATES: usize = 20_000;
 
 /// East and north at a direction on the sphere.
 pub fn frame_at(dir: DVec3) -> (DVec3, DVec3) {
@@ -176,7 +179,13 @@ pub fn plan(planet: &Planet, sea: f64, radius: f64, count: usize, seed: u32) -> 
     }
     let big_r = planet.radius;
     let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
-    let (low, high) = (3.0, 40.0);
+    // How far over the sea a town may stand. The ceiling is the PLANET's,
+    // not a fixed forty metres: on a world with eight kilometres of relief
+    // a forty metre window is the coastal fringe and nothing else, so
+    // every town came out on a beach and the interior of every continent
+    // was empty. A city sits wherever the ground is level, and level
+    // ground at two thousand metres is a plateau.
+    let (low, high) = (3.0, (planet.relief * 0.3).max(40.0));
     let mut cands: Vec<(DVec3, f64)> = Vec::new();
     for i in 0..CANDIDATES {
         let y = 1.0 - 2.0 * (i as f64 + 0.5) / CANDIDATES as f64;
