@@ -113,7 +113,11 @@ impl Job {
             done.triangles += mesh.triangles();
             done.mesh = Some(to_mesh(
                 &mesh,
-                chunk_mapping(self.id.corner(&self.lat), self.world.sea.radius),
+                chunk_mapping(
+                    self.id.corner(&self.lat),
+                    self.world.sea.radius,
+                    Some(self.world.planet.shape()),
+                ),
             ));
         }
         let water = self.world.water(&field);

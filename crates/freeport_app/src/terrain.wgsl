@@ -67,6 +67,30 @@ const GRASS_FROM: f32 = 2.8;
 const BUMP_NEAR: f32 = 25.0;
 const BUMP_FAR: f32 = 140.0;
 
+// What a biome LOOKS like, `freeport_core::biome::Kind::colour`'s own
+// table, and the same one the body's chart is painted from, so a coast
+// seen from orbit and the same coast walked on are the same colours.
+// Linear rgb.
+const C_SNOW: vec3<f32> = vec3<f32>(0.82, 0.85, 0.88);
+const C_DESERT: vec3<f32> = vec3<f32>(0.66, 0.50, 0.28);
+const C_SAVANNA: vec3<f32> = vec3<f32>(0.44, 0.40, 0.19);
+const C_GRASS: vec3<f32> = vec3<f32>(0.20, 0.30, 0.11);
+const C_FOREST: vec3<f32> = vec3<f32>(0.10, 0.19, 0.08);
+const C_BEACH: vec3<f32> = vec3<f32>(0.62, 0.55, 0.38);
+
+// `biome`'s own thresholds: colder than this freezes, hotter and drier
+// than the next two is desert, and wetter than the last is forest.
+const FREEZING: f32 = 0.18;
+const ARID: f32 = 0.36;
+const WOODED: f32 = 0.52;
+
+// How much of the biome's colour is laid over the set's own. The texture
+// still carries the DETAIL, the grain and the shadow of it, and the tint
+// carries what the place is: at one the hay under the feet in a desert is
+// sand coloured hay, and at nought every planet is the same meadow, which
+// is what this world was.
+const BIOME_TINT: f32 = 0.72;
+
 // The materials, as `freeport_core::field` numbers them.
 const M_TERRAIN: f32 = 0.0;
 const M_CONCRETE: f32 = 1.0;
@@ -190,6 +214,24 @@ fn in_frame(f: i32, up: vec3<f32>, n: vec3<f32>) -> Local {
     return l;
 }
 
+// What is growing at a place, as a colour, blended rather than picked: a
+// biome that snapped from one kind to the next would draw a line across
+// the ground wherever the climate crossed a threshold, and what a biome
+// has to do is fade.
+fn biome_colour(temp: f32, wet: f32, over_sea: f32) -> vec3<f32> {
+    let dry = 1.0 - smoothstep(ARID, WOODED, wet);
+    let lush = smoothstep(WOODED, 0.82, wet);
+    // Hot and dry is desert, cool and dry is savanna; wet is forest and
+    // the middle is open grass.
+    let hot = smoothstep(0.35, 0.6, temp);
+    let parched = mix(C_SAVANNA, C_DESERT, hot);
+    var c = mix(C_GRASS, C_FOREST, lush);
+    c = mix(c, parched, dry);
+    // Cold takes everything toward snow, and a shore toward sand.
+    c = mix(c, C_SNOW, 1.0 - smoothstep(FREEZING, FREEZING + 0.16, temp));
+    return mix(c, C_BEACH, 1.0 - smoothstep(SAND_TO, GRASS_FROM, over_sea));
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
@@ -221,7 +263,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // difference of two numbers near a million and a band a metre and a
     // half wide cannot be drawn in six centimetre steps.
     let over_sea = in.uv.x;
-    let sand = 1.0 - smoothstep(SAND_TO, GRASS_FROM, over_sea);
+    // The climate rides the vertex too, worked out in f64 where the field
+    // is: `temp` in the second uv lane and `wet` in the second uv set.
+    let temp = in.uv.y;
+    var wet = 0.5;
+#ifdef VERTEX_UVS_B
+    wet = in.uv_b.x;
+#endif
+    // Dry ground is SAND rather than grass whatever its height, which is
+    // what makes a desert a desert on foot and not just a tan patch from
+    // orbit. The shore's own band is the mockup's and rides over it.
+    let arid = 1.0 - smoothstep(ARID, WOODED, wet);
+    let shore = 1.0 - smoothstep(SAND_TO, GRASS_FROM, over_sea);
+    let sand = max(shore, arid * smoothstep(0.35, 0.6, temp));
     let level = (1.0 - steep) * ground;
     let w_sand = level * sand;
     let w_grass = level * (1.0 - sand);
@@ -275,10 +329,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     orm = orm * mapped + vec3<f32>(1.0, 0.08, 0.0) * glass + vec3<f32>(1.0, 0.6, 0.0) * (lamp + lit);
     // Worn toward the surface's own normal with distance.
     nm = normalize(mix(nm, n, smoothstep(BUMP_NEAR, BUMP_FAR, away)));
-    // Keep the baked texture's detail and brightness with this body's hue.
+    // Keep the baked texture's detail and brightness, and put the PLACE's
+    // own colour on it: the biome where this body has one, and the body's
+    // own hue where the planet definition asks for one.
     let luma = vec3<f32>(0.2126, 0.7152, 0.0722);
-    let coloured = terrain.palette.rgb * dot(albedo, luma) / max(dot(terrain.palette.rgb, luma), 0.001);
-    albedo = mix(albedo, coloured, terrain.palette.a * ground);
+    let here = biome_colour(temp, wet, over_sea);
+    let hue = mix(here, terrain.palette.rgb, terrain.palette.a);
+    let strength = max(BIOME_TINT, terrain.palette.a);
+    let coloured = hue * dot(albedo, luma) / max(dot(hue, luma), 0.001);
+    albedo = mix(albedo, coloured, strength * ground);
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     pbr_input.material.perceptual_roughness = orm.g;
     pbr_input.material.metallic = orm.b;

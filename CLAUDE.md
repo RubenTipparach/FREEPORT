@@ -293,12 +293,9 @@ the two levels below is the whole of it.
    and nothing is skirted. The quadtree stays for the far tier, where a
    planet is patches on a sphere and not cells in a lattice, and `select`'s
    nearest point rule is the one that tier will need.
-2. **The impostor tier.** Past the rings a body is tenebris's baked equirect
-   on an icosphere, lit per body from its own star. It is DUE: on the 10 km
-   planet the coarsest ring was 32 km across and held the whole world, and
-   at 1,000 km it is a patch 16 km either side of the eye, so a picture
-   from the air ends at the box with nothing behind it. It is the biggest
-   hole in the world as it stands.
+2. **The impostor tier is BUILT**, and the section on the chart below is
+   the whole of it: past the rings a body is a displaced icosphere
+   painted from an equirectangular chart baked off this same field.
 3. **The rest of the materials.** The sets are on the field in the harness
    (the section on the sets below), concrete is in the town's frame, the
    array textures carry their mip chains and the sand band is on the shore;
@@ -307,6 +304,137 @@ the two levels below is the whole of it.
    models do not: a building is a shell with a doorway and one room to the
    roof, and a slab a storey with a flight up it is geometry nobody has
    written yet.
+
+## A planet is a FEW terms, and one fractal is one hillside
+
+`biome.rs` is what the ground is made of at the size of a WORLD. A planet
+whose surface is a single `fbm3` has lumps of one size everywhere, so it
+reads as the same hillside from pole to pole however far you walk, and
+that is what this world was. Real ground is a few terms of very different
+characters laid over each other, and the variety is in the composition
+rather than in any one of them:
+
+| the term | what it decides | its size |
+| --- | --- | --- |
+| continent | where the sea is, and so every coast and island | 0.38 of the planet's lumps, four octaves |
+| belt | whether a range is pushed up through a continent | 0.44, four octaves, a smoothstep between 0.85 and 1.75 standard deviations of its own noise |
+| ridge | the range itself, RIDGED so it is crests with flanks | 1.15, five octaves, the fold raised to 1.6 |
+| hills | the ground under a walker's feet | 3.1, and the planet's OWN octave count |
+| channel | a network cut down through whatever stands over the sea | 2.4, five octaves, a gorge inside a broad valley |
+
+**A term written as a share of the relief and handed a RAW fbm is worth
+about a fifth of what it says.** Measured over twenty thousand
+directions (`measure_the_fbm_spread` prints it): a sum of halving octaves
+is a sum of many small numbers, so it piles up near its middle, and
+`fbm3`'s mean is 0.498 with a standard deviation of 0.106 whatever the
+octave count past four, 99 in 100 samples inside 0.262 to 0.736. That is
+why the first cut of this was eight kilometres of relief that never left
+plus or minus 1,615 m. Everything is stretched by the MEASURED spread
+first (`signed`), and the same planet then spans -3,554 to 4,158 m.
+
+**Three limits, each found by a test rather than reasoned about:**
+
+- **A gorge is capped by the body's own relief.** It was written in
+  absolute metres, which is right for a river and wrong for a planetoid:
+  a hundred metre test ball with four metres of relief was handed a
+  thirty four metre gorge, most of the way to its own centre, and the
+  mesher pinched on the wall of it. An absolute number is a number that
+  is wrong on some body, so it is a number with a share beside it.
+- **Every term is capped by the PLANET's octave count.** `octaves` is
+  what ties a body's detail to its size (eighteen at a thousand
+  kilometres, three on a twenty metre ball), and a term at a flat five
+  octaves puts features under the lattice's own cell on anything small.
+- **And nothing is steeper than the mesher can close.** `MAX_SLOPE` is
+  20 and every term is scaled back to fit it, measured against the mesher
+  rather than chosen: the dual contoured seam closes at a slope bound of
+  18.7 (the rough test ball as it was) and does not at 94.7 (the same
+  ball stretched), which came back as 32 open edges, 81 pinches and 1,192
+  triangles facing in. The thousand kilometre planet asks for 9.95 and is
+  untouched; it is the balls with a fifth of their radius in relief that
+  this catches.
+
+**Climate is two numbers and everything else is derived.** `temp` is the
+latitude warped by noise less what altitude takes off it, and `wet` is
+its own noise, drier in the middle of a continent and wetter in the low
+ground and along a channel. A `Kind` follows from the pair with the
+height over the sea and the slope: ocean, ice, beach, desert, savanna,
+grass, forest, marsh, rock, snow and city.
+
+**The lapse rate is in METRES and that was the difference between a
+planet and a snowball.** It was a share of the RELIEF, so a body with
+eight kilometres of it lost most of a unit of temperature over its own
+mountains, and the first chart came back white from the poles to the
+tropics with no desert anywhere on it. Altitude is not a share of
+anything: Earth's lapse rate is about 6.5 degrees a kilometre and this
+range spans about sixty, so it is 6,100 m to a unit, which puts the
+equator's snow line near five thousand metres and a temperate mountain's
+near two and a half thousand. A planet with five hundred metres of relief
+then has snow by LATITUDE alone, which is also right.
+
+Of 8,000 directions this planet grows 2,609 forest, 1,935 ocean, 1,854
+snow, 1,031 grass, 604 desert, 346 savanna, 180 ice, 38 marsh and 5
+beach.
+
+**`sampling.wgsl` transcribes `landform` and `cut`, and the GPU is why
+the split is where it is.** Terrain sampling is a compute pass, so a
+shape change that landed only on the CPU would be ground the walker
+stands on and the mesher never drew. The shader carries the SHAPE of the
+function and every constant in it arrives in a uniform (`biome::Gpu`), so
+a threshold cannot be tuned on one side and left stale on the other. The
+landform and the cut are evaluated in full, because they are few octaves
+each and there is nothing worth stopping early for; the HILLS keep the
+sampler's own octave interval, and `signed` is monotone, so an interval
+on the partial sum is still an interval on the height.
+
+## A planet from orbit is a CHART, not a colour a vertex
+
+`chart.rs` bakes two equirectangular pictures of a body off the same
+field and the same biome rules the chunks are contoured from, and
+`distant.rs` draws them. It is tenebris's answer ported
+(`build_distant_textures_for_body` and `distant.glsl`).
+
+What it replaces was one colour a VERTEX on a smooth icosphere sitting at
+the BOTTOM of the relief band, four kilometres under the lowest ground.
+On a 46,000 triangle sphere that is a colour every thirty kilometres:
+continents came out as soft blobs with no coast anywhere on them, and
+from thirty kilometres up the picture was a green smear on a blue ball
+with the streamed chunks floating somewhere over it. The join between the
+two is the thing the owner could see.
+
+- **The albedo** is the biome's colour with the water blended over the
+  shallows and a height shade on top, and its ALPHA is the water mask the
+  shader gates a sun glint on, so an ocean catches the light where the
+  land beside it stays matte.
+- **The slope map** is the altitude's own gradient across a texel, which
+  is what puts a mountain range on a sphere no mesh at that size could
+  hold one on. It is normalised to the body's own 99th percentile,
+  MEASURED rather than set: a fixed number came out flat, a hundredth of
+  the relief across a kilometre of texel encoding as 7 of a possible 127,
+  and the whole world shading as a smooth ball.
+- **The albedo is written sRGB.** `Kind::colour` is linear, because that
+  is what a shader does arithmetic in, and the chart binds as an sRGB
+  texture, because most of a planet is dark and that is where sRGB spends
+  its bytes. Writing the linear value into an sRGB texture decodes it a
+  SECOND time on the way out: a forest at 0.10 came back at 0.0095 and
+  the whole planet drew nearly black.
+- **The sphere is DISPLACED and sunk a hundredth of the relief**, 80 m on
+  this planet, so the streamed chunks always win the depth test and the
+  join is under a thousandth of the radius rather than four kilometres.
+- **Three levels picked by distance**, 24, 48 and 79 subdivisions. 79 is
+  Bevy's own icosphere cap, measured by asking for 144 and getting
+  `TooManyVertices` with 210,252 points back. Going past it means writing
+  an icosphere here, which buys a finer SILHOUETTE and nothing else,
+  since the shading is the map's.
+- **`FREEPORT_DUMP_CHARTS=1` writes them out** beside the assets. A
+  planet's own texture is a picture, and a picture nobody can open is a
+  buffer nobody can check.
+
+**A camera for a picture is SOLVED, and `--sunward N` is that.** Three
+renders here were aimed by hand at a planet that turned out to be a
+different one in its own night, and a fourth used a shore read off an
+`--octaves 6` run in an `--octaves 14` one: octaves change the terrain,
+which moves the towns, which moves where the sun stands, so the log's own
+numbers only mean anything for the settings that printed them.
 
 ## A town is where a mesher is judged, and the walker is the judge
 
@@ -855,10 +983,47 @@ mockup's float noise. The ground stays in the planet's frame, where a seam
 in grass is nothing. The models wear the same material the ground does, so
 there is one shader and one set of sets for the whole world.
 
-Measured: eight towns planned in 155 ms, 699 buildings and 7,744 pieces of
-street modelled in 30 ms into 192,646 triangles, 6,635 boxes and 2,771
-lamps, against 14 to 20 ms to compile the recipes and a chunk test against
-every structure for ever after.
+**Cities are ALL OVER the planet, and a city is planned, levelled and
+painted long before it is built.** 160 towns are planned rather than 8.
+Every one levels its own ground and is stamped on the body's chart, and
+the nearest `TOWNS_BUILT` (eight) to where the world starts are BUILT: a
+town is about 375,000 triangles of baked buildings, so eight are 2.85
+million and 160 would be sixty. It is a COUNT rather than a distance,
+because it is the count that bounds the cost: at 160 towns the mean
+spacing here is 280 km, and a first cut written as a 90 km reach built
+exactly one of them.
+
+**A town is smaller than a chart texel, so it is STAMPED.** Eighty metres
+against six thousand: asking `surface` about a texel's own middle finds a
+town one time in five thousand, so the cities were invisible on the chart
+and the sites cost every one of half a million texels a walk over every
+town on the planet, 84 million tests, which took the bake from 954 ms to
+1,617. Baked bare and stamped after, the cities are ON it, one texel each,
+and the bake is back to 991 ms.
+
+**A town's height window is the PLANET's.** A candidate qualified between
+3 and 40 m over the sea, which on a world with eight kilometres of relief
+is the coastal fringe and nothing else, so every town came out on a beach
+and the interior of every continent was empty. It is 3 m to three tenths
+of the relief now, and level ground at two thousand metres is a plateau.
+
+**A planet's sites are filtered once per CHUNK, never per sample.**
+`Planet::around` keeps only the sites whose levelling can reach a chunk,
+and `surface_blend` is asked for every one of a chunk's seven thousand
+sample points: walking 160 towns in it is a million tests for a chunk
+nowhere near a town. It is what makes a planet with cities all over it
+cost a chunk what a planet with eight does, and `flight.rs` was already
+doing it by hand for its own sweep.
+
+**What is MISSING, named rather than hidden:** a town that comes into
+range as you fly is not built, so a far city is its own levelled plateau
+with no buildings on it until town streaming lands. The chunk streamer
+already does exactly this for ground and the shape of it is the same.
+
+Measured: 160 towns planned in 7.2 s (20,000 candidates, up from 4,000),
+8 of them built into 2,852,924 triangles, 147,157 collision boxes and
+1,346 lamps in 371 ms, and 159 city texels on the chart for 160 towns,
+because two of them share one.
 
 ## The sets on the field, and the walker on it, in Bevy
 
@@ -906,15 +1071,57 @@ which cost no precision) and never where the point is. The height over the
 sea rides the same vertex, because the sand band is a metre and a half
 wide and `length(rel) - sea` measured it in six centimetre steps.
 
-**The sea has the same disease and a harder cure.** `water.wgsl` takes its
-swell and its ripples from `q = world_position - centre` in `f32` too:
-over a metre of water the ripple coordinate takes four values, 8.3 cm
+**The sea had the same disease and it is the CELL AND FRACTION that cured
+it.** `water.wgsl` took its ripples from `q = world_position - centre` in
+`f32` too: over a metre of water the coordinate took four values, 8.3 cm
 steps on features about 0.67 m across. The terrain's fix does not port,
 because `fbm3` is NOT periodic, so there is no modulus to reduce by and an
-offset per chunk would put a seam in the sea wherever two offsets met. The
-honest cure is a noise that takes a lattice CELL and a fraction rather
-than one float per axis, which is how noise is evaluated on a big world,
-and it is named here rather than bodged.
+offset per chunk would put a seam in the sea wherever two of them met.
+
+The cure is the one this file named and had not built: a noise that takes
+a lattice CELL and a FRACTION rather than one float an axis. `to_sheet`
+works the chunk's cell out in `f64`, where it is exact, and hands it down
+the vertex; the shader adds the vertex's own offset inside the chunk,
+which is metres and exact, and DOUBLES the pair per octave, because an
+integer times two is an integer and a fraction times two is a carry and a
+fraction (`gnoise3_at`, `fbm3_at`). Nothing is reduced and nothing tiles,
+so the sea is one continuous noise over a body two thousand kilometres
+across. What it costs is tenebris's 2.1 and 2.3 octave ratios, which are
+there so two octaves do not line up: a cell doubles exactly and a cell
+times 2.1 does not, and a per octave TRANSLATION buys the same thing at
+no precision at all.
+
+The SWELL keeps the imprecise coordinate on purpose: its wavelengths are
+tens of metres, so 6.25 cm is a thousandth of a wave and nothing an eye
+can find. It is the ripples, at two thirds of a metre, that the same six
+centimetres wrecked.
+
+**The first render of it was a blank white sheet from the shore to the
+horizon.** The cell rides the vertex COLOUR, and Bevy's standard material
+multiplies its base colour by the vertex colour, so the sea drew at a
+million times white. It is a channel this shader owns and it is masked
+out before the standard material ever sees it. The A/B at eight hundred
+metres is 0.003% of pixels, and that is honest rather than impressive:
+at that range the ripples are already faded (`RIPPLE_NEAR` 30 m,
+`RIPPLE_FAR` 160 m) and the quantisation is a MOTION artifact a still
+frame understates, the pattern holding still and then jumping a twelfth
+of a cell as the eye moves.
+
+**The ground a walker stands on is the biome the chart paints.** The
+climate rides the VERTEX, worked out in `f64` where the field is
+(`chunk_mapping` asks `Shape::climate` per vertex, and per vertex rather
+than per chunk because a chunk wide tint puts a hard line down every
+chunk boundary on the planet). `temp` is the second uv lane and `wet` the
+second uv set, and `terrain.wgsl` blends `Kind::colour`'s own table
+between them rather than picking a kind, because a biome that snapped
+would draw a line across the ground wherever the climate crossed a
+threshold. Dry ground is SAND whatever its height, which is what makes a
+desert a desert on foot rather than a tan patch from orbit, and cold
+ground goes to snow. The tint is at `BIOME_TINT` (0.72) of the set's own
+colour, so the texture still carries the grain and the shadow and the
+tint carries what the place IS: the hay under the feet in a desert is
+sand coloured hay. At nought, which is what this world was, every planet
+is the same meadow.
 
 **The shader is the mockup's, transcribed.** `terrain.wgsl` is an extension
 on Bevy's standard material: `tri` and `triN` line for line (three planes
@@ -1244,6 +1451,14 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --eye 0,1000012,-14 --look 0,1000012,60 --shot graze.png   # the horizon dead level, which is where the dark band was
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --eye 0,1030000,0 --look 0,1000000,120000 --shot high.png  # 30 km up: the curve, the sea and the haze
 ./target/release/freeport_app --octaves 14 --levels 9 --walk 600 --frames 620 --shot walked.png   # ten seconds of walking, the distance said every second
+# The body from orbit, lit: `--sunward N` stands N radii off along the SUN
+# and looks at the centre, which is the only way to aim this that works.
+# The sun stands over wherever the world starts, so where it is depends on
+# where the towns came out, and a hand aimed camera finds a planet in its
+# own night.
+./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --sunward 2.6 --shot orbit.png
+# The charts themselves, written beside the assets as PNGs.
+FREEPORT_DUMP_CHARTS=1 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 3 --shot n.png
 ```
 
 The mockups are `docs/mockups/marching-cubes.html` and
@@ -1314,6 +1529,31 @@ Numbers in the commit message. What is measured so far:
 - The sets: five on the ground (basalt, dunes, grass, concrete and hull
   plate), at 1024 a side, three array textures of five layers, each layer
   with an eleven level mip chain built at load.
+- The biome model, on this planet: of 8,000 directions, 2,609 forest,
+  1,935 ocean, 1,854 snow, 1,031 grass, 604 desert, 346 savanna, 180 ice,
+  38 marsh and 5 beach; the relief spans -3,554 to 4,158 m of a possible
+  8,000, against plus or minus 1,615 m for the single fractal it replaced.
+  `fbm3`'s own spread, measured over 20,000 directions: mean 0.498,
+  standard deviation 0.106, 99 in 100 inside 0.262 to 0.736, whatever the
+  octave count past four.
+- What the mesher can close, measured on the rough test ball: a slope
+  bound of 18.7 comes back with nought open edges and 94.7 with 32 open
+  edges, 81 pinches and 1,192 triangles facing in. `MAX_SLOPE` is 20; the
+  harness planet asks for 9.95.
+- The charts: four bodies at 1024 by 512, baked on their own threads in
+  954 to 991 ms, one `Planet::surface` a texel. Baked with the sites in
+  the field it was 1,617 ms, because half a million texels walked 160
+  towns each. The distant spheres are 24, 48 and 79 subdivisions picked by
+  distance, 79 being Bevy's own icosphere cap (144 comes back
+  `TooManyVertices` with 210,252 points).
+- The towns: 160 planned in 7.2 s from 20,000 candidates, 8 built into
+  2,852,924 triangles, 147,157 boxes and 1,346 lamps in 371 ms, and 159
+  city texels on the chart.
+- The sea's ripple coordinate, before and after: four values a metre on
+  0.67 m features, against one continuous noise over a two thousand
+  kilometre body at the precision of a fraction. The A/B at 800 m is
+  0.003% of pixels, because the ripples are faded past 160 m there and the
+  quantisation is a motion artifact a still frame understates.
 - What a planet scale `f32` did to a texture coordinate, at the port, where
   `|rel|` is 999,603 m and one float to the next is 6.25 cm: the ground's
   own coordinate took 8 distinct values over two metres, so a 2 m tile was
