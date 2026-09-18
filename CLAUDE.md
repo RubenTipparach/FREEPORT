@@ -799,15 +799,16 @@ architectural materials retain the normal crease rule.
   picture once the streamer is idle and N frames have run and quits. The
   log says where the port is and what its first lot is, so a picture can be
   aimed at it.
-- **The coarsest box no longer holds the planet, and that is the impostor
-  tier coming due.** At 5,000 m of radius the 32 km box held the whole
-  world; at 1,000,000 m it is a patch 16 km either side of the eye. On foot
-  that is still far past the horizon, which is `sqrt(2 R h)` and 1.8 km
-  from an eye 1.7 m up, so a walker sees no edge; from the air the world
-  ends at the box and there is nothing behind it. A baked equirect impostor
-  on an icosphere is tenebris's answer and the port of `distant.fs` is what
-  it will take; Planet-LOD, which drew the rest of the planet for the hex
-  world in 44 leaves from four radii up, is the other.
+- **The coarsest box no longer holds the planet, and the CHART is what is
+  behind it.** At 5,000 m of radius the 32 km box held the whole world; at
+  1,000,000 m it is a patch 16 km either side of the eye. On foot that is
+  still far past the horizon, which is `sqrt(2 R h)` and 1.8 km from an eye
+  1.7 m up, so a walker sees no edge; from the air the world ended at the
+  box with nothing behind it. What draws there now is the displaced
+  icosphere painted from the body's own equirectangular chart (the section
+  on the chart above), which is tenebris's answer ported. Planet-LOD, which
+  drew the rest of the planet for the hex world in 44 leaves from four
+  radii up, was the other and is not what this took.
 
 ## Water is a SURFACE for now, and the sea is clipped by what is under it
 
@@ -1433,7 +1434,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 67, the core, about 4 s
+cargo test -p freeport_core                       # 98, the core, about 27 s
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
@@ -1488,7 +1489,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 67 tests in about 4 s. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 98 tests in about 27 s. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across, with
