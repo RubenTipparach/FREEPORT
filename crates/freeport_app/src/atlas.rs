@@ -44,6 +44,9 @@ pub(crate) struct Atlas {
     /// eighteen octaves describes ground that fourteen does not have, and
     /// a road routed over the one can cross water on the other.
     pub octaves: u32,
+    /// The BIGGEST town on the body, metres across. Every other town's
+    /// own size is `town::size_of` of this and its rank, so a change to
+    /// how sizes are spread needs no rebake of where they stand.
     pub town_radius: f64,
     /// The sea this plan was made against. A town qualifies on how high
     /// it stands over the sea and a road is refused into it, so a plan
@@ -163,7 +166,9 @@ impl Atlas {
                 town::lay(
                     DVec3::from_array(p.dir).normalize_or(DVec3::Y),
                     p.h,
-                    self.town_radius,
+                    // Its OWN size, off its rank, which is why the file
+                    // carries the biggest and not one radius a town.
+                    town::size_of(self.town_radius, i, self.seed),
                     i,
                     self.seed,
                 )

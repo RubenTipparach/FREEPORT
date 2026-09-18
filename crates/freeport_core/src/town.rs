@@ -12,7 +12,7 @@
 //! plumb on its own patch of the sphere (`lot_frame`), so nothing long
 //! enough for the ground to curve under it is placed in one piece.
 
-use crate::field::{hash3, Density, Planet};
+use crate::field::{hash3, noise3, Density, Planet};
 use crate::model::Kind;
 use glam::DVec3;
 
@@ -96,6 +96,59 @@ const APRON: f64 = 12.0;
 /// planet are about 25 km apart, which is a world with a town over most
 /// horizons and wilderness between them.
 const CANDIDATES: usize = 20_000;
+/// How far apart two towns stand over and above their own two radii,
+/// metres, so a city and its neighbour have country between them.
+const BETWEEN: f64 = 200.0;
+
+/// How town SIZES are spread. Every town on a body used to be the one
+/// figure across, so a hundred and sixty cities were a hundred and sixty
+/// copies of one city; these are what make a few of them cities, some of
+/// them towns and most of them villages.
+///
+/// ZIPF is the exponent of the rank size law, which is the one empirical
+/// thing known about how big cities are: the nth biggest settlement in a
+/// region is about `1/n^k` of the biggest, with k near one for a mature
+/// country and lower where the ranking is looser. It is 0.32 here, which
+/// over a hundred and sixty towns puts the smallest at a fifth of the
+/// biggest rather than at a hundred and sixtieth, because a body with one
+/// city and a hundred and fifty nine hamlets is a body with one place on
+/// it worth landing at.
+const ZIPF: f64 = 0.26;
+/// The smallest a town may be as a share of the biggest, so the tail of
+/// the law is a village rather than a single house.
+const SMALLEST: f64 = 0.35;
+/// How far a town's own hash moves its size either way, so two towns of
+/// neighbouring rank are not the same town.
+const SIZE_JITTER: f64 = 0.16;
+
+/// A town's own OUTLINE, which is not a circle.
+///
+/// `LOBE` is how many lobes across the town the noise deciding its edge
+/// has, and `REACH` how far that noise can push the edge either way as a
+/// share of the nominal radius. A town is what grew where growing was
+/// easy, so it reaches down one valley and stops short against whatever
+/// was in the way on the other side: a disc reads as a stamp, and the
+/// same disc at every one of a hundred and sixty sites reads as a stamp
+/// used a hundred and sixty times.
+const LOBE: f64 = 1.6;
+const REACH: f64 = 0.42;
+
+/// Where a town stops being one thing and starts being another, in the
+/// same demand the outline is cut from: over `CORE_AT` is downtown and
+/// over `TOWN_AT` is the town proper, and everything out to nought is
+/// SUBURB.
+const CORE_AT: f64 = 0.66;
+const TOWN_AT: f64 = 0.38;
+
+/// How many of a suburb's blocks carry a house at all. A suburb is a town
+/// with SPACE in it, and what says so is the space rather than the house:
+/// at one it is the same grid as downtown with shorter buildings on it,
+/// which is what this was.
+const SUBURB_FILL: f64 = 0.55;
+/// How far a suburban house stands off the middle of its own block,
+/// metres either way, against a town house's own small jitter. A setback
+/// and a garden are the other thing that says suburb.
+const SUBURB_SETBACK: f64 = 4.5;
 
 /// East and north at a direction on the sphere.
 pub fn frame_at(dir: DVec3) -> (DVec3, DVec3) {
@@ -205,10 +258,61 @@ fn in_order(mut cands: Vec<(DVec3, f64, usize)>, seed: u32) -> Vec<(DVec3, f64)>
         .collect()
 }
 
-/// Plan `count` towns of `radius` on `planet`: sites on land between
-/// `low` and `high` metres over the sea, nearly level across, apart from
-/// one another, the port first.
-pub fn plan(planet: &Planet, sea: f64, radius: f64, count: usize, seed: u32) -> Vec<Town> {
+/// How big the town of a given RANK on a body is, given the biggest.
+///
+/// Zipf's law with a floor and the town's own jitter (`ZIPF`, `SMALLEST`,
+/// `SIZE_JITTER`). The rank is the town's own index, which is the order
+/// `in_order` accepted it in, so the PORT is the biggest place on the
+/// body and the rest descend: that is the one thing about rank here that
+/// is not arbitrary, and it is the right thing, because a port is the
+/// town this game is about.
+///
+/// It is a pure function of the index and the seed, which is what keeps
+/// it out of the baked atlas: the file carries the biggest and every
+/// town's own size is worked out again from its rank.
+pub fn size_of(biggest: f64, index: usize, seed: u32) -> f64 {
+    let rank = (index + 1) as f64;
+    let zipf = rank.powf(-ZIPF).max(SMALLEST);
+    let jitter = 1.0 + (hash3(index as i64, 17, 3, seed) - 0.5) * 2.0 * SIZE_JITTER;
+    biggest * zipf * jitter
+}
+
+/// Whether the ground is level enough across a town of `radius` at a
+/// direction: six samples out at half the radius, against a twelfth of it
+/// in fall.
+///
+/// It is asked at ACCEPTANCE rather than in the candidate scan, and that
+/// is what makes a town's size its own: a site has to be level across the
+/// town that will actually stand on it, and which town that is depends on
+/// its rank, which depends on what has been accepted already. It is also
+/// far cheaper, because a scan asks this of twenty thousand candidates
+/// and an acceptance loop asks it of the few hundred it looks at.
+fn level_enough(planet: &Planet, sea: f64, dir: DVec3, h: f64, radius: f64) -> bool {
+    let big_r = planet.radius;
+    let (east, north) = frame_at(dir);
+    let (mut lo, mut hi) = (h, h);
+    for (e, n) in [
+        (1.0, 0.0),
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (0.0, -1.0),
+        (0.7, 0.7),
+        (-0.7, -0.7),
+    ] {
+        let d = (dir + east * (e * radius * 0.5 / big_r) + north * (n * radius * 0.5 / big_r))
+            .normalize();
+        let hh = surface_radius(planet, d) - sea;
+        lo = lo.min(hh);
+        hi = hi.max(hh);
+    }
+    hi - lo <= radius * 0.12
+}
+
+/// Plan `count` towns on `planet`, the BIGGEST of them `biggest` across:
+/// sites on land between `low` and `high` metres over the sea, level
+/// across whatever town is going on them, apart from one another by both
+/// their radii, the port first and the largest.
+pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) -> Vec<Town> {
     // No towns asked for is no candidates walked. The scan is four
     // thousand directions with a levelness test on each, and on a big
     // planet where none of them qualifies it is every one of them: nine
@@ -244,97 +348,94 @@ pub fn plan(planet: &Planet, sea: f64, radius: f64, count: usize, seed: u32) -> 
         if shape.climate(dir, h).frozen() {
             continue;
         }
-        let (east, north) = frame_at(dir);
-        let (mut lo, mut hi) = (h, h);
-        for (e, n) in [
-            (1.0, 0.0),
-            (-1.0, 0.0),
-            (0.0, 1.0),
-            (0.0, -1.0),
-            (0.7, 0.7),
-            (-0.7, -0.7),
-        ] {
-            let d = (dir + east * (e * radius * 0.5 / big_r) + north * (n * radius * 0.5 / big_r))
-                .normalize();
-            let hh = surface_radius(planet, d) - sea;
-            lo = lo.min(hh);
-            hi = hi.max(hh);
-        }
-        if hi - lo > radius * 0.12 {
-            continue;
-        }
         cands.push((dir, h, i));
     }
     let cands = in_order(cands, seed);
-    let apart = ((2.0 * radius + 200.0) / big_r).cos();
     let mut towns: Vec<Town> = Vec::new();
     for (dir, h) in cands {
         if towns.len() >= count {
             break;
         }
-        if towns.iter().any(|t| t.dir.dot(dir) > apart) {
+        let radius = size_of(biggest, towns.len(), seed);
+        // Apart by BOTH their radii, because they are not the same size
+        // any more: one figure for the gap would stand a village as far
+        // off its neighbour as a city stands off its own.
+        if towns
+            .iter()
+            .any(|t| t.dir.dot(dir) > ((t.radius + radius + BETWEEN) / big_r).cos())
+        {
             continue;
         }
-        let index = towns.len();
-        towns.push(lay(dir, h + sea - big_r, radius, index, seed));
+        if !level_enough(planet, sea, dir, h, radius) {
+            continue;
+        }
+        towns.push(lay(dir, h + sea - big_r, radius, towns.len(), seed));
     }
     towns
 }
 
-/// A town on a local grid: a lot per block, taller near the middle, a few
-/// blocks left as plazas, and every street in pieces.
+/// How much TOWN there is at a point of a town's own grid, metres east
+/// and north of its middle: one at the very middle, nought at the edge,
+/// and negative outside it.
+///
+/// It is the one number a town's shape is made of, and everything else is
+/// read off it: where the town STOPS, which of the three zones a block is
+/// in, and how tall what stands there is. One number with three
+/// consequences rather than three rules that have to agree.
+///
+/// The LOBES are why an outline is not a circle. Two octaves of the
+/// core's own value noise on the block's own place, a couple of lobes
+/// across the town, pushing the edge in and out by `REACH` of the
+/// nominal radius: a town is what grew where growing was easy, so it runs
+/// a long way down one side and stops short on another. Circles at a
+/// hundred and sixty sites read as one stamp used a hundred and sixty
+/// times, which is exactly what the owner was looking at.
+fn demand(x: f64, z: f64, radius: f64, seed: u32) -> f64 {
+    let r = x.hypot(z) / radius.max(f64::MIN_POSITIVE);
+    let p = DVec3::new(x / (radius * LOBE), 3.5, z / (radius * LOBE));
+    let lobe = (noise3(p, seed) - 0.5) + (noise3(p * 2.7, seed ^ 0x5B2D) - 0.5) * 0.5;
+    1.0 - r + lobe * REACH
+}
+
+/// What a block of a town's grid IS. The zones are the demand's own
+/// thresholds, so a town's outline, its density and its skyline are three
+/// readings of one field and cannot disagree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Zone {
+    /// Not town at all: country, and no block here.
+    Away,
+    /// Houses with space between them, one storey, set well back.
+    Suburb,
+    /// The town proper: streets of two and three storey buildings.
+    Town,
+    /// Downtown: the towers.
+    Core,
+}
+
+impl Zone {
+    fn of(want: f64) -> Zone {
+        if want > CORE_AT {
+            Zone::Core
+        } else if want > TOWN_AT {
+            Zone::Town
+        } else if want > 0.0 {
+            Zone::Suburb
+        } else {
+            Zone::Away
+        }
+    }
+}
+
+/// A town on a local grid: towers in the middle, streets of houses round
+/// them, suburbs with gardens on the outside, and an outline that is not
+/// a circle.
 pub fn lay(dir: DVec3, h: f64, radius: f64, index: usize, seed: u32) -> Town {
     let (east, north) = frame_at(dir);
-    let n = (radius / PITCH).floor() as i64;
-    let hash = |i: i64, j: i64, k: i64| hash3(i, j, k, seed.wrapping_add(index as u32 * 977));
-    let mut lots = Vec::new();
-    for i in -n..=n {
-        for j in -n..=n {
-            let (cx, cz) = (i as f64 * PITCH, j as f64 * PITCH);
-            if cx.hypot(cz) > radius {
-                continue;
-            }
-            if hash(i, j, 0) < 0.15 {
-                continue;
-            }
-            let near = 1.0 - cx.hypot(cz) / radius;
-            let tall = 1 + ((hash(i, j, 3) * 0.4 + near * near) * 7.0).floor() as u32;
-            let pick = hash(i, j, 6);
-            let (kind, storeys) = choose(tall, pick);
-            let jitter = BLOCK - 8.0;
-            lots.push(Lot {
-                x: cx + (hash(i, j, 4) - 0.5) * jitter,
-                z: cz + (hash(i, j, 5) - 0.5) * jitter,
-                storeys,
-                kind,
-                id: ((i + 64) as u32) << 8 | (j + 64) as u32,
-            });
-        }
-    }
-    let mut pieces = Vec::new();
-    let reach = radius + STREET;
-    let along = (reach / PIECE).ceil() as i64;
-    for i in -n..=n + 1 {
-        let at = i as f64 * PITCH - BLOCK / 2.0 - STREET / 2.0;
-        for k in -along..along {
-            let mid = (k as f64 + 0.5) * PIECE;
-            if at.hypot(mid) > reach + PIECE {
-                continue;
-            }
-            pieces.push(Piece {
-                x: at,
-                z: mid,
-                w: STREET,
-                d: PIECE,
-            });
-            pieces.push(Piece {
-                x: mid,
-                z: at,
-                w: PIECE,
-                d: STREET,
-            });
-        }
-    }
+    // The grid reaches past the nominal radius, because the lobes do.
+    let n = ((radius * (1.0 + REACH)) / PITCH).ceil() as i64;
+    let seed = seed.wrapping_add(index as u32 * 977);
+    let (lots, built) = plot(n, radius, seed);
+    let pieces = streets_of(n, &built);
     Town {
         dir,
         east,
@@ -345,6 +446,146 @@ pub fn lay(dir: DVec3, h: f64, radius: f64, index: usize, seed: u32) -> Town {
         pieces,
         index,
     }
+}
+
+/// Which SIDES of a block want a street: west, east, south and north.
+mod fronts {
+    pub const WEST: u8 = 1;
+    pub const EAST: u8 = 2;
+    pub const SOUTH: u8 = 4;
+    pub const NORTH: u8 = 8;
+    pub const ALL: u8 = WEST | EAST | SOUTH | NORTH;
+}
+
+/// The one side a suburban block fronts: the one facing the middle of
+/// town, so a run of them shares a road in and the road leads somewhere.
+///
+/// A suburb block used to front all four sides like a downtown one, and
+/// a lone house with nothing built beside it then stood in a square ring
+/// of its own tarmac. The owner would have read that off the picture as
+/// a moat, and the picture is where it showed: the numbers said the town
+/// had streets and it did.
+fn faces(i: i64, j: i64) -> u8 {
+    if i.abs() >= j.abs() {
+        if i > 0 {
+            fronts::WEST
+        } else {
+            fronts::EAST
+        }
+    } else if j > 0 {
+        fronts::SOUTH
+    } else {
+        fronts::NORTH
+    }
+}
+
+/// Which block of a town's grid carries what, and which sides of each
+/// block want a street, which is what the streets are then laid along.
+fn plot(n: i64, radius: f64, seed: u32) -> (Vec<Lot>, Vec<u8>) {
+    let wide = (2 * n + 1) as usize;
+    let mut built = vec![0u8; wide * wide];
+    let mut lots = Vec::new();
+    let hash = |i: i64, j: i64, k: i64| hash3(i, j, k, seed);
+    for i in -n..=n {
+        for j in -n..=n {
+            let (cx, cz) = (i as f64 * PITCH, j as f64 * PITCH);
+            let want = demand(cx, cz, radius, seed);
+            let zone = Zone::of(want);
+            if zone == Zone::Away {
+                continue;
+            }
+            // A plaza downtown, a field in the suburbs: the same hash,
+            // read against what the place can afford to leave empty.
+            let empty = if zone == Zone::Suburb {
+                1.0 - SUBURB_FILL
+            } else {
+                0.15
+            };
+            if hash(i, j, 0) < empty {
+                continue;
+            }
+            let tall = match zone {
+                // A suburb is ONE storey whatever the hash says. What
+                // makes it a suburb is that nothing on it is tall.
+                Zone::Suburb => 1,
+                _ => 1 + ((hash(i, j, 3) * 0.4 + want * want) * 7.0).floor() as u32,
+            };
+            let (kind, storeys) = choose(tall, hash(i, j, 6));
+            let jitter = if zone == Zone::Suburb {
+                SUBURB_SETBACK * 2.0
+            } else {
+                BLOCK - 8.0
+            };
+            built[(i + n) as usize * wide + (j + n) as usize] = if zone == Zone::Suburb {
+                faces(i, j)
+            } else {
+                fronts::ALL
+            };
+            lots.push(Lot {
+                x: cx + (hash(i, j, 4) - 0.5) * jitter,
+                z: cz + (hash(i, j, 5) - 0.5) * jitter,
+                storeys,
+                kind,
+                id: ((i + 64) as u32) << 8 | (j + 64) as u32,
+            });
+        }
+    }
+    (lots, built)
+}
+
+/// The streets of a town: a piece wherever a street runs past a block
+/// somebody built on, and nowhere else.
+///
+/// Laid over the whole disc instead, which is what this did, a town's
+/// paving was a circle whatever shape the town itself came out, so the
+/// outline the lobes cut was hidden under a perfectly round grid of
+/// tarmac. A street that serves nothing is not a street.
+fn streets_of(n: i64, built: &[u8]) -> Vec<Piece> {
+    let wide = (2 * n + 1) as usize;
+    let at = |i: i64, j: i64, side: u8| {
+        (-n..=n).contains(&i)
+            && (-n..=n).contains(&j)
+            && built[(i + n) as usize * wide + (j + n) as usize] & side != 0
+    };
+    // Along the block's own edge: the line between block i - 1 and i.
+    let line = |i: i64| i as f64 * PITCH - BLOCK / 2.0 - STREET / 2.0;
+    let steps = (PITCH / PIECE).ceil() as i64;
+    let mut pieces = Vec::new();
+    for i in -n..=n + 1 {
+        for j in -n..=n {
+            // Every piece of this block's own frontage, so the paving is
+            // continuous along a run of built blocks and stops with them.
+            if !(at(i - 1, j, fronts::EAST) || at(i, j, fronts::WEST)) {
+                continue;
+            }
+            for k in 0..steps {
+                let mid = j as f64 * PITCH + (k as f64 + 0.5 - steps as f64 / 2.0) * PIECE;
+                pieces.push(Piece {
+                    x: line(i),
+                    z: mid,
+                    w: STREET,
+                    d: PIECE,
+                });
+            }
+        }
+    }
+    for j in -n..=n + 1 {
+        for i in -n..=n {
+            if !(at(i, j - 1, fronts::NORTH) || at(i, j, fronts::SOUTH)) {
+                continue;
+            }
+            for k in 0..steps {
+                let mid = i as f64 * PITCH + (k as f64 + 0.5 - steps as f64 / 2.0) * PIECE;
+                pieces.push(Piece {
+                    x: mid,
+                    z: line(j),
+                    w: PIECE,
+                    d: STREET,
+                });
+            }
+        }
+    }
+    pieces
 }
 
 /// What kind of building a lot of a wanted height gets, and how many
@@ -389,98 +630,4 @@ pub fn ground_at(planet: &dyn Density, dir: DVec3, near: f64, far: f64) -> f64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn planet() -> Planet {
-        Planet {
-            radius: 1000.0,
-            relief: 40.0,
-            lumps: 6.0,
-            octaves: 6,
-            overhang: 1.0,
-            ledge: 8.0,
-            seed: 7,
-            sites: vec![],
-        }
-    }
-
-    #[test]
-    fn towns_stand_on_level_land_over_the_sea_and_apart() {
-        let planet = planet();
-        let sea = 996.0;
-        let towns = plan(&planet, sea, 40.0, 4, 7);
-        assert_eq!(towns.len(), 4, "four sites on a small planet");
-        for (i, t) in towns.iter().enumerate() {
-            assert_eq!(t.index, i);
-            let h = planet.radius + t.h - sea;
-            assert!((3.0..=40.0).contains(&h), "town {i} at {h} m over the sea");
-            assert!(t.lots.len() > 10, "{} lots", t.lots.len());
-            assert!(t.pieces.len() > 40, "{} pieces of street", t.pieces.len());
-            assert!(t.lots.iter().all(|l| l.x.hypot(l.z) <= t.radius + BLOCK));
-            assert!(
-                t.lots.iter().any(|l| l.storeys >= 4),
-                "something tall in the middle"
-            );
-            assert!(
-                t.lots.iter().any(|l| l.storeys == 1),
-                "something low at the edge"
-            );
-            for u in towns.iter().skip(i + 1) {
-                let apart = t.dir.angle_between(u.dir) * planet.radius;
-                assert!(apart > 2.0 * 40.0 + 200.0, "towns {apart} m apart");
-            }
-        }
-        // The PORT is the lowest, and only the port: the rest are taken
-        // in a hashed order, or every town on the body stands on a shore
-        // (`in_order`, and `biome::tests::towns_stand_inland_and_on_islands`).
-        assert!(towns[1..].iter().all(|u| towns[0].h <= u.h));
-        // A lot's frame is plumb where it stands and keeps the town's east.
-        let t = &towns[0];
-        let f = lot_frame(planet.radius, t, 30.0, -20.0);
-        assert!((f.dir.length() - 1.0).abs() < 1e-12 && f.east.dot(f.dir).abs() < 1e-12);
-        assert!(f.east.dot(t.east) > 0.99);
-        let p = f.world(DVec3::new(1.0, 2.0, 3.0));
-        assert!((f.local(p) - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-9);
-        assert!((f.local(f.dir * f.base)).length() < 1e-9);
-        let site = site_of(t);
-        assert_eq!(site.r, 2.0 * t.radius + APRON);
-    }
-
-    #[test]
-    fn a_levelled_site_flattens_the_ground_to_the_towns_height() {
-        let mut planet = planet();
-        let sea = 996.0;
-        let towns = plan(&planet, sea, 40.0, 2, 7);
-        let t = &towns[0];
-        let before = ground_at(&planet, t.dir, 950.0, 1050.0);
-        planet.sites.push(site_of(t));
-        let mid = ground_at(&planet, t.dir, 950.0, 1050.0);
-        assert!(
-            (mid - (planet.radius + t.h)).abs() < 0.05,
-            "the middle at {} against the level {}",
-            mid - planet.radius,
-            t.h
-        );
-        assert!(
-            (before - mid).abs() < 5.0,
-            "the level is near the ground that was there"
-        );
-        // Right across the town the ground is at the level; well outside it
-        // the ground is its own.
-        let f = lot_frame(planet.radius, t, t.radius * 0.8, 0.0);
-        let edge = ground_at(&planet, f.dir, 950.0, 1050.0);
-        assert!(
-            (edge - (planet.radius + t.h)).abs() < 0.05,
-            "the edge at {}",
-            edge - planet.radius
-        );
-        let far = (t.dir + t.east * (t.radius * 4.0 / planet.radius)).normalize();
-        let mut bare = planet.clone();
-        bare.sites.clear();
-        assert!(
-            (ground_at(&planet, far, 950.0, 1050.0) - ground_at(&bare, far, 950.0, 1050.0)).abs()
-                < 1e-9
-        );
-    }
-}
+mod tests;

@@ -71,6 +71,10 @@ const SLOPE_SPAN: f64 = 0.99;
 /// nobody can see.
 const CITY_TEXELS: f64 = 2.2;
 const ROAD_TEXELS: f64 = 0.9;
+/// How small the smallest city on a body may be drawn. A village is a
+/// fifth of the biggest city across and would be under half a texel,
+/// which is a place the chart does not say is there at all.
+const SMALLEST_CITY: f64 = 1.0;
 
 /// How bright a city and a road burn on the body's night side, nought to
 /// one. A road is a thread of lamps between two towns and a town is the
@@ -315,6 +319,17 @@ impl Chart {
     /// about.
     pub fn stamp(&mut self, planet: &Planet, sea: f64) {
         let relief = planet.shape().relief;
+        // The biggest city on the body is `CITY_TEXELS` and every other
+        // is the square root of its share of that one's ground, which is
+        // the honest scaling: a mark's AREA is what reads as how big a
+        // place is. Measured against the body's own biggest rather than
+        // against a constant, because the one figure a town used to be is
+        // gone and a chart cannot know what the next body's is.
+        let biggest = planet
+            .sites
+            .iter()
+            .map(|s| s.r)
+            .fold(f64::MIN_POSITIVE, f64::max);
         for site in &planet.sites {
             let d = site.dir.normalize_or(DVec3::Y);
             let spot = Spot {
@@ -322,7 +337,14 @@ impl Chart {
                 kind: Kind::City,
                 water: 0.0,
             };
-            self.blot(d, &spot, relief, CITY_TEXELS, CITY_LIGHT);
+            let share = (site.r / biggest).clamp(0.0, 1.0).sqrt();
+            self.blot(
+                d,
+                &spot,
+                relief,
+                (CITY_TEXELS * share).max(SMALLEST_CITY),
+                CITY_LIGHT * share,
+            );
         }
     }
 

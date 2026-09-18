@@ -26,6 +26,9 @@ pub(crate) struct Args {
     /// the lit face, 180 the body's own midnight and 140 a crescent with
     /// most of the night side in the frame.
     pub(crate) around: f64,
+    /// Metres over the PORT to stand and look straight down at it, for a
+    /// picture of a town's own plan in the game.
+    pub(crate) over: Option<f64>,
     /// Plan the home body's cities and roads, write its atlas and stop.
     /// It runs BEFORE any of Bevy is built, so a bake needs no window, no
     /// device and no Xvfb: it is arithmetic and a file.
@@ -63,6 +66,7 @@ impl Default for Args {
             look: None,
             sunward: None,
             around: 0.0,
+            over: None,
             bake_atlas: false,
             levels: LEVELS,
             shot: None,
@@ -98,6 +102,7 @@ pub(crate) fn parse_args() -> Args {
             "--fly" => args.fly = true,
             "--sunward" => args.sunward = it.next().and_then(|v| v.parse().ok()),
             "--around" => args.around = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0),
+            "--over" => args.over = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),

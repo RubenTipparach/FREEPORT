@@ -1104,6 +1104,15 @@ because it is the count that bounds the cost: at 160 towns the mean
 spacing here is 280 km, and a first cut written as a 90 km reach built
 exactly one of them.
 
+**A city is drawn on the chart at its own SIZE.** The biggest
+settlement on a body is `CITY_TEXELS` across and every other is the
+square root of its share of that one's ground, because a mark's AREA is
+what reads as how big a place is; the floor is `SMALLEST_CITY` (one
+texel), since a village at a fifth of a city is half a texel and half a
+texel is a place the chart does not say is there. Measured against the
+body's own biggest rather than a constant, because there is no longer one
+figure a town is and a chart cannot know the next body's.
+
 **A town is smaller than a chart texel, so it is STAMPED.** Eighty metres
 against six thousand: asking `surface` about a texel's own middle finds a
 town one time in five thousand, so the cities were invisible on the chart
@@ -1117,6 +1126,66 @@ and the bake is back to 991 ms.
 is the coastal fringe and nothing else, so every town came out on a beach
 and the interior of every continent was empty. It is 3 m to three tenths
 of the relief now, and level ground at two thousand metres is a plateau.
+
+**Every town was the SAME TOWN, and the owner asked why.** One
+`TOWN_RADIUS` was handed to all hundred and sixty of them, and `lay` cut
+its blocks out of a circle (`hypot(x, z) > radius`), so a body carried a
+hundred and sixty copies of one disc. Three things replace it, and they
+are one number rather than three rules:
+
+- **SIZE is the rank size law.** `town::size_of` is Zipf: the nth biggest
+  settlement is about `1/n^ZIPF` of the biggest, which is the one
+  empirical thing known about how big cities are. `ZIPF` is 0.26 with a
+  floor at `SMALLEST` (0.35) and a little jitter, so a body has a couple
+  of cities, a spread of towns and a lot of villages rather than a
+  hundred and sixty of one thing. Measured at a biggest of 170 m: rank 0
+  is 153 m and 249 lots, rank 3 is 104 m and 92, rank 60 is 55 m and 24.
+  The exponent alone (0.32, no floor) made the tail a hamlet and the
+  world lost three quarters of its built city; the floor is what keeps a
+  village a village.
+- **SHAPE is a demand FIELD**, and everything is read off it. `demand` is
+  one at a town's middle, nought at its nominal edge and negative outside,
+  with two octaves of the core's own value noise pushing that edge in and
+  out by `REACH` (0.42) of the radius. A town is what grew where growing
+  was easy, so it runs a long way down one side and stops short on
+  another. Measured on the port: it reaches 153 m one way and its nearest
+  edge is 62 m out.
+- **And the ZONES are that same number's own thresholds.** Over `CORE_AT`
+  is downtown and its towers, over `TOWN_AT` is the town proper at two to
+  four storeys, and everything out to nought is SUBURB: one storey
+  whatever the hash says, `SUBURB_FILL` of the blocks carrying a house at
+  all, and a setback three times the town's own jitter. What makes a
+  suburb a suburb is the SPACE rather than the house, which is why the
+  fill and the setback are there and not just a shorter building: the
+  same grid with low buildings on it is downtown with the towers taken
+  away. Measured: 5.0 storeys inside a third of the way out against 1.0
+  past four fifths, and 0.0045 lots a square metre against 0.0007,
+  which is six times the density.
+
+**A street runs where somebody built and nowhere else.** The grid used to
+be laid over the whole disc whatever the town came out as, so a town's
+paving was a perfect circle with the town's own ragged outline hidden
+under it. `streets_of` lays a piece along a block's frontage only when
+that block or its neighbour carries a lot, so the network takes the
+town's shape for free and the suburbs get the sparse roads they should.
+
+**And a block says WHICH of its four sides it fronts.** Every built block
+fronted all four at first, which downtown is right about, because its
+neighbours front the same street from the other side and the four merge
+into a grid. A lone suburban house has no neighbours, so it stood in a
+square ring of its own tarmac: a moat, which the picture showed at once
+and the counts did not. `faces` gives a suburb block the ONE side facing
+the middle of town, so a run of them shares a road in and the road leads
+somewhere. The port went from 2,564 pieces of street to 1,540 for the
+same 249 lots.
+
+**And the levelness test moved to ACCEPTANCE.** A site has to be level
+across the town that will actually stand on it, and which town that is
+depends on its rank, which depends on what has been accepted already; the
+scan cannot know it. It is also far cheaper, because the scan asked six
+`surface_radius` marches of all twenty thousand candidates and the
+acceptance loop asks them of the few hundred it looks at: the bake is
+19.0 s against 23.7.
 
 **A town's ORDER is what put every city on a shore, and the window was
 never the thing.** Candidates were sorted by height and the first hundred
@@ -1148,9 +1217,12 @@ range as you fly is not built, so a far city is its own levelled plateau
 with no buildings on it until town streaming lands. The chunk streamer
 already does exactly this for ground and the shape of it is the same.
 
-Measured: 160 towns planned in 7.4 s (20,000 candidates, up from 4,000),
-8 of them built into 2,836,252 triangles, 146,659 collision boxes and
-1,358 lamps in 687 ms, and 32 of the 160 standing on an island.
+Measured: 160 towns planned in 19.0 s and BAKED (20,000 candidates, up
+from 4,000), 8 of them built into 2,437,572 triangles, 127,438 collision
+boxes and 1,260 lamps in 621 ms, and 32 of the 160 standing on an island.
+The same eight at one size were 2,836,252 triangles, so a world of cities
+and villages costs a little LESS than a world of identical towns while
+carrying a city two and a half times the area of any of them.
 
 ## Cities are JOINED, and the plan of a body is BAKED
 

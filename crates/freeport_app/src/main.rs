@@ -120,7 +120,12 @@ const SEA: f64 = RADIUS + 1000.0;
 /// many has cities all over it from orbit and level ground waiting under
 /// each of them.
 const TOWNS: usize = 160;
-const TOWN_RADIUS: f64 = 80.0;
+/// How far across the BIGGEST town on the body is, metres. Every other
+/// town's size falls off its own rank by Zipf's law (`town::size_of`),
+/// so this is a ceiling rather than the one figure every city was: at 80
+/// m, which is what it was, a hundred and sixty settlements were a
+/// hundred and sixty copies of one settlement.
+const TOWN_RADIUS: f64 = 170.0;
 
 /// How many of the planned towns are BUILT, nearest to where the world
 /// starts first.
@@ -197,6 +202,15 @@ const SUN_BEARING: f64 = 40.0;
 /// what shows the lights and the ground they stand on in one picture.
 fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
     let (eye, look) = start(world);
+    // Straight down on the PORT, which is the one camera a town's own
+    // plan can be judged from: its outline, its zones and where its
+    // streets run are a thing seen from above and nothing else.
+    if let Some(over) = args.over {
+        if let Some(port) = world.towns.first() {
+            let ground = port.dir * (world.planet.radius + port.h);
+            return (ground + port.dir * over, ground);
+        }
+    }
     match args.sunward {
         Some(radii) => (
             turned(sun_over(eye), args.around.to_radians()) * world.planet.radius * radii.max(1.05),
