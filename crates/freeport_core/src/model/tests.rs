@@ -213,7 +213,9 @@ fn a_towns_fabric_is_one_mesh_in_its_own_frame() {
     );
     // Every vertex is in the town's own frame, so an f32 holds a micron:
     // nothing is further from the middle than the town is wide.
-    let reach = (town.radius + town::STREET + BLOCK) as f32;
+    // Past the nominal radius by the LOBES and the STRETCH, which is how
+    // far a town's own outline can actually run.
+    let reach = (town.radius * town::OUTLINE + town::STREET + BLOCK) as f32;
     for p in &f.mesh.positions {
         assert!(
             p[0].abs() < reach && p[1].abs() < reach,

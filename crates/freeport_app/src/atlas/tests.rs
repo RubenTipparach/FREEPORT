@@ -35,6 +35,8 @@ fn atlas_of(planet: &Planet, towns: &[Town], roads: Vec<Line>) -> Atlas {
             .map(|t| Placed {
                 dir: t.dir.to_array(),
                 h: t.h,
+                r: t.radius,
+                along: t.along.to_array(),
             })
             .collect(),
         roads,

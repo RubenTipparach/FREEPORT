@@ -14,7 +14,7 @@
 
 use crate::field::{hash3, noise3, Density, Planet};
 use crate::model::Kind;
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 
 /// A place on the planet levelled for a town: its direction, its height
 /// over the mean radius, and how far across the levelling reaches.
@@ -55,6 +55,10 @@ pub struct Town {
     /// The town's level, metres over the mean radius.
     pub h: f64,
     pub radius: f64,
+    /// Which way the town GREW, east and north in its own frame: along
+    /// its own shore, which is across the way the land falls. Nought on
+    /// ground with no slope to it, and the town is then round.
+    pub along: DVec2,
     pub lots: Vec<Lot>,
     pub pieces: Vec<Piece>,
     pub index: usize,
@@ -98,28 +102,45 @@ const APRON: f64 = 12.0;
 const CANDIDATES: usize = 20_000;
 /// How far apart two towns stand over and above their own two radii,
 /// metres, so a city and its neighbour have country between them.
-const BETWEEN: f64 = 200.0;
+pub(crate) const BETWEEN: f64 = 200.0;
 
 /// How town SIZES are spread. Every town on a body used to be the one
 /// figure across, so a hundred and sixty cities were a hundred and sixty
 /// copies of one city; these are what make a few of them cities, some of
 /// them towns and most of them villages.
 ///
-/// ZIPF is the exponent of the rank size law, which is the one empirical
-/// thing known about how big cities are: the nth biggest settlement in a
-/// region is about `1/n^k` of the biggest, with k near one for a mature
-/// country and lower where the ranking is looser. It is 0.32 here, which
-/// over a hundred and sixty towns puts the smallest at a fifth of the
-/// biggest rather than at a hundred and sixtieth, because a body with one
-/// city and a hundred and fifty nine hamlets is a body with one place on
-/// it worth landing at.
-const ZIPF: f64 = 0.26;
-/// The smallest a town may be as a share of the biggest, so the tail of
-/// the law is a village rather than a single house.
-const SMALLEST: f64 = 0.35;
-/// How far a town's own hash moves its size either way, so two towns of
-/// neighbouring rank are not the same town.
+/// How fast a town's size falls off as it stands further from the sea,
+/// in the WINDOW's own units: the share of the way up a body's habitable
+/// band at which a town is halfway down to the smallest.
+///
+/// A share of the RELIEF is what this was and it is wrong on a small
+/// body: the window a town may stand in is 3 m to three tenths of the
+/// relief, so on a two kilometre test ball that is 3 m to 12 and a fall
+/// off length of a twentieth of the relief is two metres. Every town on
+/// it came out the same size, which is the thing this replaces. Measured
+/// in the window, the law spreads the same way on any body.
+const COAST: f64 = 0.22;
+/// How sharply it falls: over one at the shore and flat inland, which is
+/// the shape of what a port is worth against what a market town is.
+const COAST_BIAS: f64 = 1.7;
+/// The smallest a town may be as a share of the biggest, which is what an
+/// inland one settles at.
+const SMALLEST: f64 = 0.32;
+/// How far a town's own hash moves its size either way, so two towns on
+/// one shore are not twins.
 const SIZE_JITTER: f64 = 0.16;
+/// How far a site may FALL across itself, as a share of the town's own
+/// radius. It is what the grading has to cut away, and every metre of it
+/// is a step down at the town's rim: at a tenth a hundred and fifty metre
+/// city is cut fifteen metres into its own hill, which reads as a
+/// terrace, and much more than that reads as a quarry.
+const LEVEL: f64 = 0.10;
+
+/// How much of its own size a settlement dropped on a ROAD gets. A place
+/// that grew because the road goes past it is a village whatever its
+/// shore, so the coastal law still shapes it and this is what keeps it
+/// from competing with the cities the road joins.
+pub(crate) const WAYSIDE: f64 = 0.42;
 
 /// A town's own OUTLINE, which is not a circle.
 ///
@@ -132,6 +153,12 @@ const SIZE_JITTER: f64 = 0.16;
 /// used a hundred and sixty times.
 const LOBE: f64 = 1.6;
 const REACH: f64 = 0.42;
+/// How far a town is stretched along its own shore, and squeezed across
+/// it by the same factor so the ground it covers is unchanged.
+const STRETCH: f64 = 1.45;
+/// The furthest a town's own outline can reach, as a multiple of its
+/// nominal radius: the lobes and the stretch together.
+pub const OUTLINE: f64 = (1.0 + REACH) * STRETCH;
 
 /// Where a town stops being one thing and starts being another, in the
 /// same demand the outline is cut from: over `CORE_AT` is downtown and
@@ -258,54 +285,103 @@ fn in_order(mut cands: Vec<(DVec3, f64, usize)>, seed: u32) -> Vec<(DVec3, f64)>
         .collect()
 }
 
-/// How big the town of a given RANK on a body is, given the biggest.
+/// How big a town standing `over_sea` metres over the sea is, as a share
+/// of the biggest on a body with `relief` of it.
 ///
-/// Zipf's law with a floor and the town's own jitter (`ZIPF`, `SMALLEST`,
-/// `SIZE_JITTER`). The rank is the town's own index, which is the order
-/// `in_order` accepted it in, so the PORT is the biggest place on the
-/// body and the rest descend: that is the one thing about rank here that
-/// is not arbitrary, and it is the right thing, because a port is the
-/// town this game is about.
+/// **A big city is COASTAL.** That is the owner's own observation and it
+/// is most of economic geography: a port trades with the whole world and
+/// an inland town with its own valley, so the great cities are on water
+/// and the interior carries market towns and villages. What it replaces
+/// was Zipf on the town's RANK, which gives the right spread of sizes and
+/// puts them in an arbitrary place: the biggest city on the body was
+/// wherever the hash happened to accept first.
 ///
-/// It is a pure function of the index and the seed, which is what keeps
-/// it out of the baked atlas: the file carries the biggest and every
-/// town's own size is worked out again from its rank.
-pub fn size_of(biggest: f64, index: usize, seed: u32) -> f64 {
-    let rank = (index + 1) as f64;
-    let zipf = rank.powf(-ZIPF).max(SMALLEST);
-    let jitter = 1.0 + (hash3(index as i64, 17, 3, seed) - 0.5) * 2.0 * SIZE_JITTER;
-    biggest * zipf * jitter
+/// The measure is the height over the SEA rather than the distance to the
+/// nearest water, which would be a search. On this world they are nearly
+/// the same question by construction: the continent term is a plateau
+/// with a steep shelf (`biome::shelf`), so low ground IS the coastal
+/// fringe and the interior stands a kilometre up. `COAST` is the fall off
+/// length as a share of the body's own relief.
+pub fn coastal(over_sea: f64, planet: &Planet) -> f64 {
+    let (low, high) = window(planet);
+    let reach = ((high - low) * COAST).max(f64::MIN_POSITIVE);
+    let up = ((over_sea - low) / reach).max(0.0);
+    SMALLEST + (1.0 - SMALLEST) / (1.0 + up.powf(COAST_BIAS))
 }
 
-/// Whether the ground is level enough across a town of `radius` at a
-/// direction: six samples out at half the radius, against a twelfth of it
-/// in fall.
+/// A town's own size, metres: the coastal share of the biggest on the
+/// body, with its own jitter so two towns on one shore are not twins.
+pub fn size_of(biggest: f64, over_sea: f64, planet: &Planet, index: usize, seed: u32) -> f64 {
+    let jitter = 1.0 + (hash3(index as i64, 17, 3, seed) - 0.5) * 2.0 * SIZE_JITTER;
+    biggest * coastal(over_sea, planet) * jitter
+}
+
+/// What the natural ground does across a town's own site.
+struct Ground {
+    /// The LOWEST it reaches, metres over the sea.
+    low: f64,
+    /// How far it falls from end to end.
+    fall: f64,
+    /// Which way it falls, in the site's own east and north: downhill,
+    /// which on a coastal site is the way the water is.
+    down: DVec2,
+}
+
+/// How many bearings the site is sampled on, and at what shares of the
+/// town's own radius. Two rings rather than one, because a site that is
+/// level across its middle and falls off a cliff at its rim is a site
+/// whose town stands on a pedestal.
+const BEARINGS: usize = 12;
+const RINGS: [f64; 4] = [0.3, 0.6, 0.85, 1.05];
+
+/// What the ground does across a site, in `BEARINGS` times `RINGS`
+/// samples plus the middle: forty nine marches.
+///
+/// Its LOWEST is what the town's level becomes, so the residual is a dip
+/// between two neighbouring samples, and how deep that can be is bounded
+/// by the `LEVEL` fall the site had to pass to be accepted at all.
 ///
 /// It is asked at ACCEPTANCE rather than in the candidate scan, and that
 /// is what makes a town's size its own: a site has to be level across the
-/// town that will actually stand on it, and which town that is depends on
-/// its rank, which depends on what has been accepted already. It is also
-/// far cheaper, because a scan asks this of twenty thousand candidates
-/// and an acceptance loop asks it of the few hundred it looks at.
-fn level_enough(planet: &Planet, sea: f64, dir: DVec3, h: f64, radius: f64) -> bool {
+/// town that will actually stand on it. It is also far cheaper, because a
+/// scan asks this of twenty thousand candidates and an acceptance loop
+/// asks it of the few hundred it looks at.
+fn site_ground(planet: &Planet, sea: f64, dir: DVec3, h: f64, radius: f64) -> Ground {
     let big_r = planet.radius;
     let (east, north) = frame_at(dir);
     let (mut lo, mut hi) = (h, h);
-    for (e, n) in [
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (0.0, 1.0),
-        (0.0, -1.0),
-        (0.7, 0.7),
-        (-0.7, -0.7),
-    ] {
-        let d = (dir + east * (e * radius * 0.5 / big_r) + north * (n * radius * 0.5 / big_r))
-            .normalize();
-        let hh = surface_radius(planet, d) - sea;
-        lo = lo.min(hh);
-        hi = hi.max(hh);
+    let mut down = DVec2::ZERO;
+    for k in 0..BEARINGS {
+        let a = std::f64::consts::TAU * k as f64 / BEARINGS as f64;
+        let (e, n) = (a.cos(), a.sin());
+        for reach in RINGS {
+            let step = radius * reach / big_r;
+            let d = (dir + east * (e * step) + north * (n * step)).normalize();
+            let hh = surface_radius(planet, d) - sea;
+            lo = lo.min(hh);
+            hi = hi.max(hh);
+            // Downhill is where the ground is LOWER than the middle, and
+            // a sample further out weighs less per metre of fall because
+            // it is measuring a gentler average.
+            down += DVec2::new(e, n) * ((h - hh) / reach);
+        }
     }
-    hi - lo <= radius * 0.12
+    Ground {
+        low: lo,
+        fall: hi - lo,
+        down: down.normalize_or_zero(),
+    }
+}
+
+/// How far over the sea a settlement may stand on a body, metres.
+///
+/// The ceiling is the PLANET's, not a fixed forty metres: on a world with
+/// eight kilometres of relief a forty metre window is the coastal fringe
+/// and nothing else, so every town came out on a beach and the interior
+/// of every continent was empty. A city sits wherever the ground is
+/// level, and level ground at two thousand metres is a plateau.
+pub(crate) fn window(planet: &Planet) -> (f64, f64) {
+    (3.0, (planet.relief * 0.3).max(40.0))
 }
 
 /// Plan `count` towns on `planet`, the BIGGEST of them `biggest` across:
@@ -322,13 +398,7 @@ pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) ->
     }
     let big_r = planet.radius;
     let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
-    // How far over the sea a town may stand. The ceiling is the PLANET's,
-    // not a fixed forty metres: on a world with eight kilometres of relief
-    // a forty metre window is the coastal fringe and nothing else, so
-    // every town came out on a beach and the interior of every continent
-    // was empty. A city sits wherever the ground is level, and level
-    // ground at two thousand metres is a plateau.
-    let (low, high) = (3.0, (planet.relief * 0.3).max(40.0));
+    let (low, high) = window(planet);
     let shape = planet.shape();
     let mut cands: Vec<(DVec3, f64, usize)> = Vec::new();
     for i in 0..CANDIDATES {
@@ -351,27 +421,109 @@ pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) ->
         cands.push((dir, h, i));
     }
     let cands = in_order(cands, seed);
-    let mut towns: Vec<Town> = Vec::new();
+    let mut placed: Vec<Placement> = Vec::new();
     for (dir, h) in cands {
-        if towns.len() >= count {
+        if placed.len() >= count {
             break;
         }
-        let radius = size_of(biggest, towns.len(), seed);
-        // Apart by BOTH their radii, because they are not the same size
-        // any more: one figure for the gap would stand a village as far
-        // off its neighbour as a city stands off its own.
-        if towns
+        // Its size is its OWN, off how near the sea it stands, so the
+        // great cities come out on the coast and the interior carries
+        // market towns. It was the rank it happened to be accepted at.
+        let radius = size_of(biggest, h, planet, placed.len(), seed);
+        // Apart by BOTH their radii, because they are not the same size:
+        // one figure for the gap would stand a village as far off its
+        // neighbour as a city stands off its own.
+        if placed
             .iter()
-            .any(|t| t.dir.dot(dir) > ((t.radius + radius + BETWEEN) / big_r).cos())
+            .any(|p| p.dir.dot(dir) > ((p.radius + radius + BETWEEN) / big_r).cos())
         {
             continue;
         }
-        if !level_enough(planet, sea, dir, h, radius) {
+        let Some(p) = settle(planet, sea, dir, h, radius) else {
             continue;
-        }
-        towns.push(lay(dir, h + sea - big_r, radius, towns.len(), seed));
+        };
+        placed.push(p);
     }
-    towns
+    // The BIGGEST first, so the port is town nought and the index a town
+    // carries is its rank. It is a sort rather than the acceptance order
+    // because size is now a fact about the SITE and the order is a hash.
+    placed.sort_by(|a, b| b.radius.total_cmp(&a.radius));
+    lay_all(&placed, big_r, sea, seed)
+}
+
+/// A site that has been accepted: where it is, how big, how the ground
+/// under it lies, and which way it grows.
+pub(crate) struct Placement {
+    pub dir: DVec3,
+    /// The town's level, metres over the SEA, which is the lowest the
+    /// natural ground reaches across the site.
+    pub over_sea: f64,
+    pub radius: f64,
+    pub along: DVec2,
+}
+
+/// Accept a site if the ground across it is level enough, and answer
+/// where its town would stand and which way it would grow.
+///
+/// **The level is the LOWEST ground across the site and never the height
+/// at its middle.** A site blends the relief TOWARD its own height
+/// (`Planet::surface_blend`), so a level taken at the middle of a sloping
+/// site raises the downhill half: the town then stands on a pedestal with
+/// its own skirt hanging over the land, which is a city that ADDED
+/// ground rather than one that flattened it. Cut to the lowest and the
+/// site can only ever take ground away, which is what grading is.
+pub(crate) fn settle(
+    planet: &Planet,
+    sea: f64,
+    dir: DVec3,
+    h: f64,
+    radius: f64,
+) -> Option<Placement> {
+    let ground = site_ground(planet, sea, dir, h, radius);
+    if ground.fall > radius * LEVEL {
+        return None;
+    }
+    // A town grows ALONG the shore, which is across the way the land
+    // falls: the sea is downhill and the hill is up, so what is left to
+    // build on runs between them.
+    let along = DVec2::new(-ground.down.y, ground.down.x);
+    Some(Placement {
+        dir,
+        over_sea: ground.low,
+        radius,
+        along,
+    })
+}
+
+/// The towns of a list of placements, in the order given.
+pub(crate) fn lay_all(placed: &[Placement], big_r: f64, sea: f64, seed: u32) -> Vec<Town> {
+    lay_all_from(placed, big_r, sea, seed, 0)
+}
+
+/// The same, with the first one's index given: a settlement's index is
+/// its own seed, so the villages a road grows carry on from the cities
+/// rather than starting again at nought and being their twins.
+pub(crate) fn lay_all_from(
+    placed: &[Placement],
+    big_r: f64,
+    sea: f64,
+    seed: u32,
+    first: usize,
+) -> Vec<Town> {
+    placed
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            lay(
+                p.dir,
+                p.over_sea + sea - big_r,
+                p.radius,
+                p.along,
+                first + i,
+                seed,
+            )
+        })
+        .collect()
 }
 
 /// How much TOWN there is at a point of a town's own grid, metres east
@@ -390,8 +542,17 @@ pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) ->
 /// a long way down one side and stops short on another. Circles at a
 /// hundred and sixty sites read as one stamp used a hundred and sixty
 /// times, which is exactly what the owner was looking at.
-fn demand(x: f64, z: f64, radius: f64, seed: u32) -> f64 {
-    let r = x.hypot(z) / radius.max(f64::MIN_POSITIVE);
+fn demand(x: f64, z: f64, radius: f64, along: DVec2, seed: u32) -> f64 {
+    // Stretched ALONG the shore and squeezed across it, at the same area:
+    // a coastal town runs up and down its own beach, because the water
+    // stops it one way and the hill behind it stops it the other. A town
+    // with no slope under it gets no stretch and stays round.
+    let (u, v) = if along.length_squared() < 0.5 {
+        (x, z)
+    } else {
+        (x * along.x + z * along.y, z * along.x - x * along.y)
+    };
+    let r = (u / STRETCH).hypot(v * STRETCH) / radius.max(f64::MIN_POSITIVE);
     let p = DVec3::new(x / (radius * LOBE), 3.5, z / (radius * LOBE));
     let lobe = (noise3(p, seed) - 0.5) + (noise3(p * 2.7, seed ^ 0x5B2D) - 0.5) * 0.5;
     1.0 - r + lobe * REACH
@@ -426,15 +587,24 @@ impl Zone {
     }
 }
 
+/// A town's own seed, off the body's and its index: one function, so
+/// anything that has to ask a town's plan the same question it asked
+/// itself gets the same dice.
+pub(crate) fn town_seed(seed: u32, index: usize) -> u32 {
+    seed.wrapping_add(index as u32 * 977)
+}
+
 /// A town on a local grid: towers in the middle, streets of houses round
 /// them, suburbs with gardens on the outside, and an outline that is not
 /// a circle.
-pub fn lay(dir: DVec3, h: f64, radius: f64, index: usize, seed: u32) -> Town {
+pub fn lay(dir: DVec3, h: f64, radius: f64, along: DVec2, index: usize, seed: u32) -> Town {
     let (east, north) = frame_at(dir);
-    // The grid reaches past the nominal radius, because the lobes do.
-    let n = ((radius * (1.0 + REACH)) / PITCH).ceil() as i64;
-    let seed = seed.wrapping_add(index as u32 * 977);
-    let (lots, built) = plot(n, radius, seed);
+    // The grid reaches past the nominal radius, because the lobes do, and
+    // further still along the shore, because the town is stretched that
+    // way.
+    let n = ((radius * OUTLINE) / PITCH).ceil() as i64;
+    let seed = town_seed(seed, index);
+    let (lots, built) = plot(n, radius, along, seed);
     let pieces = streets_of(n, &built);
     Town {
         dir,
@@ -442,6 +612,7 @@ pub fn lay(dir: DVec3, h: f64, radius: f64, index: usize, seed: u32) -> Town {
         north,
         h,
         radius,
+        along,
         lots,
         pieces,
         index,
@@ -481,7 +652,7 @@ fn faces(i: i64, j: i64) -> u8 {
 
 /// Which block of a town's grid carries what, and which sides of each
 /// block want a street, which is what the streets are then laid along.
-fn plot(n: i64, radius: f64, seed: u32) -> (Vec<Lot>, Vec<u8>) {
+fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> (Vec<Lot>, Vec<u8>) {
     let wide = (2 * n + 1) as usize;
     let mut built = vec![0u8; wide * wide];
     let mut lots = Vec::new();
@@ -489,7 +660,7 @@ fn plot(n: i64, radius: f64, seed: u32) -> (Vec<Lot>, Vec<u8>) {
     for i in -n..=n {
         for j in -n..=n {
             let (cx, cz) = (i as f64 * PITCH, j as f64 * PITCH);
-            let want = demand(cx, cz, radius, seed);
+            let want = demand(cx, cz, radius, along, seed);
             let zone = Zone::of(want);
             if zone == Zone::Away {
                 continue;

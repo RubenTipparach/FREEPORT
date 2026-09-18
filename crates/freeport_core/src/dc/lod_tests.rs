@@ -3,21 +3,34 @@ use crate::audit::audit;
 use crate::field::Planet;
 use crate::lattice::Rings;
 
+/// Box culling never removes a chunk the full mesher would have put
+/// polygons in, on the hardest ground there is: a town's own skirt.
+///
+/// The site's level is the GROUND at its middle less a stride, not a
+/// round nought. A site cuts and never fills, so one whose level stands
+/// over the land does nothing at all, and this body's ground at `Y` is
+/// fifteen hundred metres under nought: the fixture's town was a level
+/// floating a kilometre and a half over an untouched hillside, and every
+/// chunk the rings held was ordinary terrain the culling cannot rule
+/// either way.
 #[test]
 fn local_culling_preserves_owned_apron_polygons_near_town_skirts() {
-    let planet = Planet {
+    let bare = Planet {
         radius: 1_000_000.0,
         relief: 8_000.0,
         lumps: 12.0,
         octaves: 18,
         overhang: 3.0,
         ledge: 12.0,
+        ..Planet::default()
+    };
+    let planet = Planet {
         sites: vec![crate::town::Site {
             dir: DVec3::Y,
-            h: 0.0,
+            h: bare.shape().height(DVec3::Y) - 2.0,
             r: 172.0,
         }],
-        ..Planet::default()
+        ..bare.clone()
     };
     let lat = Lattice::new(DVec3::splat(-2_000_099.75), 0.5);
     let mut tested = 0;

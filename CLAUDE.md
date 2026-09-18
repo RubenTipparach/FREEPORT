@@ -991,6 +991,34 @@ near the middle, a few blocks left as plazas, and every street in `PIECE`
 chord lesson at the game's radius: on a 5 km planet a fifty six metre
 chord sags 8 cm, and a piece never has to.
 
+**A city FLATTENS ground and never adds any.** `Planet::surface` takes
+whichever is lower of a site's own blend and the bare relief, and
+`town::settle` gives a site the LOWEST ground its own survey found rather
+than the height at its middle. Either alone is not enough: a level taken
+at the middle of a sloping site lifts the downhill half, and a blend that
+averages toward the level lifts every dip on the skirt. Together a site
+can only ever cut, which is what grading is and what the owner asked for
+after reading a town on a pedestal off a picture.
+
+The survey is forty nine marches, twelve bearings on four rings, so the
+level is the lowest of them; a dip between two neighbouring samples is
+the only ground a site can still fill, and how deep that can be is
+bounded by the `LEVEL` fall the site had to pass to be accepted.
+
+**It cost the mesher's own fast path, and that is where the hole was.**
+`local_solid` answered a box wholly inside a site's level region straight
+off the level, rock below and air above, which was exactly right while a
+site's ground WAS its level. With a cut it calls rock the ground the cut
+has taken out from under it, and a chunk ruled rock is never meshed: a
+hole in the world. The air half survives, because the level is still an
+upper bound on the surface; the rock half is gone and what rules those
+boxes now is the general path's own sample and bound, which is sound
+inside a site because the min of a constant and the relief is never
+steeper than the relief. Three fixtures in this repository had a site
+standing OVER their own ground, which is now a site that does nothing at
+all, and each had to be given a level that cuts before it tested
+anything again.
+
 **The ground under a town is LEVELLED and that is the field's job**
 (`Planet.sites`: one right across the town and nought past an `APRON` of
 12 m, the relief the site's height and the noise not asked), so a plateau
@@ -1133,23 +1161,40 @@ its blocks out of a circle (`hypot(x, z) > radius`), so a body carried a
 hundred and sixty copies of one disc. Three things replace it, and they
 are one number rather than three rules:
 
-- **SIZE is the rank size law.** `town::size_of` is Zipf: the nth biggest
-  settlement is about `1/n^ZIPF` of the biggest, which is the one
-  empirical thing known about how big cities are. `ZIPF` is 0.26 with a
-  floor at `SMALLEST` (0.35) and a little jitter, so a body has a couple
-  of cities, a spread of towns and a lot of villages rather than a
-  hundred and sixty of one thing. Measured at a biggest of 170 m: rank 0
-  is 153 m and 249 lots, rank 3 is 104 m and 92, rank 60 is 55 m and 24.
-  The exponent alone (0.32, no floor) made the tail a hamlet and the
-  world lost three quarters of its built city; the floor is what keeps a
-  village a village.
+- **SIZE is how near the SEA a town stands.** `town::coastal` falls from
+  one at the shore to `SMALLEST` inland over `COAST` of the body's own
+  habitable window: a port trades with the whole world and an inland town
+  with its own valley, which is the owner's observation and most of
+  economic geography. Measured on this planet, the biggest quarter of its
+  towns stand 124 m over the sea and the smallest quarter 998.
+  What it replaces was ZIPF on the town's RANK. That gives the right
+  SPREAD of sizes and puts them nowhere in particular: the biggest city
+  on the body was wherever the hash happened to accept first. The spread
+  survives, because the heights do: most ground is inland, so most towns
+  are small and the few on the shore are the cities.
+  The fall off is measured in the WINDOW and never in the relief, which
+  is this file's own "an absolute number is wrong on some body" rule a
+  third time: a town may stand between 3 m and three tenths of the
+  relief, so on a two kilometre test ball that is 3 m to 12, and a length
+  written as a twentieth of the relief is two metres. Every town on that
+  ball came out one size.
 - **SHAPE is a demand FIELD**, and everything is read off it. `demand` is
   one at a town's middle, nought at its nominal edge and negative outside,
   with two octaves of the core's own value noise pushing that edge in and
   out by `REACH` (0.42) of the radius. A town is what grew where growing
   was easy, so it runs a long way down one side and stops short on
-  another. Measured on the port: it reaches 153 m one way and its nearest
-  edge is 62 m out.
+  another. Measured on the test planet's own port, whose nominal radius
+  is 27 m: it reaches 35 m at its furthest and its nearest edge is 14 m
+  out, which is what "not a disc" means at a resolution a block grid can
+  express.
+- **And it grows ALONG ITS OWN SHORE.** `settle` reads which way the land
+  falls out of the same forty nine samples it levels the site from, and
+  hands the town the direction ACROSS that, because the sea stops a town
+  one way and the hill behind it stops it the other. `demand` stretches
+  by `STRETCH` (1.45) along it and squeezes by the same across, so the
+  ground a town covers is unchanged and its plan is a long one: a coastal
+  town runs up and down its own beach. A site with no slope under it gets
+  no direction and stays round.
 - **And the ZONES are that same number's own thresholds.** Over `CORE_AT`
   is downtown and its towers, over `TOWN_AT` is the town proper at two to
   four storeys, and everything out to nought is SUBURB: one storey
@@ -1178,6 +1223,24 @@ and the counts did not. `faces` gives a suburb block the ONE side facing
 the middle of town, so a run of them shares a road in and the road leads
 somewhere. The port went from 2,564 pieces of street to 1,540 for the
 same 249 lots.
+
+**A road grows VILLAGES along it.** `road::waysides` walks each road's
+own line and drops a settlement wherever it has run `EVERY` (25 km, about
+a day with a cart) since the last one and the ground will take a town.
+It is the owner's ask and it is also the only honest order, because a
+road has to be routed before anything can stand beside it: they come
+AFTER the cities in the list, so every road's own `from` and `to` still
+name the towns they named. Their size is the same coastal law cut by
+`WAYSIDE` (0.42), since a place that grew because the road goes past it
+is a village whatever its shore. This body's 267 roads grew 544 of them,
+against 160 cities.
+
+**And a survey is filtered to ONE direction, which is this file's oldest
+performance rule arriving at its newest caller.** The wayside pass asked
+`settle` of a planet carrying all hundred and sixty town sites, and every
+one of its forty nine marches walked all of them: the bake went from
+nineteen seconds to three hundred and seventeen. `Planet::around` at the
+candidate's own direction leaves nought or one, and it is 23.8 s.
 
 **And the levelness test moved to ACCEPTANCE.** A site has to be level
 across the town that will actually stand on it, and which town that is
@@ -1217,12 +1280,15 @@ range as you fly is not built, so a far city is its own levelled plateau
 with no buildings on it until town streaming lands. The chunk streamer
 already does exactly this for ground and the shape of it is the same.
 
-Measured: 160 towns planned in 19.0 s and BAKED (20,000 candidates, up
-from 4,000), 8 of them built into 2,437,572 triangles, 127,438 collision
-boxes and 1,260 lamps in 621 ms, and 32 of the 160 standing on an island.
-The same eight at one size were 2,836,252 triangles, so a world of cities
-and villages costs a little LESS than a world of identical towns while
-carrying a city two and a half times the area of any of them.
+Measured: 160 cities and 544 roadside villages planned and BAKED in
+23.8 s (20,000 candidates), 704 settlements from 180 m across down to 23,
+8 of them built into 2,326,024 triangles, 121,329 collision boxes and
+1,292 lamps in 367 ms. The same eight at one size were 2,836,252
+triangles, so a world of cities and villages costs a little LESS than a
+world of identical towns while carrying a city two and a half times the
+area of any of them. A chunk near the port is 17 ms on lavapipe against
+12 before, which is what a site that cuts costs: `surface` can no longer
+return a level without asking the relief what was under it.
 
 ## Cities are JOINED, and the plan of a body is BAKED
 

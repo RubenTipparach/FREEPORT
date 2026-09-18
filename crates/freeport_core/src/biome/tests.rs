@@ -665,12 +665,22 @@ fn towns_stand_inland_and_on_islands() {
         at(0.75),
         hs[hs.len() - 1]
     );
-    // The PORT is still the lowest ground on the body, because a port is
-    // the town this game is about.
+    // The PORT is the BIGGEST town on the body and it is COASTAL, which
+    // is the same fact twice: size is how near the sea a town stands, so
+    // the biggest is on the shore. It is not exactly the LOWEST, because
+    // every town's size carries its own jitter.
     let port = planet.radius + towns[0].h - sea;
     assert!(
-        port <= hs[1] + 1e-9,
-        "the port at {port:.0} m is not the lowest town on the body"
+        towns[1..].iter().all(|t| towns[0].radius >= t.radius),
+        "the port is not the biggest town on the body"
+    );
+    println!(
+        "the port is {:.0} m across and {port:.0} m over the sea",
+        towns[0].radius
+    );
+    assert!(
+        port < at(0.25),
+        "the port stands {port:.0} m up, past a quarter of the towns on the body"
     );
     // A quarter of them are a long way up, which is what says the height
     // ceiling is doing anything at all.
@@ -679,6 +689,26 @@ fn towns_stand_inland_and_on_islands() {
         "three quarters of the towns are under {:.0} m, which is a coastline",
         at(0.75)
     );
+    // BIG CITIES ARE COASTAL and small ones are inland, which is the
+    // owner's own observation and most of economic geography: a port
+    // trades with the whole world and an inland town with its own
+    // valley. The law is `town::coastal` and this is what it buys.
+    let mut by_size: Vec<(f64, f64)> = towns
+        .iter()
+        .map(|t| (t.radius, planet.radius + t.h - sea))
+        .collect();
+    by_size.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let quarter = by_size.len() / 4;
+    let mean = |v: &[(f64, f64)]| v.iter().map(|p| p.1).sum::<f64>() / v.len() as f64;
+    let (big, small) = (mean(&by_size[..quarter]), mean(&by_size[3 * quarter..]));
+    println!(
+        "the biggest quarter of the towns stand {big:.0} m over the sea and the smallest {small:.0}"
+    );
+    assert!(
+        small > big * 3.0,
+        "the biggest towns are {big:.0} m up and the smallest {small:.0}: size says nothing about the coast"
+    );
+
     // And the ISLANDS have cities on them. A continent is a piece worth a
     // per cent of the body; anything smaller is an island.
     let land = landmasses(&planet, sea, 480, 240);

@@ -213,21 +213,32 @@ mod tests {
         assert_eq!(sweep_planet(&planet, landed, takeoff, 0.5), takeoff);
     }
 
+    /// A sweep between two CLEAR endpoints cannot step over the ground
+    /// between them, and a site's skirt is the hard case because it is
+    /// the steepest thing on a body.
+    ///
+    /// Two pans rather than one mesa: a site CUTS now, so it can no
+    /// longer stand a mound in a flier's way, and a fixture whose site
+    /// was above the ground is a fixture with nothing in it at all. Two
+    /// towns dug into a plain with untouched ground between them put the
+    /// PLAIN in the way, and a line from inside one pan to inside the
+    /// other runs straight through it.
     #[test]
     fn local_slope_keeps_skirts_crossed_between_clear_endpoints() {
+        let pan = |x: f64| Site {
+            dir: DVec3::new(x, 1000.0, 0.0).normalize(),
+            h: -20.0,
+            r: 40.0,
+        };
         let planet = Planet {
             radius: 1000.0,
             relief: 0.0,
             overhang: 0.0,
-            sites: vec![Site {
-                dir: DVec3::Y,
-                h: 20.0,
-                r: 40.0,
-            }],
+            sites: vec![pan(-60.0), pan(60.0)],
             ..Default::default()
         };
-        let start = DVec3::new(-40.0, 1010.0, 0.0);
-        let end = DVec3::new(40.0, 1010.0, 0.0);
+        let start = DVec3::new(-60.0, 985.0, 0.0);
+        let end = DVec3::new(60.0, 985.0, 0.0);
         assert!(planet.at(start) < -0.5 && planet.at(end) < -0.5);
         let stopped = sweep_planet(&planet, start, end, 0.5);
         assert!(stopped.x < 0.0);

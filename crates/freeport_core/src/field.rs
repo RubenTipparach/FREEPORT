@@ -194,10 +194,27 @@ impl Planet {
     /// samples and this one are the same ground.
     pub fn surface(&self, dir: DVec3) -> (f64, f64) {
         let (bias, keep) = self.surface_blend(dir);
-        if keep == 0.0 {
-            return (bias, keep);
-        }
-        (bias + self.shape().height(dir) * keep, keep)
+        // A site CUTS and never FILLS: it takes whichever of its own
+        // blend and the bare ground is LOWER.
+        //
+        // The blend on its own is a weighted average of the natural ground
+        // and the site's level, so wherever the site stands over the land
+        // it lifts it: a town on a slope came out on a pedestal with its
+        // apron hanging out over the valley, which is a city that ADDED
+        // ground rather than one that flattened it, and it is what the
+        // owner read off the picture.
+        //
+        // A town's level is the LOWEST ground its own survey found
+        // (`town::settle`), so inside the site the min is the site's level
+        // and the platform is still flat; on the apron it is what stops
+        // the skirt building land up. There is no fast path out of it: a
+        // `keep == 0` branch that returned the level unconditionally put a
+        // CLIFF round every site the moment the min was applied outside
+        // and not inside, measured at a slope of 350 against a bound of
+        // 30. One rule at every weight, and the bound holds because the
+        // min of two functions is never steeper than the steeper of them.
+        let bare = self.shape().height(dir);
+        ((bias + bare * keep).min(bare), keep)
     }
 
     /// The terms this planet's relief is made of.
@@ -259,10 +276,29 @@ impl Planet {
             }
             let level_chord = 2.0 * (0.5 * inner / self.radius).sin();
             if inner > 0.0 && distance + span < level_chord {
-                return Sphere {
+                // Wholly inside this site's LEVEL, where the ground is
+                // `min(level, relief)`, because a site cuts and never
+                // fills. So the level is an upper bound on the surface
+                // and a box wholly outside the sphere at it is AIR.
+                //
+                // The other half of that answer is gone: calling a box
+                // under the level ROCK was right while a site's ground
+                // WAS its level, and is a hole in the world now, because
+                // the cut can have taken that ground out from under it
+                // and a chunk ruled rock is never meshed. What rules it
+                // instead is the general path below, whose sample is the
+                // real field and whose bound covers this too: the min of
+                // a constant and the relief is never steeper than the
+                // relief, and a level site carves nothing (`keep` is
+                // nought there, so `at` adds no overhang).
+                if let Some(false) = (Sphere {
                     radius: self.radius + site.h,
+                })
+                .solid(lo, hi)
+                {
+                    return Some(false);
                 }
-                .solid(lo, hi);
+                break;
             }
             // Its skirt may cross the box. A planet-wide skirt slope is much
             // too loose to help, and overlapping sites must preserve order.
@@ -697,9 +733,12 @@ mod tests {
             sites: vec![],
         };
         let dir = DVec3::new(0.2, 0.9, 0.3).normalize();
+        // Its level is UNDER the ground there, because a site cuts: one
+        // above it is a site that does nothing, which is the other half
+        // of this test.
         let site = crate::town::Site {
             dir,
-            h: 7.5,
+            h: -12.0,
             r: 80.0,
         };
         let (inner, outer) = site_band(&site);
@@ -713,7 +752,7 @@ mod tests {
             let a = m / planet.radius;
             (dir * a.cos() + east * a.sin()).normalize()
         };
-        assert_eq!(planet.surface(at(inner - 0.5)).0, 7.5);
+        assert_eq!(planet.surface(at(inner - 0.5)).0, planet.sites[0].h);
         let bare = Planet {
             sites: vec![],
             ..planet.clone()
@@ -723,8 +762,39 @@ mod tests {
             (planet.surface(far).0 - bare.surface(far).0).abs() < 1e-12,
             "the ground past the skirt is not the relief"
         );
+        // And a site standing OVER the ground changes nothing anywhere,
+        // because a city flattens land and never adds it.
+        let high = Planet {
+            sites: vec![crate::town::Site {
+                dir,
+                h: 30.0,
+                r: 80.0,
+            }],
+            ..bare.clone()
+        };
+        for m in [
+            0.0,
+            inner * 0.5,
+            inner - 0.5,
+            (inner + outer) * 0.5,
+            outer + 0.5,
+        ] {
+            let d = at(m);
+            assert!(
+                (high.surface(d).0 - bare.surface(d).0).abs() < 1e-12,
+                "a site over the ground raised it {m} m out"
+            );
+        }
     }
 
+    /// A site's own skirt is inside the bound the mesher rules chunks on.
+    ///
+    /// Its level CUTS, and cuts the STEEPEST a site can: at 30 m on a body
+    /// whose relief spans plus or minus twenty the site stood above every
+    /// scrap of ground it covers, and a site that only ever takes the
+    /// lower of itself and the land is then a site that does nothing at
+    /// all. What a bound has to cover is the worst case, so the level is
+    /// under the lowest ground here and the whole skirt is a cut.
     #[test]
     fn the_slope_bound_holds_across_a_sites_skirt() {
         let mut planet = Planet {
@@ -734,7 +804,7 @@ mod tests {
         };
         planet.sites = vec![crate::town::Site {
             dir: DVec3::Z,
-            h: 30.0,
+            h: -25.0,
             r: 100.0,
         }];
         let bound = planet.slope();

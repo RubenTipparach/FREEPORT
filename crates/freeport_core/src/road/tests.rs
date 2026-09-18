@@ -169,3 +169,49 @@ fn a_body_with_nothing_to_join_has_no_roads() {
         "a spacing of nought asked for an infinite grid"
     );
 }
+
+/// The roads grow VILLAGES along them. A road exists because two cities
+/// wanted to trade and what appears on it afterwards is everybody who
+/// wanted to be on the way, which is the owner's own ask.
+#[test]
+fn villages_stand_along_the_roads() {
+    let (planet, sea, towns) = world();
+    let roads = connect(&planet, sea, &towns, COARSE);
+    assert!(!roads.is_empty(), "no roads to grow anything on");
+    let biggest = towns.iter().map(|t| t.radius).fold(0.0, f64::max);
+    let grown = waysides(&planet, sea, &roads, &towns, biggest, 5);
+    println!(
+        "{} towns and {} roads grew {} villages of {:?} m",
+        towns.len(),
+        roads.len(),
+        grown.len(),
+        grown.iter().map(|t| t.radius.round()).collect::<Vec<_>>()
+    );
+    assert!(!grown.is_empty(), "no village on any road");
+    for v in &grown {
+        // ON a road: within a step of some point of some road's own line.
+        let near = roads
+            .iter()
+            .flat_map(|r| &r.line)
+            .map(|(d, _)| arc(*d, v.dir) * planet.radius)
+            .fold(f64::MAX, f64::min);
+        assert!(
+            near < EVERY,
+            "a village stands {near:.0} m off the nearest road"
+        );
+        // And it is a VILLAGE: smaller than the smallest city, because
+        // a place that grew on the way to somewhere is not a rival to
+        // the somewhere.
+        let least = towns.iter().map(|t| t.radius).fold(f64::MAX, f64::min);
+        assert!(
+            v.radius < least,
+            "a village is {:.0} m across against a town's {least:.0}",
+            v.radius
+        );
+    }
+    // And they carry on from the cities' own indices, so two settlements
+    // never share a seed and never come out the same town.
+    for (i, v) in grown.iter().enumerate() {
+        assert_eq!(v.index, towns.len() + i);
+    }
+}
