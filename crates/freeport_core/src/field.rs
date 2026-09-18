@@ -12,6 +12,10 @@
 
 use glam::DVec3;
 
+// The arithmetic the ground is made of lives in `noise` and is re-exported
+// here, so every caller outside this crate keeps the path it had.
+pub use crate::noise::{fbm3, hash3, hash3_f32, mix3, noise3, sample, Grid};
+
 /// A density: positive inside the rock, negative in the air, nought on the
 /// surface.
 pub trait Density {
@@ -183,14 +187,22 @@ impl Planet {
     /// The relief at a direction, metres over the mean radius, sites
     /// applied, and how much of the overhang is kept there. On a levelled
     /// site the relief is the site's height and the noise is not asked.
+    ///
+    /// The relief itself is `biome::Shape::height`, which is a few terms
+    /// of different characters rather than one fractal, and
+    /// `sampling.wgsl` transcribes that function so the mesher's own
+    /// samples and this one are the same ground.
     pub fn surface(&self, dir: DVec3) -> (f64, f64) {
         let (bias, keep) = self.surface_blend(dir);
         if keep == 0.0 {
             return (bias, keep);
         }
-        let relief =
-            (fbm3(dir * self.lumps, self.seed, self.octaves) * 2.0 - 1.0) * self.relief * 0.5;
-        (bias + relief * keep, keep)
+        (bias + self.shape().height(dir) * keep, keep)
+    }
+
+    /// The terms this planet's relief is made of.
+    pub fn shape(&self) -> crate::biome::Shape {
+        crate::biome::Shape::of(self)
     }
 }
 
@@ -271,11 +283,36 @@ impl Planet {
         (value.abs() > (1.0 + relief + carve) * reach + roundoff).then_some(value > 0.0)
     }
 
-    /// The radii the surface stays between: the mean less and plus half the
-    /// relief and half the overhang.
+    /// This planet with only the sites whose levelling can reach inside
+    /// `span`, a chord, of `dir`.
+    ///
+    /// A chunk's samples are all within a few metres of one another, so
+    /// filtering ONCE per chunk turns a loop over every town on the planet
+    /// into a loop over the nought or one that matter there. It is what
+    /// makes a planet with cities all over it cost a chunk what a planet
+    /// with eight does: `surface_blend` is asked for every one of a
+    /// chunk's seven thousand sample points, and walking hundreds of
+    /// sites in it is a million tests for a chunk that is nowhere near a
+    /// town.
+    pub fn around(&self, dir: DVec3, span: f64) -> Planet {
+        if self.sites.is_empty() {
+            return self.clone();
+        }
+        let mut local = self.clone();
+        local.sites.retain(|site| {
+            let (_, outer) = site_band(site);
+            (dir - site.dir).length() - span <= outer / self.radius
+        });
+        local
+    }
+
+    /// The radii the surface stays between: what the relief's own terms can
+    /// reach, and half the overhang either side of that. A site levels the
+    /// ground to a height the relief already allowed, so it widens nothing.
     pub fn band(&self) -> (f64, f64) {
-        let reach = self.relief * 0.5 + self.overhang * 0.5;
-        (self.radius - reach, self.radius + reach)
+        let (floor, top) = self.shape().band();
+        let carve = self.overhang * 0.5;
+        (floor - carve, top + carve)
     }
 }
 
@@ -294,8 +331,7 @@ impl Planet {
     /// keeps towns further apart than a site reaches), so the worst site
     /// bounds them all.
     fn steepest(&self) -> f64 {
-        let octaves = self.octaves.max(1) as f64;
-        let relief = self.relief * NOISE_SLOPE * self.lumps * octaves / self.radius;
+        let relief = self.shape().slope();
         let carve = if self.ledge > 0.0 {
             self.overhang * NOISE_SLOPE / self.ledge
         } else {
@@ -424,147 +460,6 @@ impl Block {
                 + self.axes[1] * (self.half.y * sy)
                 + self.axes[2] * (self.half.z * sz)
         })
-    }
-}
-
-/// The lattice's mixing, in whole numbers: nothing but multiply, exclusive
-/// or and shift, so it is bit exact on every machine and in every language.
-/// `hash3` is this over its own range and `field.wgsl` computes exactly
-/// this in WGSL.
-pub fn mix3(x: i64, y: i64, z: i64, seed: u32) -> u32 {
-    let mut h = (x as u32).wrapping_mul(0x8DA6_B343)
-        ^ (y as u32).wrapping_mul(0xD816_3841)
-        ^ (z as u32).wrapping_mul(0xCB1A_B31F)
-        ^ seed.wrapping_mul(0x9E37_79B9);
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2C1B_3C6D);
-    h ^= h >> 12;
-    h = h.wrapping_mul(0x297A_2D39);
-    h ^= h >> 15;
-    h
-}
-
-/// A lattice hash in 0..1, bit exact on every machine: what the noise is
-/// built on, and what a plan draws its dice from.
-pub fn hash3(x: i64, y: i64, z: i64, seed: u32) -> f64 {
-    mix3(x, y, z, seed) as f64 / 4_294_967_296.0
-}
-
-/// The same hash as a float, which is all a GPU can hold: `f32` carries
-/// twenty four bits of a thirty two bit number, so this is where the
-/// transcription in `field.wgsl` parts company with the core, and
-/// `a_float_hash_is_the_cores_to_a_hundred_millionth` is the bound.
-pub fn hash3_f32(x: i64, y: i64, z: i64, seed: u32) -> f32 {
-    mix3(x, y, z, seed) as f32 / 4_294_967_296.0
-}
-
-fn smooth(t: f64) -> f64 {
-    t * t * (3.0 - 2.0 * t)
-}
-
-/// Value noise on the integer lattice, in 0..1, smoothstepped so the lattice
-/// does not show as diamonds.
-pub fn noise3(p: DVec3, seed: u32) -> f64 {
-    #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // Detection guards every use; other architectures retain the scalar
-        // reference and no executable-wide CPU feature flag is required.
-        return unsafe { simd::noise3(p, seed) };
-    }
-    noise3_scalar(p, seed)
-}
-
-fn noise3_scalar(p: DVec3, seed: u32) -> f64 {
-    let f = p.floor();
-    let (x, y, z) = (f.x as i64, f.y as i64, f.z as i64);
-    let t = p - f;
-    let (tx, ty, tz) = (smooth(t.x), smooth(t.y), smooth(t.z));
-    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
-    let c = |dx: i64, dy: i64, dz: i64| hash3(x + dx, y + dy, z + dz, seed);
-    let x00 = lerp(c(0, 0, 0), c(1, 0, 0), tx);
-    let x10 = lerp(c(0, 1, 0), c(1, 1, 0), tx);
-    let x01 = lerp(c(0, 0, 1), c(1, 0, 1), tx);
-    let x11 = lerp(c(0, 1, 1), c(1, 1, 1), tx);
-    lerp(lerp(x00, x10, ty), lerp(x01, x11, ty), tz)
-}
-
-#[cfg(target_arch = "x86_64")]
-mod simd;
-
-/// Fractal sum of `noise3`, in 0..1: each octave doubles the frequency and
-/// halves the weight.
-pub fn fbm3(p: DVec3, seed: u32, octaves: u32) -> f64 {
-    let (mut total, mut amp, mut norm, mut freq) = (0.0, 1.0, 0.0, 1.0);
-    for i in 0..octaves.max(1) {
-        total += amp * noise3(p * freq, seed.wrapping_add(i));
-        norm += amp;
-        amp *= 0.5;
-        freq *= 2.0;
-    }
-    total / norm
-}
-
-/// A chunk of a field sampled on a lattice: `n` cells a side, `cell` metres
-/// each, starting at `corner`, with one cell of apron all round so a normal
-/// can be taken by central differences at every lattice point of the chunk.
-pub struct Grid {
-    pub n: usize,
-    pub cell: f64,
-    pub corner: DVec3,
-    values: Vec<f32>,
-}
-
-impl Grid {
-    fn stride(&self) -> usize {
-        self.n + 3
-    }
-
-    fn index(&self, i: i32, j: i32, k: i32) -> usize {
-        let s = self.stride();
-        ((k + 1) as usize * s + (j + 1) as usize) * s + (i + 1) as usize
-    }
-
-    /// The density at lattice point `i, j, k`, each in -1..=n+1.
-    pub fn at(&self, i: i32, j: i32, k: i32) -> f32 {
-        self.values[self.index(i, j, k)]
-    }
-
-    /// The field's gradient at a lattice point in 0..=n by central
-    /// differences, in density per cell.
-    pub fn gradient(&self, i: i32, j: i32, k: i32) -> [f32; 3] {
-        [
-            (self.at(i + 1, j, k) - self.at(i - 1, j, k)) * 0.5,
-            (self.at(i, j + 1, k) - self.at(i, j - 1, k)) * 0.5,
-            (self.at(i, j, k + 1) - self.at(i, j, k - 1)) * 0.5,
-        ]
-    }
-
-    /// The world point of a lattice point, in the field's frame.
-    pub fn point(&self, i: i32, j: i32, k: i32) -> DVec3 {
-        self.corner + DVec3::new(i as f64, j as f64, k as f64) * self.cell
-    }
-}
-
-/// Sample `field` over a chunk. The density is evaluated in `f64` and stored
-/// as `f32` because a chunk is a few tens of metres across and the number
-/// that matters, the density's distance from nought, is small there whatever
-/// the planet's radius is.
-pub fn sample(field: &dyn Density, corner: DVec3, cell: f64, n: usize) -> Grid {
-    let s = n + 3;
-    let mut values = Vec::with_capacity(s * s * s);
-    for k in -1..=(n as i32 + 1) {
-        for j in -1..=(n as i32 + 1) {
-            for i in -1..=(n as i32 + 1) {
-                let p = corner + DVec3::new(i as f64, j as f64, k as f64) * cell;
-                values.push(field.at(p) as f32);
-            }
-        }
-    }
-    Grid {
-        n,
-        cell,
-        corner,
-        values,
     }
 }
 
@@ -702,7 +597,26 @@ mod tests {
             seed: 1,
             sites: vec![],
         };
-        assert_eq!(planet.band(), (97.5, 102.5));
+        // The band's INVARIANT rather than its arithmetic: every direction's
+        // ground is inside it, and it is not so wide that ruling is
+        // pointless. The pair itself moved when the relief became a few
+        // composed terms rather than one fractal, and a pin on the pair
+        // would have read as a defect when what changed was the planet.
+        let (floor, top) = planet.band();
+        assert!(floor < planet.radius && top > planet.radius);
+        assert!(
+            top - floor < planet.relief * 2.0 + planet.overhang * 2.0,
+            "the band {floor} to {top} is wider than the relief can reach"
+        );
+        for i in 0..2000 {
+            let t = i as f64 * 0.618;
+            let d = DVec3::new(t.sin(), (t * 0.37).cos(), (t * 1.3).sin()).normalize();
+            let r = planet.radius + planet.surface(d).0;
+            assert!(
+                (floor..=top).contains(&r),
+                "ground at {r} is outside the band {floor} to {top}"
+            );
+        }
         let deep = (
             DVec3::new(-10.0, -10.0, -10.0),
             DVec3::new(10.0, 10.0, 10.0),

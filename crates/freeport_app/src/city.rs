@@ -2,7 +2,7 @@
 //! Collision always uses the full bake, independent of the visible LOD.
 
 use crate::stream::{Anchored, Frame};
-use crate::terrain::{to_mesh_filtered, TerrainMaterial};
+use crate::terrain::{to_mesh_filtered, TerrainMaterial, Vertex};
 use crate::world::TownMesh;
 use crate::Eye;
 use bevy::asset::RenderAssetUsages;
@@ -70,7 +70,9 @@ pub fn spawn_towns(
                 continue;
             }
             let handles = std::array::from_fn(|lod| {
-                let place = |p: Vec3| (p, (town.frame.world(p.as_dvec3()).length() - sea) as f32);
+                let place = |p: Vec3| {
+                    Vertex::built(p, (town.frame.world(p.as_dvec3()).length() - sea) as f32)
+                };
                 let mut mesh =
                     to_mesh_filtered(&town.meshes[lod], place, |m| (m == GLASS) == glazing);
                 // Vertex color is the terrain shader's material/mapping

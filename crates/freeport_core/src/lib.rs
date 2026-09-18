@@ -10,14 +10,18 @@
 
 pub mod atmos;
 pub mod audit;
+pub mod biome;
+pub mod chart;
 pub mod dc;
 pub mod field;
 pub mod flight;
 pub mod lattice;
 pub mod march;
 pub mod model;
+pub mod noise;
 pub mod pos;
 pub mod qef;
+pub mod road;
 pub mod sphere;
 pub mod tables;
 pub mod town;

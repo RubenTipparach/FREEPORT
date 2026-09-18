@@ -37,6 +37,99 @@ fn noise(hi: vec3<f32>, lo: vec3<f32>, seed: u32) -> f32 {
     return mix(mix(x00, x10, s.y), mix(x01, x11, s.y), s.z);
 }
 
+
+// ---------------------------------------------------------------------
+// The relief's own terms, a transcription of
+// `freeport_core::biome::Shape::landform` and `::cut`. The SHAPE of the
+// function is here and every constant in it arrives in `shape`, so a
+// threshold cannot be tuned on one side and left stale on the other: a
+// planet whose mesher and whose walker disagreed about where a mountain
+// belt starts is ground you fall through.
+//
+// Everything is a function of the DIRECTION, which arrives as the same
+// high and low pair the octaves already use, so multiplying by a term's
+// own frequency costs no precision at a thousand kilometres.
+
+struct Shape {
+    shares: vec4<f32>,   // continent, mountain, hills, valley
+    freqs: vec4<f32>,    // continent, belt, ridge, hills
+    channel: vec4<f32>,  // frequency, lip, gorge metres, reach metres
+    belt: vec4<f32>,     // from, to, ridge power, stretch
+    fbm: vec4<f32>,      // mean, span, half the relief, gain
+    octaves: vec4<u32>,  // continent, belt, ridge, channel
+    salts: vec4<u32>,    // the seeds those four are salted with
+    hills: vec4<u32>,    // the hills term's salt and octaves
+    shelf: vec4<f32>,    // the shelf's centre, half width and share
+}
+@group(0) @binding(3) var<uniform> shape: Shape;
+
+// `field::fbm3`, with the coordinate kept split.
+fn fbm(hi: vec3<f32>, lo: vec3<f32>, base: f32, seed: u32, octaves: u32) -> f32 {
+    var total = 0.0;
+    var amp = 1.0;
+    var norm = 0.0;
+    var frequency = base;
+    for (var i = 0u; i < octaves; i++) {
+        total += amp * noise(hi * frequency, lo * frequency, seed + i);
+        norm += amp;
+        amp *= 0.5;
+        frequency *= 2.0;
+    }
+    return total / norm;
+}
+
+// `biome::signed`, under another NAME: `signed` is a reserved keyword
+// in WGSL, so a shader declaring one is refused outright at
+// `create_shader_module` and this whole sampler never compiled. The
+// core's function is `signed` and this is its transcription.
+fn stretch(v: f32) -> f32 {
+    return clamp((v - shape.fbm.x) / shape.fbm.y, -1.0, 1.0);
+}
+
+// `biome::shelf`: the continent term with its own continental margin in
+// it, minus one on the abyssal plain and one on the plateau.
+fn shelf(n: f32) -> f32 {
+    let s = stretch(n);
+    let step = smoothstep(shape.shelf.x - shape.shelf.y, shape.shelf.x + shape.shelf.y, s)
+        * 2.0 - 1.0;
+    return step * shape.shelf.z + s * (1.0 - shape.shelf.z);
+}
+
+// `biome::ridged`.
+fn ridged(n: f32) -> f32 {
+    return pow(clamp(1.0 - abs(stretch(n)), 0.0, 1.0), shape.belt.z);
+}
+
+// `biome::Shape::landform`, metres over the mean radius.
+fn landform(hi: vec3<f32>, lo: vec3<f32>) -> f32 {
+    let half = shape.fbm.z;
+    let continent = shelf(fbm(hi, lo, shape.freqs.x, settings.x + shape.salts.x, shape.octaves.x))
+        * half * shape.shares.x;
+    let belt = fbm(hi, lo, shape.freqs.y, settings.x + shape.salts.y, shape.octaves.y);
+    let weight = smoothstep(shape.belt.x, shape.belt.y, belt);
+    var mountain = 0.0;
+    if weight > 0.0 {
+        mountain = ridged(fbm(hi, lo, shape.freqs.z, settings.x + shape.salts.z, shape.octaves.z))
+            * weight * half * shape.shares.y;
+    }
+    return continent + mountain;
+}
+
+// `biome::Shape::cut`, metres taken off the landform.
+fn cut(hi: vec3<f32>, lo: vec3<f32>, standing: f32) -> f32 {
+    if standing <= 0.0 {
+        return 0.0;
+    }
+    let n = fbm(hi, lo, shape.channel.x, settings.x + shape.salts.w, shape.octaves.w);
+    let c = smoothstep(shape.channel.y, 1.0, clamp(1.0 - abs(stretch(n)), 0.0, 1.0));
+    if c <= 0.0 {
+        return 0.0;
+    }
+    let reach = smoothstep(0.0, shape.channel.w, standing);
+    let broad = shape.fbm.z * shape.shares.w * c;
+    return (broad + shape.channel.z * c) * reach;
+}
+
 @compute @workgroup_size(64)
 fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let i = invocation.x;
@@ -47,30 +140,49 @@ fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
         density += (noise(p.carve_hi.xyz, p.carve_lo.xyz, settings.x + 0x9E37u) - 0.5)
             * p.carve_hi.w;
     }
-    if p.relief_lo.w != 0.0 {
-        // Contouring uses only these signs. A remaining octave contributes
-        // between zero and its amplitude, so its interval can prove the sign
-        // without evaluating it. Crossings and normals are still solved in f64.
-        let norm = 2.0 - exp2(1.0 - f32(settings.y));
-        let scale = 2.0 * p.relief_lo.w / norm;
+    // How much of the relief this direction keeps: nought right across a
+    // levelled town site, where the ground is the site's own height and
+    // the noise is not asked at all.
+    let keep = p.relief_lo.w;
+    if keep != 0.0 {
+        let hi = p.relief_hi.xyz;
+        let lo = p.relief_lo.xyz;
+        let gain = shape.fbm.w;
+        // The landform and what the water cuts into it, in full: these
+        // are the terms a planet is READ by, and they are few octaves
+        // each, so there is nothing here worth stopping early for.
+        let form = landform(hi, lo);
+        density += (form - cut(hi, lo, form)) * gain * keep;
+        // The hills, which are the ground under a walker's feet and carry
+        // the body's whole octave count. Contouring uses only the SIGN of
+        // this, so the remaining octaves need not be evaluated once they
+        // cannot reach nought: an octave contributes between nought and
+        // its own amplitude, and `signed` is monotone, so an interval on
+        // the partial sum is an interval on the height.
+        let amp = shape.fbm.z * shape.shares.z * gain * keep;
+        let count = shape.hills.y;
+        let seed = settings.x + shape.hills.x;
+        let norm = 2.0 - exp2(1.0 - f32(count));
         let error = 2.0 * bitcast<f32>(settings.w);
-        var amplitude = 1.0;
+        var total = 0.0;
+        var octave_amp = 1.0;
         var remaining = norm;
-        var frequency = 1.0;
-        density -= p.relief_lo.w;
-        for (var octave = 0u; octave < settings.y; octave++) {
-            let tail = scale * remaining;
-            let middle = density + 0.5 * tail;
-            if abs(middle) > 0.5 * abs(tail) + error {
+        var frequency = shape.freqs.w;
+        for (var octave = 0u; octave < count; octave++) {
+            let low = density + stretch(total / norm) * amp;
+            let high = density + stretch((total + remaining) / norm) * amp;
+            let middle = 0.5 * (low + high);
+            let reach = 0.5 * abs(high - low);
+            if abs(middle) > reach + error {
                 densities[i] = middle;
                 return;
             }
-            density += scale * amplitude * noise(p.relief_hi.xyz * frequency,
-                p.relief_lo.xyz * frequency, settings.x + octave);
-            remaining = max(0.0, remaining - amplitude);
-            amplitude *= 0.5;
+            total += octave_amp * noise(hi * frequency, lo * frequency, seed + octave);
+            remaining = max(0.0, remaining - octave_amp);
+            octave_amp *= 0.5;
             frequency *= 2.0;
         }
+        density += stretch(total / norm) * amp;
     }
     densities[i] = density;
 }

@@ -32,6 +32,9 @@ pub(crate) struct Body {
     pub colour: [f32; 3],
     pub material: Handle<TerrainMaterial>,
     pub water: Handle<WaterMaterial>,
+    /// The body's own distant surface, which reasons in planet local
+    /// coordinates like the other two and is moved by the same rebase.
+    pub distant: Handle<crate::distant::DistantMaterial>,
 }
 
 #[derive(Resource, Default)]
@@ -51,6 +54,7 @@ impl Planets {
             colour: [0.26, 0.43, 0.19],
             material: default(),
             water: default(),
+            distant: default(),
         }];
         let fallback = include_str!("../../../assets/config/planets.json").to_owned();
         let source = crate::terrain::assets_dir()
@@ -176,12 +180,14 @@ impl Body {
             colour: d.colour,
             material: default(),
             water: default(),
+            distant: default(),
             world: Arc::new(World {
                 planet,
                 blocks: vec![],
                 groups: vec![],
                 lamps: vec![],
                 towns: vec![],
+                roads: vec![],
                 bounds: Bounds {
                     radius: d.radius,
                     floor: floor - 2.0,

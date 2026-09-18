@@ -309,6 +309,7 @@ fn test_world() -> Arc<World> {
         groups: vec![],
         lamps: vec![],
         towns: vec![],
+        roads: vec![],
         bounds: freeport_core::walker::Bounds {
             radius: 1e6,
             floor: 990000.0,

@@ -18,6 +18,7 @@ use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
+use freeport_core::biome::{self, Climate};
 use freeport_core::dc::DcMesh;
 use freeport_core::town::Frame;
 use std::path::PathBuf;
@@ -319,7 +320,7 @@ const CREASE: f32 = 0.35;
 /// measures centimetres inside it. The caller computes the position in
 /// `f64` where it is small and exact, and the fragment does no arithmetic
 /// on it at all.
-pub fn to_mesh(m: &DcMesh, place: impl Fn(Vec3) -> (Vec3, f32)) -> Mesh {
+pub fn to_mesh(m: &DcMesh, place: impl Fn(Vec3) -> Vertex) -> Mesh {
     to_mesh_filtered(m, place, |_| true)
 }
 
@@ -327,13 +328,14 @@ pub fn to_mesh(m: &DcMesh, place: impl Fn(Vec3) -> (Vec3, f32)) -> Mesh {
 /// changing its mapping frame. Both meshes retain the baked normals.
 pub fn to_mesh_filtered(
     m: &DcMesh,
-    place: impl Fn(Vec3) -> (Vec3, f32),
+    place: impl Fn(Vec3) -> Vertex,
     include: impl Fn(u8) -> bool,
 ) -> Mesh {
     let mut positions = Vec::with_capacity(m.indices.len());
     let mut normals = Vec::with_capacity(m.indices.len());
     let mut colours = Vec::with_capacity(m.indices.len());
     let mut uvs = Vec::with_capacity(m.indices.len());
+    let mut climates = Vec::with_capacity(m.indices.len());
     for (t, material) in m.indices.chunks(3).zip(&m.materials) {
         if !include(*material) {
             continue;
@@ -342,7 +344,7 @@ pub fn to_mesh_filtered(
         let face = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or(Vec3::Y);
         for (k, &i) in t.iter().enumerate() {
             let n = Vec3::from(m.normals[i as usize]);
-            let (map, over) = place(p[k]);
+            let v = place(p[k]);
             positions.push(p[k].to_array());
             normals.push(
                 if *material != freeport_core::field::TERRAIN && n.angle_between(face) > CREASE {
@@ -351,8 +353,9 @@ pub fn to_mesh_filtered(
                     n.to_array()
                 },
             );
-            colours.push([*material as f32, map.x, map.y, map.z]);
-            uvs.push([over, 0.0]);
+            colours.push([*material as f32, v.map.x, v.map.y, v.map.z]);
+            uvs.push([v.over_sea, v.temp]);
+            climates.push([v.wet, 0.0]);
         }
     }
     Mesh::new(
@@ -363,6 +366,7 @@ pub fn to_mesh_filtered(
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colours)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, climates)
 }
 
 /// Where a chunk's vertex is mapped from: its planet relative position
@@ -372,7 +376,11 @@ pub fn to_mesh_filtered(
 /// modulo the tile is all a seam needs. The height over the sea rides
 /// along, measured in `f64` for the same reason: it is a band a metre and
 /// a half wide and it was quantised at six centimetres.
-pub fn chunk_mapping(corner: DVec3, sea: f64) -> impl Fn(Vec3) -> (Vec3, f32) {
+pub fn chunk_mapping(
+    corner: DVec3,
+    sea: f64,
+    shape: Option<biome::Shape>,
+) -> impl Fn(Vec3) -> Vertex {
     let tile = GROUND_TILE as f64;
     let anchor = DVec3::new(
         corner.x.rem_euclid(tile),
@@ -381,10 +389,49 @@ pub fn chunk_mapping(corner: DVec3, sea: f64) -> impl Fn(Vec3) -> (Vec3, f32) {
     );
     move |p: Vec3| {
         let local = p.as_dvec3();
-        (
-            (anchor + local).as_vec3(),
-            ((corner + local).length() - sea) as f32,
-        )
+        let at = corner + local;
+        let over = at.length() - sea;
+        // The climate at this vertex, so the ground a walker stands on is
+        // the same biome the body's chart paints from orbit. It is asked
+        // PER VERTEX rather than per chunk because a chunk wide tint would
+        // put a hard line down every chunk boundary on the planet, and the
+        // thing a biome has to do is blend.
+        let weather = shape.map_or(
+            Climate {
+                temp: 1.0,
+                wet: 0.5,
+            },
+            |s| s.climate(at.normalize_or(DVec3::Y), over),
+        );
+        Vertex {
+            map: (anchor + local).as_vec3(),
+            over_sea: over as f32,
+            temp: weather.temp as f32,
+            wet: weather.wet as f32,
+        }
+    }
+}
+
+/// What a vertex carries besides where it is: the position the shader maps
+/// FROM, how far over the sea it stands, and the climate there.
+#[derive(Clone, Copy)]
+pub struct Vertex {
+    pub map: Vec3,
+    pub over_sea: f32,
+    pub temp: f32,
+    pub wet: f32,
+}
+
+impl Vertex {
+    /// A built thing's, which has no climate of its own: concrete is
+    /// concrete in a desert and on a glacier.
+    pub fn built(map: Vec3, over_sea: f32) -> Vertex {
+        Vertex {
+            map,
+            over_sea,
+            temp: 1.0,
+            wet: 0.5,
+        }
     }
 }
 
@@ -409,7 +456,7 @@ mod tests {
             materials: vec![TERRAIN; 2],
             ..default()
         };
-        let rendered = to_mesh(&mesh, |p| (p, 0.0));
+        let rendered = to_mesh(&mesh, |p| Vertex::built(p, 0.0));
         let Some(VertexAttributeValues::Float32x3(normals)) =
             rendered.attribute(Mesh::ATTRIBUTE_NORMAL)
         else {
@@ -418,7 +465,7 @@ mod tests {
         assert!(normals.iter().all(|n| *n == [0.0, 1.0, 0.0]));
         // Architectural creases still retain their hard edges.
         mesh.materials = vec![CONCRETE; 2];
-        let rendered = to_mesh(&mesh, |p| (p, 0.0));
+        let rendered = to_mesh(&mesh, |p| Vertex::built(p, 0.0));
         let Some(VertexAttributeValues::Float32x3(normals)) =
             rendered.attribute(Mesh::ATTRIBUTE_NORMAL)
         else {

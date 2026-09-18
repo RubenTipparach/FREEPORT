@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderAdapterInfo, RenderDevice, RenderQueue};
 use bytemuck::{Pod, Zeroable};
+use freeport_core::biome;
 use freeport_core::dc::SAMPLE_STRIDE;
 use freeport_core::field::{Density, Planet};
 use freeport_core::lattice::{ChunkId, Lattice, MARGIN};
@@ -39,6 +40,28 @@ pub fn init_compute(
     })));
 }
 
+/// The relief's constants as the sampler's uniform reads them: five
+/// `vec4<f32>`, three `vec4<u32>` and the shelf's own `vec4<f32>` last,
+/// which is the order `sampling.wgsl` declares them in. The core cannot
+/// hand these over as bytes, because it depends on nothing but `std` and
+/// `glam`, so the one place they are laid out is here.
+const SHAPE_WORDS: usize = 36;
+
+fn shape_words(g: &biome::Gpu) -> [u32; SHAPE_WORDS] {
+    let mut w = [0u32; SHAPE_WORDS];
+    let floats = [g.shares, g.freqs, g.channel, g.belt, g.fbm];
+    for (i, v) in floats.iter().flatten().enumerate() {
+        w[i] = v.to_bits();
+    }
+    w[20..24].copy_from_slice(&g.octaves);
+    w[24..28].copy_from_slice(&g.salts);
+    w[28..32].copy_from_slice(&g.hills);
+    for (i, v) in g.shelf.iter().enumerate() {
+        w[32 + i] = v.to_bits();
+    }
+    w
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Point {
@@ -66,11 +89,11 @@ impl Point {
         }
         let dir = p / r;
         let (bias, keep) = planet.surface_blend(dir);
-        let (relief_hi, relief_lo) = split(
-            dir * planet.lumps,
-            planet.radius - r + bias,
-            planet.relief * 0.5 * keep,
-        );
+        // The low lane carries KEEP rather than an amplitude now: the
+        // sampler works the relief's own terms out itself, and every one
+        // of them is scaled by how much of the relief this direction has
+        // left after its town site is levelled.
+        let (relief_hi, relief_lo) = split(dir * planet.lumps, planet.radius - r + bias, keep);
         let (carve_hi, carve_lo) = if planet.ledge > 0.0 && planet.overhang > 0.0 {
             split(p / planet.ledge, planet.overhang * keep, 0.0)
         } else {
@@ -83,6 +106,22 @@ impl Point {
             carve_lo,
         }
     }
+}
+
+/// The planet as this chunk sees it: the same body with only the town
+/// sites whose levelling can reach into it.
+fn local_planet(planet: &Planet, lat: &Lattice, id: ChunkId) -> Planet {
+    let (lo, hi) = id.bounds(lat, MARGIN);
+    let centre = (lo + hi) * 0.5;
+    let radius = centre.length();
+    if radius <= 0.0 || !radius.is_finite() {
+        return planet.clone();
+    }
+    // The chord a chunk's own corners can be from its middle's direction,
+    // which is its half diagonal over the radius it stands at, and a
+    // little over rather than under.
+    let span = (hi - lo).length() * 0.5 / radius + 1e-12;
+    planet.around(centre / radius, span)
 }
 
 fn point_at(lat: &Lattice, id: ChunkId, i: usize) -> DVec3 {
@@ -104,6 +143,7 @@ pub struct Sampler {
     output: Buffer,
     readback: Buffer,
     settings: Buffer,
+    shape: Buffer,
 }
 
 impl Sampler {
@@ -149,6 +189,13 @@ impl Sampler {
             16,
             BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         );
+        // The relief's own constants, so `sampling.wgsl` carries the shape
+        // of the function and nothing that could drift from the core's.
+        let shape = buffer(
+            "relief shape",
+            SHAPE_WORDS as u64 * 4,
+            BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        );
         let layout = BindGroupLayout::from(pipeline.get_bind_group_layout(0));
         let bind_group = device.create_bind_group(
             "density inputs",
@@ -166,6 +213,10 @@ impl Sampler {
                     binding: 2,
                     resource: settings.as_entire_binding(),
                 },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: shape.as_entire_binding(),
+                },
             ],
         );
         Self {
@@ -178,6 +229,7 @@ impl Sampler {
             output,
             readback,
             settings,
+            shape,
         }
     }
 
@@ -193,10 +245,15 @@ impl Sampler {
         if chunks.is_empty() || chunks.len() > BATCH {
             return Err("invalid density batch".into());
         }
+        // One filter of the planet's towns per CHUNK rather than per
+        // sample point: every point in a chunk is within its own few
+        // metres of every other, so the sites that can level any of them
+        // are the same short list.
         let points: Vec<_> = chunks
             .iter()
             .flat_map(|(lat, id)| {
-                (0..POINTS).map(move |i| Point::new(planet, point_at(lat, *id, i)))
+                let local = local_planet(planet, lat, *id);
+                (0..POINTS).map(move |i| Point::new(&local, point_at(lat, *id, i)))
             })
             .collect();
         let tolerance = 0.002 + (planet.relief.abs() + planet.overhang.abs()) * 0.000002;
@@ -210,6 +267,11 @@ impl Sampler {
             .write_buffer(&self.input, 0, bytemuck::cast_slice(&points));
         self.queue
             .write_buffer(&self.settings, 0, bytemuck::cast_slice(&settings));
+        self.queue.write_buffer(
+            &self.shape,
+            0,
+            bytemuck::cast_slice(&shape_words(&planet.shape().gpu())),
+        );
         let bytes = (points.len() * 4) as u64;
         let mut encoder = self
             .device

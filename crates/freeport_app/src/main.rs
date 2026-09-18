@@ -16,7 +16,7 @@
 //! ```text
 //! freeport_app [--wire] [--lod-wire] [--fly] [--eye x,y,z] [--look x,y,z] [--levels N]
 //!              [--fps N] [--octaves N] [--walk N] [--shot out.png]
-//!              [--frames N]
+//!              [--frames N] [--bake-atlas]
 //! ```
 //!
 //! Left click takes the mouse, Escape gives it back. On foot: WASD, Shift
@@ -28,9 +28,11 @@
 //! the system origin (on foot, the spot under it) and `--look` what to
 //! face; both default to the port.
 mod args;
+mod atlas;
 mod buildings;
 mod city;
 mod compute;
+mod distant;
 mod flight_bench;
 mod fly;
 mod lamps;
@@ -91,10 +93,59 @@ const RELIEF: f64 = 8_000.0;
 const LUMPS: f64 = 12.0;
 const OCTAVES: u32 = 18;
 /// The sea's level, metres under the mean radius.
-const SEA: f64 = RADIUS - 400.0;
+/// The sea's radius. MEASURED rather than picked: the owner's ask is a
+/// body at least half water, and a sea level is a percentile of the
+/// body's own height distribution, not a number that means anything on
+/// its own. Over 40,000 directions of this planet the relief spans
+/// -2,920 to 4,358 m and its median is +351, so a sea at -400 m left the
+/// world 26.3% water, which is a continent with lakes in it, and at
+/// +820 m it was 65%, which is an ocean with a few scraps in it.
+///
+/// It is +1,000 m now, which is 62.1% water: a little less than it was,
+/// and where this body's land is SEVEN continents rather than one blob
+/// and three hundred scraps. Which of those two things a sea level buys
+/// is not a property of the level at all, it is a property of the
+/// continental SHELF under it (`biome::SHELF_AT` and its neighbours), and
+/// the two were picked together off one sweep:
+/// `the_land_is_a_few_continents_and_many_islands` counts the body's
+/// connected landmasses, `measure_the_land_at_each_sea_level` is the
+/// sweep, and `the_harness_planet_is_mostly_water` holds the half the ask
+/// names. Lower, the continents MERGE: at +700 m the body is 54.6% water
+/// and nearly all of its land is one mass, which is percolation rather
+/// than a tuning mistake.
+const SEA: f64 = RADIUS + 1000.0;
 /// Towns: how many, and how far across each.
-const TOWNS: usize = 8;
-const TOWN_RADIUS: f64 = 80.0;
+/// How many towns are PLANNED on the planet. Every one of them levels its
+/// own ground and is painted on the body's chart, so a world with this
+/// many has cities all over it from orbit and level ground waiting under
+/// each of them.
+const TOWNS: usize = 160;
+/// How far across the BIGGEST town on the body is, metres. Every other
+/// town's size falls off its own rank by Zipf's law (`town::size_of`),
+/// so this is a ceiling rather than the one figure every city was: at 80
+/// m, which is what it was, a hundred and sixty settlements were a
+/// hundred and sixty copies of one settlement.
+const TOWN_RADIUS: f64 = 170.0;
+
+/// How many of the planned towns are BUILT, nearest to where the world
+/// starts first.
+///
+/// A town is about 375,000 triangles of baked buildings, so the eight
+/// this world had were three million of them and a hundred and sixty
+/// would be sixty million, which is not a thing to hold. Planning is
+/// cheap and building is not, so every town is planned, levels its own
+/// ground and is painted on the body's chart, and the nearest few are
+/// built. A COUNT rather than a distance, because it is the count that
+/// bounds the cost: at a hundred and sixty towns on this planet the mean
+/// spacing is 280 km, so a reach of ninety thousand metres built exactly
+/// one of them.
+///
+/// What is MISSING and named rather than hidden: a town that comes into
+/// range as you fly is not built, so a far city is its own levelled
+/// plateau with no buildings on it until town streaming lands. The chunk
+/// streamer already does exactly this for ground and the shape of it is
+/// the same.
+const TOWNS_BUILT: usize = 8;
 /// The world's seed.
 const SEED: u32 = 7;
 /// Ten levels at 0.5 m preserve the previous 32.8 km streaming box while
@@ -125,8 +176,59 @@ const SUN_UP: f64 = 32.0;
 const SUN_BEARING: f64 = 40.0;
 
 /// The sun's world direction for an eye starting at `dir`: ONE number,
-/// read by the light that casts the shadows, by the sky dome and by the
-/// fog, so the three cannot point three ways.
+/// read by the light that casts the shadows, by the sky dome, by the fog
+/// and by the bodies drawn from far off, so they cannot point four ways.
+///
+/// It is asked about the WALKER's own start and never about where `aim`
+/// put the camera, which is a circle: `--sunward` stands the camera along
+/// the sun, so a sun measured over that camera is a sun measured over
+/// itself. Measured on this planet, `--sunward 2.6 --around 150` put the
+/// camera 58 degrees from the sun rather than 150, and the picture of the
+/// body's own midnight came back three quarters lit.
+/// Where the camera starts: on a street of the port, or, with
+/// `--sunward`, that many radii off the body and looking at its centre,
+/// `--around` degrees round from the sun.
+///
+/// A camera for a picture is SOLVED and never hand aimed, which is
+/// tenebris's LODCAM lesson: the sun stands over wherever the world
+/// starts, so where it is depends on where the towns came out, and three
+/// runs of this were aimed by hand at a planet that turned out to be a
+/// different one, in its own night.
+///
+/// `--around` is the same rule for the NIGHT side. A body's dark half is
+/// a picture nobody can aim at either, because where it is depends on
+/// where the sun came out: turned 180 degrees the camera is at the body's
+/// own midnight and 140 leaves a crescent of day in the frame, which is
+/// what shows the lights and the ground they stand on in one picture.
+fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
+    let (eye, look) = start(world);
+    // Straight down on the PORT, which is the one camera a town's own
+    // plan can be judged from: its outline, its zones and where its
+    // streets run are a thing seen from above and nothing else.
+    if let Some(over) = args.over {
+        if let Some(port) = world.towns.first() {
+            let ground = port.dir * (world.planet.radius + port.h);
+            return (ground + port.dir * over, ground);
+        }
+    }
+    match args.sunward {
+        Some(radii) => (
+            turned(sun_over(eye), args.around.to_radians()) * world.planet.radius * radii.max(1.05),
+            DVec3::ZERO,
+        ),
+        None => (eye, look),
+    }
+}
+
+/// A direction turned `angle` away from itself, about whichever axis is
+/// square to it. Which axis does not matter for a picture of a sphere:
+/// what is being asked for is how much of the body's night is in frame,
+/// and that is the ANGLE alone.
+fn turned(dir: DVec3, angle: f64) -> DVec3 {
+    let (east, _) = town::frame_at(dir);
+    (dir * angle.cos() + east * angle.sin()).normalize_or(DVec3::Y)
+}
+
 fn sun_over(dir: DVec3) -> DVec3 {
     let (east, north) = town::frame_at(dir);
     let up = SUN_UP.to_radians();
@@ -140,6 +242,10 @@ pub(crate) const LOOK: f32 = 0.0022;
 
 fn main() {
     let args = parse_args();
+    if args.bake_atlas {
+        world::bake_atlas(&args);
+        return;
+    }
     let lod_debug = lod_debug::LodDebug {
         enabled: args.lod_wire,
         frozen: false,
@@ -166,6 +272,7 @@ fn main() {
     app.add_plugins((
         WireframePlugin::default(),
         TerrainPlugin,
+        distant::DistantPlugin,
         WaterPlugin,
         sky::SkyPlugin,
     ))
@@ -282,6 +389,7 @@ struct WorldAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
     skies: ResMut<'w, Assets<sky::Sky>>,
     standard: ResMut<'w, Assets<StandardMaterial>>,
+    distants: ResMut<'w, Assets<distant::DistantMaterial>>,
 }
 
 fn spawn_world(
@@ -297,11 +405,16 @@ fn spawn_world(
         mut materials,
         mut waters,
         mut meshes,
+        mut distants,
         mut skies,
         mut standard,
     } = assets;
     let (world, towns) = world::build(&args);
-    let (start_eye, start_look) = start(&world);
+    let (start_eye, start_look) = aim(&world, &args);
+    // The sun, worked out while the world is still here to ask: it is a
+    // fact about where the WALKER starts, and `start_eye` is wherever the
+    // camera was aimed.
+    let sun = sun_over(world::start(&world).0);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
     // The lattice's origin sits half a fine cell off the half metre grid
@@ -339,7 +452,8 @@ fn spawn_world(
         &mut meshes,
         &mut materials,
         &mut waters,
-        &mut standard,
+        &mut images,
+        &mut distants,
         &mut planets,
     );
     planets.active = planets.nearest(eye);
@@ -359,7 +473,6 @@ fn spawn_world(
     // which way it points and never `--eye`, so two pictures taken from
     // two places are lit the same and only the camera moved. The light,
     // the dome and the fog are handed one direction worked out once.
-    let sun = sun_over(start_eye);
     spawn_light(&mut commands, sun);
     spawn_status(&mut commands);
     let env = spawn_sky(

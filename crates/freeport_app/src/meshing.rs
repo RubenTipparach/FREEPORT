@@ -113,12 +113,19 @@ impl Job {
             done.triangles += mesh.triangles();
             done.mesh = Some(to_mesh(
                 &mesh,
-                chunk_mapping(self.id.corner(&self.lat), self.world.sea.radius),
+                chunk_mapping(
+                    self.id.corner(&self.lat),
+                    self.world.sea.radius,
+                    Some(self.world.planet.shape()),
+                ),
             ));
         }
         let water = self.world.water(&field);
         if water.solid(lo, hi).is_none() {
-            done.sheet = to_sheet(&contour(&water, &self.lat, self.id, &*self.rings));
+            done.sheet = to_sheet(
+                &contour(&water, &self.lat, self.id, &*self.rings),
+                self.id.corner(&self.lat),
+            );
             done.triangles += done
                 .sheet
                 .as_ref()

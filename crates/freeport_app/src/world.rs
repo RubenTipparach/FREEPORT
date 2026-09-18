@@ -15,6 +15,7 @@ use bevy::prelude::*;
 use freeport_core::dc::DcMesh;
 use freeport_core::field::{Block, Built, Density, Planet};
 use freeport_core::model;
+use freeport_core::road::Road;
 use freeport_core::town::{self, lot_frame, Frame, Town};
 use freeport_core::walker::Bounds;
 use freeport_core::water::{Sea, Water};
@@ -42,6 +43,8 @@ pub(crate) struct World {
     /// Every lamp in them, in the world frame, with its reach.
     pub lamps: Vec<(DVec3, f64)>,
     pub towns: Vec<Town>,
+    /// The roads joining them, as the lines the atlas holds.
+    pub roads: Vec<Road>,
     pub bounds: Bounds,
     pub sea: Sea,
 }
@@ -103,28 +106,98 @@ impl World {
 #[derive(Resource)]
 pub(crate) struct Ground(pub Arc<World>, pub DVec3);
 
-/// Build it: the planet, its towns, and the models standing in them.
-pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
-    let t0 = Instant::now();
-    let mut planet = Planet {
+/// The home body, with nothing levelled into it yet. One function, so the
+/// bake and the game plan the SAME planet: an atlas of a body that is not
+/// this one puts cities in the sea, and the only way to be sure it is the
+/// same body is for there to be one place that says what the body is.
+pub(crate) fn home_planet(octaves: u32) -> Planet {
+    Planet {
         radius: RADIUS,
         relief: RELIEF,
         lumps: LUMPS,
-        octaves: args.octaves,
+        octaves,
         overhang: 3.0,
         ledge: 12.0,
         seed: SEED,
         sites: vec![],
+    }
+}
+
+/// The body the atlas is the plan of.
+pub(crate) const HOME: &str = "Freeport";
+
+/// Plan the home body and write its atlas out. This is the whole of
+/// `--bake-atlas`, and it touches no window and no GPU.
+pub(crate) fn bake_atlas(args: &Args) {
+    let t0 = Instant::now();
+    let planet = home_planet(args.octaves);
+    let atlas = crate::atlas::Atlas::plan(HOME, &planet, SEA, TOWN_RADIUS, TOWNS);
+    let Some(path) = crate::atlas::path_of(HOME) else {
+        eprintln!("no assets folder to write an atlas into");
+        return;
     };
-    let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
+    let roads = atlas.roads();
+    let joined: std::collections::BTreeSet<usize> =
+        roads.iter().flat_map(|r| [r.from, r.to]).collect();
+    let metres: f64 = roads.iter().map(|r| r.length(planet.radius)).sum();
+    match crate::atlas::write(&atlas, &path) {
+        Ok(()) => println!(
+            "{} planned in {:.1} s: {} towns, {} roads over {:.0} km joining {} of them, written to {}",
+            HOME,
+            t0.elapsed().as_secs_f64(),
+            atlas.towns.len(),
+            roads.len(),
+            metres / 1000.0,
+            joined.len(),
+            path.display()
+        ),
+        Err(e) => eprintln!("atlas not written: {e}"),
+    }
+}
+
+/// Build it: the planet, its towns, the roads between them, and the
+/// models standing in them.
+pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
+    let t0 = Instant::now();
+    let mut planet = home_planet(args.octaves);
+    // The BAKED plan if there is one, which is the point of baking it:
+    // twenty thousand candidate directions and a search over a hundred
+    // thousand waypoints is seconds of work every launch for an answer
+    // that never changes. Planning here is the fallback, so a checkout
+    // nobody has baked still runs and says so.
+    let baked = crate::atlas::load(HOME, &planet, SEA, TOWN_RADIUS);
+    let (towns, roads) = match &baked {
+        Some(a) => (a.towns(), a.roads()),
+        None => {
+            warn!(
+                "no atlas for {HOME}: planning it here, which takes seconds.                  `--bake-atlas` writes one and this becomes a file read."
+            );
+            let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
+            (towns, Vec::new())
+        }
+    };
     planet.sites = towns.iter().map(town::site_of).collect();
     let planned = t0.elapsed();
-    let raised = raise(&towns);
+    // Every town is planned, and the ones near where the world starts are
+    // built. The rest are sites: their ground is levelled and the body's
+    // chart paints them, which is what puts cities all over the planet.
+    let home = towns.first().map_or(DVec3::Y, |t| t.dir);
+    let mut order: Vec<&Town> = towns.iter().collect();
+    order.sort_by(|a, b| (a.dir - home).length().total_cmp(&(b.dir - home).length()));
+    let near: Vec<Town> = order
+        .into_iter()
+        .take(crate::TOWNS_BUILT)
+        .cloned()
+        .collect();
+    let raised = raise(&near);
     say_port(&towns);
     info!(
-        "{} towns planned in {:.0} ms, {} buildings and {} pieces of street modelled in {:.0} ms: {} triangles, {} boxes, {} lamps",
+        "{} towns {} in {:.0} ms with {} roads, {} of them built, {} buildings and {} pieces of street modelled in {:.0} ms: {} triangles, {} boxes, {} lamps",
         towns.len(),
+        if baked.is_some() { "read" } else { "planned" },
         planned.as_secs_f64() * 1000.0,
+        roads.len(),
+        near.len(),
         raised.buildings,
         raised.pieces,
         (t0.elapsed() - planned).as_secs_f64() * 1000.0,
@@ -146,6 +219,7 @@ pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
             groups: raised.groups,
             lamps: raised.lamps,
             towns,
+            roads,
             bounds,
             sea: Sea { radius: SEA },
         },

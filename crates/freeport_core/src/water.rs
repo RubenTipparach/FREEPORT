@@ -98,11 +98,18 @@ mod tests {
     use crate::field::Planet;
     use crate::lattice::{Lattice, Rings};
 
+    /// A ball with a real shore on it: deep water on one side and land
+    /// well over the sea on the other, which is what the sheet has to be
+    /// judged against. Its lumps came down from three when the relief
+    /// became a few composed terms: at three, a sixty metre ball asks for
+    /// ground steeper than `biome::MAX_SLOPE` allows and every term is
+    /// scaled back to fit, which left the whole planet inside a metre and
+    /// a half of the sea and no deep water to contour at all.
     fn shore() -> Planet {
         Planet {
             radius: 60.0,
-            relief: 8.0,
-            lumps: 3.0,
+            relief: 20.0,
+            lumps: 1.0,
             octaves: 4,
             overhang: 0.0,
             ledge: 1.0,
@@ -123,6 +130,30 @@ mod tests {
             }
         }
         0.5 * (lo + hi)
+    }
+
+    /// Where to put this ball's sea so there is as much of it as there is
+    /// land: the MEDIAN of the ground, measured rather than assumed.
+    ///
+    /// It used to be the mean radius, which was right while the relief was
+    /// one fractal centred on nought. It is not now: a mountain belt only
+    /// ever ADDS, so the composed relief's median sits off the mean, and a
+    /// sea at the mean radius came out as a planet that was nearly all
+    /// land on one set of numbers and nearly all ocean on the next. A
+    /// fixture that measures cannot go stale the next time the ground
+    /// changes.
+    fn sea_of(planet: &Planet) -> Sea {
+        let mut h: Vec<f64> = (0..2000)
+            .map(|i| {
+                let t = i as f64 * 0.618;
+                let d = DVec3::new(t.sin(), (t * 0.37).cos(), (t * 1.3).sin()).normalize();
+                planet.surface(d).0
+            })
+            .collect();
+        h.sort_by(f64::total_cmp);
+        Sea {
+            radius: planet.radius + h[h.len() / 2],
+        }
     }
 
     /// A direction whose ground is at least `depth` under the sea, and one
@@ -149,7 +180,7 @@ mod tests {
     #[test]
     fn water_lies_in_the_air_under_the_level_and_nowhere_else() {
         let planet = shore();
-        let sea = Sea { radius: 60.0 };
+        let sea = sea_of(&planet);
         let (low, high) = low_and_high(&planet, sea.radius, 1.5);
         let water = Water {
             sea,
@@ -167,9 +198,10 @@ mod tests {
             "the sphere under a hill"
         );
         assert_eq!(water.material(DVec3::ZERO), BURIED);
-        assert!(water.at(low * 59.0) > 0.0 && water.at(low * 61.0) < 0.0);
+        let r = sea.radius;
+        assert!(water.at(low * (r - 1.0)) > 0.0 && water.at(low * (r + 1.0)) < 0.0);
         assert_eq!(
-            water.solid(DVec3::splat(61.0), DVec3::splat(62.0)),
+            water.solid(DVec3::splat(r + 1.0), DVec3::splat(r + 2.0)),
             Some(false)
         );
         assert_eq!(
@@ -182,21 +214,22 @@ mod tests {
     #[test]
     fn the_sea_contours_to_a_closed_shell_and_only_the_surface_over_air_is_drawn() {
         let planet = shore();
-        let sea = Sea { radius: 60.0 };
+        let sea = sea_of(&planet);
         let (low, _) = low_and_high(&planet, sea.radius, 2.0);
+        let sea_radius = sea.radius;
         let water = Water {
             sea,
             ground: &planet,
         };
         let lat = Lattice::new(DVec3::splat(-80.0 + 0.125), 0.25);
-        let rings = Rings::around(&lat, low * 60.0, 4);
+        let rings = Rings::around(&lat, low * sea_radius, 4);
         let mut chunks = Vec::new();
         for id in rings.chunks() {
             let (lo, hi) = id.bounds(&lat, 0);
             // Buried chunks are skipped by the app; here every crossing
             // chunk is kept, so the shell can be audited whole.
             let (near, far) = box_radii(lo, hi);
-            if near > sea.radius || far < sea.radius {
+            if near > sea_radius || far < sea_radius {
                 continue;
             }
             let m = contour(&water, &lat, id, &rings);
@@ -208,7 +241,7 @@ mod tests {
         assert_eq!(a.open, 0, "{a:?}");
         assert_eq!(a.non_manifold, 0, "{a:?}");
         assert_eq!(a.facing_in, 0, "{a:?}");
-        let want = 4.0 * std::f64::consts::PI * 3600.0;
+        let want = 4.0 * std::f64::consts::PI * sea_radius * sea_radius;
         assert!((a.area - want).abs() / want < 0.03, "area {}", a.area);
         let (mut surface, mut buried, mut worst) = (0, 0, 0.0f64);
         for (corner, m) in &chunks {

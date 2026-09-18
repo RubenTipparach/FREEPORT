@@ -80,3 +80,73 @@ fn swell(q: vec3<f32>, wave: vec4<f32>, freq: f32, time: f32) -> f32 {
         + sin(t * 1.3 - q.x * 0.7 * freq + q.z * 1.2 * freq) * 0.12
         + sin(t * 1.7 + q.x * 2.3 * freq - q.z * 1.9 * freq) * 0.06) * wave.w;
 }
+
+
+// ---------------------------------------------------------------------
+// The ripples, on a coordinate that is an exact CELL and a fraction.
+//
+// `q = world_position - centre` in f32 is a planet's radius held in a
+// single float: at the port that is 999,603 m, where one float to the
+// next is 6.25 cm, so over a metre of water the ripple coordinate took
+// FOUR values on features about 0.67 m across. That is the pixelation,
+// and it is the same disease `terrain.wgsl` had, arriving at the one
+// surface whose cure did not port: a triplanar tiling is periodic, so a
+// chunk's coordinate can be reduced modulo the tile, and an `fbm` is not,
+// so an offset per chunk would put a seam in the sea wherever two of them
+// met.
+//
+// The cure is the one this repository wrote down and did not build: a
+// noise that takes a lattice CELL and a FRACTION rather than one float an
+// axis. The CPU works the cell out in `f64` where it is exact, and every
+// octave doubles it EXACTLY, because an integer times two is an integer
+// and a fraction times two splits into a carry and a fraction. Nothing is
+// reduced, nothing tiles, and there is no seam: the sea is one continuous
+// noise over a body two thousand kilometres across, at the precision of
+// the fraction, which is a hundred millionth of a cell.
+
+// `gnoise3` at a cell and a fraction. The fraction may be any size; its
+// whole part is carried into the cell, where it is exact.
+fn gnoise3_at(cell: vec3<f32>, frac: vec3<f32>) -> f32 {
+    let carry = floor(frac);
+    let c = vec3<i32>(cell + carry);
+    let d = frac - carry;
+    let u = gn_fade(d.x);
+    let v = gn_fade(d.y);
+    let w = gn_fade(d.z);
+    let n000 = gn_grad(gn_hash(c.x, c.y, c.z), d.x, d.y, d.z);
+    let n100 = gn_grad(gn_hash(c.x + 1, c.y, c.z), d.x - 1.0, d.y, d.z);
+    let n010 = gn_grad(gn_hash(c.x, c.y + 1, c.z), d.x, d.y - 1.0, d.z);
+    let n110 = gn_grad(gn_hash(c.x + 1, c.y + 1, c.z), d.x - 1.0, d.y - 1.0, d.z);
+    let n001 = gn_grad(gn_hash(c.x, c.y, c.z + 1), d.x, d.y, d.z - 1.0);
+    let n101 = gn_grad(gn_hash(c.x + 1, c.y, c.z + 1), d.x - 1.0, d.y, d.z - 1.0);
+    let n011 = gn_grad(gn_hash(c.x, c.y + 1, c.z + 1), d.x, d.y - 1.0, d.z - 1.0);
+    let n111 = gn_grad(gn_hash(c.x + 1, c.y + 1, c.z + 1), d.x - 1.0, d.y - 1.0, d.z - 1.0);
+    return mix(
+        mix(mix(n000, n100, u), mix(n010, n110, u), v),
+        mix(mix(n001, n101, u), mix(n011, n111, u), v),
+        w,
+    );
+}
+
+// Three octaves drifting three ways, tenebris's `fbm3`, on the split
+// coordinate. The lacunarity is TWO rather than tenebris's 2.1 and 2.3,
+// which is the one thing this costs: a cell doubles exactly and a cell
+// times 2.1 does not, and an octave whose cell is not exact is the
+// pixelation back at three times the frequency. What 2.1 and 2.3 buy is
+// that two octaves do not line up, and the per octave DRIFT below buys
+// the same thing at no precision at all.
+//
+// The base scale is folded into what the CPU hands over, so the first
+// octave reads the cell it was given.
+fn fbm3_at(cell: vec3<f32>, frac: vec3<f32>, t: f32) -> f32 {
+    var c = cell;
+    var f = frac + vec3<f32>(t * 0.35, t * 0.18, t * -0.42);
+    var h = gnoise3_at(c, f) * 0.5;
+    f = f * 2.0 + vec3<f32>(t * -0.22 + 0.37, t * 0.33 + 0.11, t * 0.17 + 0.73);
+    c = c * 2.0;
+    h += gnoise3_at(c, f) * 0.28;
+    f = f * 2.0 + vec3<f32>(t * 0.19 + 0.29, t * -0.27 + 0.61, t * 0.11 + 0.17);
+    c = c * 2.0;
+    h += gnoise3_at(c, f) * 0.15;
+    return h;
+}

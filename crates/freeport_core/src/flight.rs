@@ -76,12 +76,7 @@ pub fn sweep_planet(planet: &Planet, from: DVec3, to: DVec3, clearance: f64) -> 
         }
         earlier_site |= separation - span <= inside;
     }
-    let mut local = planet.clone();
-    local.sites.retain(|site| {
-        let (_, outer) = site_band(site);
-        (first - site.dir).length() - span <= outer / planet.radius
-    });
-    sweep_along(&local, from, to, clearance)
+    sweep_along(&planet.around(first, span), from, to, clearance)
 }
 
 struct Along<'a> {
