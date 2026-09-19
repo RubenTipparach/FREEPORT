@@ -34,6 +34,9 @@ use freeport_core::walker::{Bounds, Walker};
 /// of the inside of its own bonnet.
 const CHASE: f64 = 8.5;
 const LIFT: f64 = 3.2;
+/// How many sixtieths of a second a SCRIPTED drive steps per rendered
+/// frame. Sixty, so one rendered frame is one second of driving.
+const SUB_STEPS: usize = 60;
 /// How far over the road the camera AIMS, metres: the car's own roof.
 const AIM: f64 = 1.4;
 /// How many town radii a SCRIPTED theft reaches, which is the whole town.
@@ -229,6 +232,7 @@ pub fn drive_car(
     // that moves nine metres a frame measures nothing.
     let run = left.get_or_insert(script.args.drive);
     let car = &mut thefts.cars[k].car;
+    let mut steps = 1;
     if *run > 0 {
         // A scripted drive goes SOMEWHERE: the nearest settlement that
         // is not the one it is standing in. Driving straight ahead
@@ -240,6 +244,14 @@ pub fn drive_car(
             ..Default::default()
         };
         dt = 1.0 / 60.0;
+        // A whole SECOND of driving a rendered frame, in sixtieths. A
+        // frame of this world on a software rasteriser is most of a
+        // second, so a scripted drive stepped one sixtieth a frame
+        // covers 480 m in half an hour of rendering, and the nearest
+        // settlement is nine kilometres off: the flag could photograph
+        // a car and never a JOURNEY. The step stays a sixtieth, which
+        // is what keeps the drive the same drive on any machine.
+        steps = SUB_STEPS;
         *run -= 1;
     }
     let field = here.underfoot(car.dir * car.foot, 12.0);
@@ -249,7 +261,20 @@ pub fn drive_car(
         sea: 0.0,
         ..here.world().bounds
     };
-    car.update(&field, &bounds, &input, dt);
+    for _ in 0..steps {
+        // The wheel is re-read every sub step, or a scripted drive
+        // holds one bearing for a whole second and weaves round its own
+        // line at sixteen metres a second.
+        let input = Drive {
+            steer: if steps > 1 {
+                script.goal.0.map_or(0.0, |g| car.toward(g))
+            } else {
+                input.steer
+            },
+            ..input
+        };
+        car.update(&field, &bounds, &input, dt);
+    }
     eye.0 = WorldPos(here.centre() + chase(car));
     status.walker = format!(
         "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel{}",

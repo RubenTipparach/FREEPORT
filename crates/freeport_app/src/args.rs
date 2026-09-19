@@ -47,10 +47,13 @@ pub(crate) struct Args {
     /// feel is a number a second person can check rather than a thing to
     /// take on trust.
     pub(crate) walk: u32,
-    /// STEAL the nearest car and drive it forward for this many frames,
-    /// at the same fixed sixtieth `--walk` uses. A headless run has
-    /// nobody to press E and then hold W, and a car nobody can
-    /// photograph is a car nobody can judge the feel of.
+    /// STEAL the nearest car and drive it for this many SECONDS, aimed
+    /// at the nearest settlement that is not the one it is standing in.
+    /// A headless run has nobody to press E and then hold W, and a car
+    /// nobody can photograph is a car nobody can judge the feel of. A
+    /// second a rendered FRAME, in sixtieths, because a frame of this
+    /// world on a software rasteriser is most of a second and the
+    /// nearest town is nine kilometres away.
     pub(crate) drive: u32,
     pub(crate) cpu_terrain: bool,
     pub(crate) benchmark: Option<String>,
