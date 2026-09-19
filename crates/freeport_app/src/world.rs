@@ -43,6 +43,10 @@ pub(crate) struct World {
     /// Every lamp in them, in the world frame, with its reach.
     pub lamps: Vec<(DVec3, f64)>,
     pub towns: Vec<Town>,
+    /// The ones of them whose buildings are actually BUILT, which is the
+    /// only ground a crowd is turned out on: a townsman walking a street
+    /// nobody has laid the buildings of stands on a bare plateau.
+    pub built: Vec<Town>,
     /// The roads joining them, as the lines the atlas holds.
     pub roads: Vec<Road>,
     pub bounds: Bounds,
@@ -219,6 +223,7 @@ pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
             groups: raised.groups,
             lamps: raised.lamps,
             towns,
+            built: near,
             roads,
             bounds,
             sea: Sea { radius: SEA },

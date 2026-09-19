@@ -183,11 +183,31 @@ fn wheel_lines(wheel: &MouseWheel) -> f32 {
     }
 }
 
+/// Who has the EYE, if it is not the fly camera: the walker on his own
+/// feet, or a stolen car with somebody at the wheel.
+///
+/// One thing rather than two arguments, because the question `fly` asks
+/// is a single one and asking it as two was what put a stolen car's
+/// camera back in the air: the first cut read the walker alone, and
+/// taking a car takes the walker away.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Aboard<'w> {
+    on_foot: Option<Res<'w, OnFoot>>,
+    thefts: Res<'w, crate::drive::Thefts>,
+}
+
+impl Aboard<'_> {
+    /// Whether anything but the fly camera is driving the eye.
+    pub(crate) fn any(&self) -> bool {
+        self.on_foot.is_some() || self.thefts.driving().is_some()
+    }
+}
+
 /// Consume input even on foot, so changing modes never replays old mouse events.
 pub(crate) fn fly(
     mut controls: Controls,
     mut wheel: MessageReader<MouseWheel>,
-    on_foot: Option<Res<OnFoot>>,
+    aboard: Aboard,
     mut scene: FlightScene,
     mut cam: Query<&mut Fly, With<Camera3d>>,
     mut eye: ResMut<Eye>,
@@ -195,7 +215,11 @@ pub(crate) fn fly(
 ) {
     let look = controls.look();
     let lines: f32 = wheel.read().map(wheel_lines).sum();
-    if on_foot.is_some() {
+    // On foot OR at the wheel: either way the fly camera is not what
+    // owns the eye, and it writes `Eye` every frame, so reading only the
+    // walker here is what put the camera back in the air the moment a
+    // car was stolen and the walker went away.
+    if aboard.any() {
         return;
     }
     let Ok(mut fly) = cam.single_mut() else {

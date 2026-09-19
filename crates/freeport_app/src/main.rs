@@ -33,6 +33,7 @@ mod buildings;
 mod city;
 mod compute;
 mod distant;
+mod drive;
 mod flight_bench;
 mod fly;
 mod lamps;
@@ -44,6 +45,7 @@ mod render_probe;
 mod sky;
 mod stream;
 mod terrain;
+mod traffic;
 mod tuning;
 mod walk;
 mod water;
@@ -60,6 +62,7 @@ use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use drive::{board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
@@ -113,7 +116,7 @@ const OCTAVES: u32 = 18;
 /// names. Lower, the continents MERGE: at +700 m the body is 54.6% water
 /// and nearly all of its land is one mass, which is percolation rather
 /// than a tuning mistake.
-const SEA: f64 = RADIUS + 1000.0;
+const SEA: f64 = RADIUS + 1100.0;
 /// Towns: how many, and how far across each.
 /// How many towns are PLANNED on the planet. Every one of them levels its
 /// own ground and is painted on the body's chart, so a world with this
@@ -291,6 +294,7 @@ fn main() {
     .init_resource::<Eye>()
     .init_resource::<Frame>()
     .init_resource::<Status>()
+    .init_resource::<Thefts>()
     .init_resource::<flight_bench::Benchmark>()
     .add_systems(
         Startup,
@@ -301,34 +305,57 @@ fn main() {
         flight_bench::clear_input.after(bevy::input::InputSystems),
     )
     .add_systems(Startup, lod_debug::spawn_legend)
-    .add_systems(Last, flight_bench::after_update)
-    .add_systems(
-        Update,
-        (
-            grab_mouse,
-            lod_debug::controls,
-            toggle_walk,
-            walk,
-            fly,
-            flight_bench::drive,
-            planets::activate,
-            rebase_origin,
-            planet_view::recentre,
-            city::update_lod,
-            stream,
-            flight_bench::after_stream,
-            light_lamps,
-            place_eye,
-            sky::drift_sky,
-            show_status,
-            lod_debug::apply,
-            take_shot,
-            flight_bench::finish,
-            hold_frame,
-        )
-            .chain(),
-    )
-    .run();
+    .add_systems(Last, flight_bench::after_update);
+    tick(&mut app);
+    app.run();
+}
+
+/// Everything a frame DOES, in the order it does it. Its own function
+/// rather than another link on the builder, because `main` is the
+/// arguments, the `App` and the schedule, and the schedule is the long
+/// one of the three.
+fn tick(app: &mut App) {
+    app // Bevy takes at most twenty systems in one tuple and this schedule is
+        // past it, so it is two tuples each chained, chained to each other.
+        // TWO `add_systems` calls would NOT have done: Bevy gives no order
+        // between two registrations, and `place_eye` before `stream` is a
+        // frame drawn from where the eye was going to be.
+        .add_systems(
+            Update,
+            (
+                (
+                    grab_mouse,
+                    lod_debug::controls,
+                    toggle_walk,
+                    board,
+                    walk,
+                    drive_car,
+                    fly,
+                    flight_bench::drive,
+                    planets::activate,
+                    rebase_origin,
+                    planet_view::recentre,
+                    city::update_lod,
+                    stream,
+                    flight_bench::after_stream,
+                    light_lamps,
+                    traffic::drive_traffic,
+                    show_cars,
+                )
+                    .chain(),
+                (
+                    place_eye,
+                    sky::drift_sky,
+                    show_status,
+                    lod_debug::apply,
+                    take_shot,
+                    flight_bench::finish,
+                    hold_frame,
+                )
+                    .chain(),
+            )
+                .chain(),
+        );
 }
 
 /// What a frame of input is read from: the clock, the keys, the mouse's
@@ -434,6 +461,16 @@ fn spawn_world(
     let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
     let sheet = water_material(&mut waters, SEA);
     say_world(&world, start_eye, &lat, args.levels);
+    // The people and the cars on their streets. Built from the same
+    // towns, so a crowd exists exactly where the buildings do.
+    traffic::turn_out(
+        &mut commands,
+        0,
+        &world.built,
+        SEED,
+        &mut meshes,
+        &mut standard,
+    );
     // The towns are drawn once and never again: models, not chunks.
     city::spawn_towns(
         &mut commands,
@@ -458,17 +495,7 @@ fn spawn_world(
     );
     planets.active = planets.nearest(eye);
     let body = &planets.bodies[planets.active];
-    let mut streamer = Streamer::new(
-        lat,
-        eye - body.centre,
-        args.levels,
-        body.material.clone(),
-        body.water.clone(),
-        compute.0.take(),
-        tuning.clone(),
-    );
-    streamer.centre = body.centre;
-    commands.insert_resource(streamer);
+    spawn_streamer(&mut commands, lat, eye, &args, body, &mut compute, &tuning);
     // The sun, and everything that reads it: the WORLD's own start decides
     // which way it points and never `--eye`, so two pictures taken from
     // two places are lit the same and only the camera moved. The light,
@@ -491,6 +518,31 @@ fn spawn_world(
     commands.insert_resource(Eye(WorldPos(eye)));
     commands.insert_resource(Ground(body.world.clone(), body.centre));
     commands.insert_resource(planets);
+}
+
+/// The chunk streamer, standing at whichever body the eye is nearest.
+/// Its own function because it is the one thing in `spawn_world` that
+/// reaches into three resources to make one.
+fn spawn_streamer(
+    commands: &mut Commands,
+    lat: Lattice,
+    eye: DVec3,
+    args: &Args,
+    body: &planets::Body,
+    compute: &mut compute::Compute,
+    tuning: &tuning::Tuning,
+) {
+    let mut streamer = Streamer::new(
+        lat,
+        eye - body.centre,
+        args.levels,
+        body.material.clone(),
+        body.water.clone(),
+        compute.0.take(),
+        tuning.clone(),
+    );
+    streamer.centre = body.centre;
+    commands.insert_resource(streamer);
 }
 
 fn say_world(world: &World, eye: DVec3, lat: &Lattice, levels: u8) {
@@ -654,17 +706,26 @@ fn place_eye(
     frame: Res<Frame>,
     eye: Res<Eye>,
     walker: Option<Res<OnFoot>>,
+    thefts: Res<Thefts>,
     mut cam: Query<(&mut Transform, &Fly), With<Camera3d>>,
 ) {
     let Ok((mut tf, fly)) = cam.single_mut() else {
         return;
     };
     let at = frame.0.local(eye.0);
-    *tf = match walker {
-        Some(w) => {
+    // THREE places the eye can be and not two: on foot, at the wheel of
+    // a stolen car, or in the air. The first cut had two, so stealing a
+    // car (which takes the walker away) put the camera back in the fly
+    // rotation and the picture came back with no car in it at all.
+    *tf = match (thefts.driving(), walker) {
+        (Some(theft), _) => {
+            let look = drive::look_at(&theft.car);
+            Transform::from_translation(at).looking_to(look.as_vec3(), theft.car.dir.as_vec3())
+        }
+        (None, Some(w)) => {
             Transform::from_translation(at).looking_to(w.0.look().as_vec3(), w.0.dir.as_vec3())
         }
-        None => Transform::from_translation(at).with_rotation(fly.rotation),
+        (None, None) => Transform::from_translation(at).with_rotation(fly.rotation),
     };
 }
 

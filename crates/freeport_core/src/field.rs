@@ -69,6 +69,12 @@ pub const LAMP: u8 = 4;
 pub const LIT: u8 = 5;
 /// A street's paving.
 pub const STREET: u8 = 6;
+/// The PAINT on a street: the centreline's dashes and the two lines
+/// along the kerbs. It is a material rather than a mesh of its own,
+/// because a marking is paint on a road and not a thing standing on
+/// one: it wears the street's own set brightened, so it takes no
+/// texture, no draw and no second shader.
+pub const PAINT: u8 = 7;
 
 /// A ball of rock and nothing else.
 pub struct Sphere {

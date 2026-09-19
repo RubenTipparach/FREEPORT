@@ -91,11 +91,18 @@ fn the_chart_agrees_with_the_field_it_was_baked_from() {
     for i in (0..chart.width * chart.height).step_by(97) {
         let dir = pixel_dir(i % chart.width, i / chart.width, chart.width, chart.height);
         let spot = spot_at(&planet, sea, dir, 0.0);
-        let wet = chart.sample(dir)[3] > 8;
-        assert_eq!(
-            wet,
-            spot.over_sea < -FULL_DEPTH * 0.03,
-            "the chart and the field disagree about water at {dir}"
+        // The chart's alpha IS the water mask, so what is held is that
+        // the byte on the chart is the byte the field would encode, and
+        // never a second threshold written beside it: the alpha is
+        // `round(water * 255)` and this test read it back through
+        // `> 8` against an `over_sea < -FULL_DEPTH * 0.03` of its own,
+        // which are -7.3 m and -6.6 m of water. It agreed for as long as
+        // no sampled texel fell in the 0.7 m between them.
+        let want = (spot.water.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        let got = chart.sample(dir)[3];
+        assert!(
+            got.abs_diff(want) <= 1,
+            "the chart says {got} of water at {dir} where the field says {want}"
         );
         checked += 1;
     }

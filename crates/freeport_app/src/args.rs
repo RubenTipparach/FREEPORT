@@ -47,6 +47,11 @@ pub(crate) struct Args {
     /// feel is a number a second person can check rather than a thing to
     /// take on trust.
     pub(crate) walk: u32,
+    /// STEAL the nearest car and drive it forward for this many frames,
+    /// at the same fixed sixtieth `--walk` uses. A headless run has
+    /// nobody to press E and then hold W, and a car nobody can
+    /// photograph is a car nobody can judge the feel of.
+    pub(crate) drive: u32,
     pub(crate) cpu_terrain: bool,
     pub(crate) benchmark: Option<String>,
     pub(crate) bench_frames: u32,
@@ -74,6 +79,7 @@ impl Default for Args {
             fps: FPS,
             octaves: OCTAVES,
             walk: 0,
+            drive: 0,
             cpu_terrain: false,
             benchmark: None,
             bench_frames: 1200,
@@ -124,6 +130,7 @@ pub(crate) fn parse_args() -> Args {
                     .clamp(1, 24)
             }
             "--walk" => args.walk = it.next().and_then(|v| v.parse().ok()).unwrap_or(600),
+            "--drive" => args.drive = it.next().and_then(|v| v.parse().ok()).unwrap_or(600),
             "--benchmark-flight" => {
                 args.benchmark = it.next();
                 args.fly = true;

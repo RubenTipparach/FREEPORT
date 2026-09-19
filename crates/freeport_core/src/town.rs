@@ -37,15 +37,6 @@ pub struct Lot {
     pub id: u32,
 }
 
-/// A piece of street: its middle, its size east and north, in town metres.
-#[derive(Clone, Copy, Debug)]
-pub struct Piece {
-    pub x: f64,
-    pub z: f64,
-    pub w: f64,
-    pub d: f64,
-}
-
 /// A town: its place and frame on the sphere, its level, and its plan.
 #[derive(Clone, Debug)]
 pub struct Town {
@@ -87,12 +78,6 @@ impl Frame {
     }
 }
 
-/// Blocks are this far apart, metres, and streets this wide.
-pub const PITCH: f64 = 14.0;
-pub const BLOCK: f64 = 10.0;
-pub const STREET: f64 = 4.0;
-/// A street is laid in pieces this long, each on its own patch.
-pub const PIECE: f64 = 3.5;
 /// How far the levelling reaches past a town's radius.
 const APRON: f64 = 12.0;
 /// How many directions are looked at for a town site. It is also the
@@ -483,6 +468,19 @@ pub(crate) fn settle(
     if ground.fall > radius * LEVEL {
         return None;
     }
+    // And the level it will actually STAND at has to be inside the
+    // window too. `plan` tests the candidate's own direction and this
+    // takes the LOWEST of forty nine marches round it, which is a
+    // different number by up to the `LEVEL` fall the site just passed:
+    // a candidate accepted at the window's floor could settle under the
+    // sea, and what would be built there is a levelled plateau with
+    // water over it. The window is asked here rather than passed in
+    // because `plan` and `road::waysides` both call this and a floor
+    // handed in twice is a floor one caller gets wrong.
+    let (low, _) = window(planet);
+    if ground.low < low {
+        return None;
+    }
     // A town grows ALONG the shore, which is across the way the land
     // falls: the sea is downhill and the hill is up, so what is left to
     // build on runs between them.
@@ -620,34 +618,12 @@ pub fn lay(dir: DVec3, h: f64, radius: f64, along: DVec2, index: usize, seed: u3
 }
 
 /// Which SIDES of a block want a street: west, east, south and north.
-mod fronts {
+pub(super) mod fronts {
     pub const WEST: u8 = 1;
     pub const EAST: u8 = 2;
     pub const SOUTH: u8 = 4;
     pub const NORTH: u8 = 8;
     pub const ALL: u8 = WEST | EAST | SOUTH | NORTH;
-}
-
-/// The one side a suburban block fronts: the one facing the middle of
-/// town, so a run of them shares a road in and the road leads somewhere.
-///
-/// A suburb block used to front all four sides like a downtown one, and
-/// a lone house with nothing built beside it then stood in a square ring
-/// of its own tarmac. The owner would have read that off the picture as
-/// a moat, and the picture is where it showed: the numbers said the town
-/// had streets and it did.
-fn faces(i: i64, j: i64) -> u8 {
-    if i.abs() >= j.abs() {
-        if i > 0 {
-            fronts::WEST
-        } else {
-            fronts::EAST
-        }
-    } else if j > 0 {
-        fronts::SOUTH
-    } else {
-        fronts::NORTH
-    }
 }
 
 /// Which block of a town's grid carries what, and which sides of each
@@ -704,61 +680,6 @@ fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> (Vec<Lot>, Vec<u8>) {
     (lots, built)
 }
 
-/// The streets of a town: a piece wherever a street runs past a block
-/// somebody built on, and nowhere else.
-///
-/// Laid over the whole disc instead, which is what this did, a town's
-/// paving was a circle whatever shape the town itself came out, so the
-/// outline the lobes cut was hidden under a perfectly round grid of
-/// tarmac. A street that serves nothing is not a street.
-fn streets_of(n: i64, built: &[u8]) -> Vec<Piece> {
-    let wide = (2 * n + 1) as usize;
-    let at = |i: i64, j: i64, side: u8| {
-        (-n..=n).contains(&i)
-            && (-n..=n).contains(&j)
-            && built[(i + n) as usize * wide + (j + n) as usize] & side != 0
-    };
-    // Along the block's own edge: the line between block i - 1 and i.
-    let line = |i: i64| i as f64 * PITCH - BLOCK / 2.0 - STREET / 2.0;
-    let steps = (PITCH / PIECE).ceil() as i64;
-    let mut pieces = Vec::new();
-    for i in -n..=n + 1 {
-        for j in -n..=n {
-            // Every piece of this block's own frontage, so the paving is
-            // continuous along a run of built blocks and stops with them.
-            if !(at(i - 1, j, fronts::EAST) || at(i, j, fronts::WEST)) {
-                continue;
-            }
-            for k in 0..steps {
-                let mid = j as f64 * PITCH + (k as f64 + 0.5 - steps as f64 / 2.0) * PIECE;
-                pieces.push(Piece {
-                    x: line(i),
-                    z: mid,
-                    w: STREET,
-                    d: PIECE,
-                });
-            }
-        }
-    }
-    for j in -n..=n + 1 {
-        for i in -n..=n {
-            if !(at(i, j - 1, fronts::NORTH) || at(i, j, fronts::SOUTH)) {
-                continue;
-            }
-            for k in 0..steps {
-                let mid = i as f64 * PITCH + (k as f64 + 0.5 - steps as f64 / 2.0) * PIECE;
-                pieces.push(Piece {
-                    x: mid,
-                    z: line(j),
-                    w: PIECE,
-                    d: STREET,
-                });
-            }
-        }
-    }
-    pieces
-}
-
 /// What kind of building a lot of a wanted height gets, and how many
 /// storeys it ends up with: towers in the middle, one floor houses at the
 /// edge, and the odd hangar among them.
@@ -799,6 +720,10 @@ pub fn ground_at(planet: &dyn Density, dir: DVec3, near: f64, far: f64) -> f64 {
     }
     0.5 * (lo + hi)
 }
+
+mod street;
+pub use street::*;
+use street::{faces, streets_of};
 
 #[cfg(test)]
 mod tests;

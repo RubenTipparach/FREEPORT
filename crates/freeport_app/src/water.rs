@@ -1,5 +1,5 @@
 //! The sea's surface, drawn: tenebris's water shader on Bevy's own
-//! transmission.
+//! transmission, on pale-blue-dot's measured numbers.
 //!
 //! The sheet is a material extension on the standard material with the
 //! standard material's screen space transmission turned on, so what is
@@ -7,8 +7,18 @@
 //! Beer's law over the depth of water the view ray actually crosses, which
 //! the fragment stage reads off the depth prepass. What the extension adds
 //! is tenebris's: the swell, the ripples, the fresnel sky and the foam
-//! (`water.wgsl` names the GLSL it transcribes). The numbers are
-//! tenebris's `water.yaml`.
+//! (`water.wgsl` names the GLSL it transcribes).
+//!
+//! The NUMBERS are pale-blue-dot's `assets/config/water.ron`, which are
+//! tenebris's own re-measured under a tone mapper. Its
+//! `openspec/changes/water-look/design.md` is the ablation, and the two
+//! results worth carrying are that every shine knob in the shader together
+//! is worth about one per cent of the sea's colour while ABSORPTION is
+//! worth thirty times that, and that tenebris's near white horizon
+//! (0.85, 0.92, 0.98) and its 0.02 of red in the deep colour are authored
+//! for a renderer that clips its framebuffer. Under Bevy's default
+//! `TonyMcMapface` they lift and desaturate into a pale sheet, which is
+//! what this sea was.
 
 use bevy::asset::{embedded_asset, RenderAssetUsages};
 use bevy::math::DVec3;
@@ -52,6 +62,15 @@ pub struct WaterExt {
     /// The ground fog's shape, as `terrain::Terrain::haze`.
     #[uniform(100)]
     pub haze: Vec4,
+    /// The sun's direction in xyz, written every frame by `sky.rs`, and the
+    /// NIGHT FLOOR in w: what a share of the light reaching the water's own
+    /// body is worth on the half of the planet the sun is not on.
+    #[uniform(100)]
+    pub sun: Vec4,
+    /// Absorption per metre of water, a channel each, and in w the longest
+    /// path any of it is measured over.
+    #[uniform(100)]
+    pub absorb: Vec4,
 }
 
 impl MaterialExtension for WaterExt {
@@ -105,34 +124,89 @@ pub fn sheet_ext(sea: f64) -> WaterExt {
     let nits = freeport_core::atmos::NITS as f32;
     WaterExt {
         centre: Vec4::new(0.0, 0.0, 0.0, sea as f32),
-        wave: Vec4::new(0.75, RIPPLE, 0.65, 0.5),
-        deep: Vec4::new(0.02, 0.10, 0.22, 2.0),
+        // Steepness 0.45 and the slope cap 0.7 are the calmed waves of
+        // pale-blue-dot's second round; this sheet was at 0.65 and 1.6,
+        // which is a chop the ripple fade then turned into sparkle.
+        wave: Vec4::new(0.75, RIPPLE, 0.45, 0.5),
+        // NO RED AT ALL, which is the one thing a saturated sea needs
+        // under a tone mapper: tenebris's 0.02 is worth ten levels on
+        // screen and reads as grey. This is also the colour the underwater
+        // view saturates to, so it is the one place the sea's body is
+        // written down.
+        deep: Vec4::new(0.0, 0.12, 0.28, 2.0),
         // The three the shader takes through the camera's exposure are in
         // CANDELA, `atmos::NITS` times the colour they are authored as, or
         // they arrive at five ten thousandths of the ground beside them
         // and the sheet reflects nothing at all.
-        horizon: (Vec3::new(0.85, 0.92, 0.98) * nits).extend(0.5),
-        zenith: (Vec3::new(0.35, 0.55, 0.85) * nits).extend(1.6),
+        //
+        // A clear day blue rather than tenebris's near white, and the
+        // fresnel floor 0.22 rather than 0.5: the floor is the single knob
+        // with measurable authority over deep water at a grazing angle
+        // (22 levels of red on pale-blue-dot's wade frame) and the near
+        // white was what the tone mapper turned into a pale sheet.
+        horizon: (Vec3::new(0.10, 0.36, 0.72) * nits).extend(0.22),
+        zenith: (Vec3::new(0.03, 0.18, 0.55) * nits).extend(0.7),
         foam: (Vec3::new(0.95, 0.97, 1.0) * nits).extend(0.10),
         band: Vec4::new(0.35, 0.60, 0.50, 1.20),
         fog: Vec4::ZERO,
         haze: Vec4::ZERO,
+        // The direction is written every frame by `sky.rs`; the floor is
+        // pale-blue-dot's `night_floor`.
+        sun: Vec4::new(0.0, 1.0, 0.0, NIGHT_FLOOR),
+        absorb: ABSORB.extend(MAX_PATH),
     }
 }
 
+/// Absorption per metre of sea water, a channel each: pale-blue-dot's
+/// `absorption_per_m`, and the term with more authority over the colour of
+/// this sheet than every shine knob in the shader put together. Red is
+/// hardest because the sand under a metre of water is red and only the
+/// water in front of it can take that out.
+pub const ABSORB: Vec3 = Vec3::new(0.90, 0.25, 0.08);
+
+/// The longest path of water any of it is measured over, metres. Past this
+/// the sheet is its own deep colour and nothing behind it is seen.
+pub const MAX_PATH: f32 = 200.0;
+
+/// What a share of the light reaching the water's own body is worth on the
+/// night side. A floor rather than nought, which is this project's own
+/// ambient lesson: nought is a hole in the picture rather than a sea.
+pub const NIGHT_FLOOR: f32 = 0.18;
+
+/// Bevy's own transmission attenuates the refracted ray by
+/// `attenuation_color ^ (thickness / attenuation_distance)`, so at a
+/// distance of one metre the colour it wants IS `exp(-absorption)`. It is
+/// DERIVED here rather than authored beside `ABSORB`, because two numbers
+/// that have to agree are one number: the shader reads `ABSORB` for the
+/// deep colour the path runs out into, and Bevy reads this for the same
+/// Beer's law over the same capped path.
+pub fn attenuation(absorb: Vec3) -> Color {
+    Color::linear_rgb((-absorb.x).exp(), (-absorb.y).exp(), (-absorb.z).exp())
+}
+
 /// The standard material under the sheet, likewise shared: transmissive,
-/// smooth, and attenuating over the water it is looked through.
+/// and attenuating over the water it is looked through by the SAME
+/// absorption the extension carries.
+///
+/// The roughness and the reflectance are the sun's glint, which is the one
+/// thing this keeps on Bevy's own PBR rather than adding a second
+/// highlight of its own: pale-blue-dot measured its explicit specular at
+/// ONE level out of 255, so a second one would be a term nobody can see
+/// drawn twice. 0.02 is water's real F0, which is Bevy's `reflectance`
+/// 0.25, and 0.12 of roughness is a sea rather than the mirror 0.06 was.
 pub fn sheet_base() -> StandardMaterial {
     StandardMaterial {
-        base_color: Color::srgb(0.55, 0.8, 0.9),
-        perceptual_roughness: 0.06,
+        // The diffuse eighth the transmission leaves is the sea's own body
+        // colour, so it is the deep colour and not a second blue.
+        base_color: Color::linear_rgb(0.0, 0.12, 0.28),
+        perceptual_roughness: 0.12,
         metallic: 0.0,
-        reflectance: 0.35,
+        reflectance: 0.25,
         specular_transmission: 0.92,
         ior: 1.33,
         thickness: 2.0,
-        attenuation_distance: 6.0,
-        attenuation_color: Color::srgb(0.02, 0.30, 0.45),
+        attenuation_distance: 1.0,
+        attenuation_color: attenuation(ABSORB),
         double_sided: true,
         cull_mode: None,
         ..default()

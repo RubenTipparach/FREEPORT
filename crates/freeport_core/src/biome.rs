@@ -40,7 +40,7 @@ mod share {
 /// channel network much finer, which is the whole of what makes them read
 /// as different things.
 mod freq {
-    pub const CONTINENT: f64 = 0.30;
+    pub const CONTINENT: f64 = 0.18;
     pub const BELT: f64 = 0.44;
     pub const RIDGE: f64 = 1.15;
     pub const HILLS: f64 = 3.1;

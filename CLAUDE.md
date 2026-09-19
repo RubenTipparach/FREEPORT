@@ -417,6 +417,65 @@ Measured on the same body before and after: 6 pieces over a per cent of
 it, the biggest 15.3%, with 331 islands, against 7 continents of 17.9,
 5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% with 217 islands.
 
+## How BIG a continent is, is the swell's own size, and the count is arithmetic
+
+The shelf decided that there ARE continents. What decides how big one is
+is `freq::CONTINENT`, the size of the swell the shelf cuts, and the owner
+read the answer off the chart: the land masses were too small. Seven
+pieces of 17.9, 5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% is one continent and six
+scraps, and the chart of it is a lace of middling blobs with no open
+ocean anywhere.
+
+It is 0.18 of the planet's lumps now rather than 0.30, with the sea 100 m
+higher to hold the water share: **57.8% water in 3 continents of 17.9,
+11.0 and 10.1% with 381 islands**. The biggest is the same and the second
+is TWICE what it was, the third two and a half times, and there are 75%
+more islands. A chunk of ocean you could sail across for a day is the
+thing that appeared, and it is what a continent needs to be a continent.
+
+**The COUNT falls when the size rises, and that is arithmetic rather than
+a setting anybody can have both ways.** Land is a level set of a fractal,
+so a swell twice as wide crosses the sea half as often; the sweep
+(`measure_the_land_at_each_sea_level`) says it plainly, and no setting in
+it gives seven pieces that are each big. The owner asked for six or seven
+earlier and for bigger now, and bigger is the one that was taken, because
+it is the newer word and because the earlier one was reaching for the same
+thing: a map with real places on it.
+
+**EARTH is the scale to read that at.** Its seven named continents are
+four contiguous land masses of 16.6, 8.2, 2.7 and 1.5% of the globe at
+71% water. This body's three are each bigger than any of them and it is
+58% water, so what the count went down to is a MORE continental world than
+Earth rather than a less divided one, and "three continents" and "seven
+continents" are the same kind of statement about the same kind of planet.
+
+**A town's level is tested against the window now, and it was not.**
+`plan` tests the CANDIDATE's own direction against the habitable window
+and `settle` then gives the site the LOWEST of forty nine marches round
+it, which is a different number by up to the `LEVEL` fall the site just
+passed: on this world's first run a town came out 2.96 m over the sea
+where the floor is 3, and nothing said so. What that is on the way to is a
+town accepted on a shore whose settled level falls UNDER the sea, and what
+would be built there is a levelled plateau with water over it. `settle`
+asks `window` itself and refuses, rather than being handed a floor by two
+callers one of which would get it wrong.
+
+**Three fixtures moved with the shape, and each is worth the line.** The
+road test's little planet carried 900 m of relief on a 40 km radius, which
+is nearly three times what this world carries, so its roads ran over
+ground too rough for a village sized site to be level anywhere: it grew
+two villages by luck before and nought after, and at 400 m of relief it
+grows ten. Its village size assertion was wrong in principle and passed
+for the same reason, holding a village smaller than the SMALLEST city when
+size is how near the sea a place stands: a village on a beach is 0.42 of a
+coastal size where a market town up a valley is the 0.32 floor, so the
+village is legitimately the bigger, and what `WAYSIDE` actually promises
+is that a village is smaller than a CITY ON ITS OWN GROUND. And the chart
+test read the water mask back through a `> 8` of its own against an
+`over_sea < -FULL_DEPTH * 0.03`, which are -7.3 m and -6.6 m of water; it
+agreed for as long as no sampled texel fell in the 0.7 m between them, and
+it compares the chart's byte with the byte the field encodes now.
+
 **And how many continents there are is a fact about how much LAND there
 is.** Land is a level set of a fractal, so past about four tenths of the
 body it PERCOLATES and the seven become one: at a sea of +700 m this
@@ -970,11 +1029,115 @@ its own depth as the sea floor). The extension adds tenebris's: the swell
 in the vertex stage along the radial (`water.vs.glsl`), the ripples as the
 gradient of its `fbm` of its gradient noise bending the radial normal, the
 fresnel sky and the foam on the crests (`water.fs.glsl`, named in the WGSL
-line by line), the ripples worn out from 30 m to 160 m because a bump map
-past a few dozen metres is noise rather than detail, the numbers
-`water.yaml`'s, and every coordinate PLANET LOCAL from a centre the
+line by line), and every coordinate PLANET LOCAL from a centre the
 material is handed and `rebase_origin` moves, which is the Sequoia lesson
 kept where it was learned.
+
+**The NUMBERS are pale-blue-dot's, and they are tenebris's own re-measured
+under a tone mapper.** That project is the same water shader carried into
+the same engine, its settings are `assets/config/water.ron` and its
+`openspec/changes/water-look/design.md` is the ablation that picked them:
+every variant rendered on one binary, the sea's mean sRGB measured over a
+fixed band, against a photograph of open ocean. Two of its results are
+worth keeping whatever the sheet is drawn by:
+
+- **Every shine knob in the shader together is worth about one per cent of
+  the colour of a sea frame, and ABSORPTION is worth thirty times that.**
+  Turning the sun's glint off entirely moved its shore frame by ONE level
+  of 255; doubling the absorption moved it by 31 and its saturation by 17.
+  What a sheet of water over a seabed is made of is the transmitted path,
+  so the only terms with authority over it are how much water stands in
+  front of the sand and how hard a metre of that water tints. A look
+  complaint names a symptom, and the first thing to measure is whether the
+  term about to be tuned has any authority over the pixels in question.
+- **Tenebris's own numbers are authored for a renderer that CLIPS.** Its
+  composite ends on a bare write to an eight bit buffer, so its near white
+  horizon reflection (0.85, 0.92, 0.98) and the 0.02 of red in its deep
+  colour are right there and wrong here: under Bevy's default
+  `TonyMcMapface` they lift and desaturate into a pale sheet. This sea was
+  carrying both, so the fix was not a new term, it was the two constants
+  the tone mapper had been quietly ruining.
+
+So `sheet_ext` is that file: the deep colour 0/0.12/0.28 with NO RED IN IT
+AT ALL, which is what a saturated sea needs under a tone mapper; the sky a
+clear day blue (0.10/0.36/0.72 to 0.03/0.18/0.55) rather than near white;
+the fresnel floor 0.22 rather than 0.5, which is the one shine knob with
+measurable authority, worth 22 levels of red on deep water at a grazing
+angle; the waves calmed to a steepness of 0.45 and a slope cap of 0.7; and
+absorption per metre of 0.90, 0.25, 0.08, which is hardest in red because
+the sand under a metre of water is red and only the water in front of it
+can take that out. Measured at the port's own shore, an eye at the
+waterline looking three kilometres out: 142, 152, 162 at saturation 20,
+which is a grey sheet, against 65, 120, 173 at saturation 108. 17.1% of
+the picture moved.
+
+**There is ONE absorption and ONE path.** Bevy's transmission attenuates
+the refracted ray by `attenuation_color ^ (thickness / attenuation_distance)`,
+so `water::attenuation` DERIVES that colour from the absorption vector at
+a distance of one metre rather than authoring a second one beside it, and
+the shader adds back `deep * (1 - exp(-absorption * path))`, which is what
+Bevy's attenuation cannot do: left alone it takes the seabed to NOUGHT
+over a long path, and deep water is not black, it is its own colour. The
+two halves are `mix(deep, scene, exp(-a * path))` and they read the same
+number. The path is the prepass thickness CAPPED at `MAX_PATH` (200 m), so
+a ray that meets no floor at all is the sheet's own colour.
+
+**The ripples are faded by their own FOOTPRINT, not by distance.** They
+were worn out from 30 m to 160 m of range, and that is the right idea with
+the wrong variable: what a fade is for is stopping once a ripple falls
+under a pixel, which is a function of the angle and the field of view. At
+a grazing angle a ripple thirty metres off already covers a pixel and was
+still being point sampled, and fresnel and foam turn that sampling into
+the white sparkle the before picture is full of. It is
+`1 / (1 + |fwidth(world)| * scale * DETAIL_FADE)` now, on the WORLD
+position because that is continuous across a chunk seam where the ripple
+cell is a step, and it fades the height as well as the gradient so the
+foam stops sparkling with them.
+
+**The night side is DARK, and the sheet mirrors the sky the DOME is
+painting.** The reflection was an authored day gradient at every hour, so
+the sea at midnight was a lit blue sheet under a black sky, brighter than
+the land beside it. `sky.rs` writes the sun's direction into the sheet
+every frame, the fragment measures the terminator on the body's own
+RADIAL (the same `DUSK_TO` and `DUSK_FROM` `distant.wgsl` uses, so one
+line falls in one place), and past it the reflection is `water.fog.rgb`,
+which is `atmos::horizon` and is already in this uniform because the fog
+reads it. No authored night colour and no second sky model: the one the
+atmosphere computed is the one the sea mirrors, which is this file's own
+"the fog IS the sky" rule arriving at the other surface. The body and the
+foam take a `NIGHT_FLOOR` of 0.18; the REFLECTION never does, because it
+carries the sky's own level already and dimmed twice the sea went black
+at the horizon, where a mirror should be closest to the sky it mirrors.
+
+**And the murk darkens with the DIVE.** Seen from under the sheet it was
+the bare deep colour at half a metre and at eight, while the seabed under
+it was already attenuated by the water over it: a lit blue room with a
+darkening floor. It is `deep * exp(-absorption * eye_depth) * lit` now, on
+the same absorption everything else reads, so a dive gets darker and a
+night dive gets darker still.
+
+**What was NOT taken from pale-blue-dot, named rather than hidden.** Its
+water is a render graph NODE with three sub passes (a composite that fogs
+and blurs the whole frame when the camera is under, the cap, and a lens
+pass of rain droplets and emerge drips), and it decides the camera's side
+of the surface on the CPU as a tri state. This sheet is still a material
+on Bevy's own transmission, so there is no underwater composite, no lens,
+no rain ripples and no flow field; the underwater view is the cap's own
+back face and nothing else. Its explicit Blinn Phong specular is
+deliberately not taken either: Bevy's PBR already lights this sheet, a
+second highlight is a term drawn twice, and that project measured its own
+at one level of 255. What the standard material carries instead is water's
+real F0 (Bevy `reflectance` 0.25 against 0.02 of reflectance) and a
+roughness of 0.12, which is a sea rather than the mirror 0.06 was.
+
+**And the night sea is not PHOTOGRAPHED**, which is this file's own camera
+rule catching me out: two hand aimed cameras at the antipode and at the
+terminator both landed on dry land, and the atlas cannot solve a third
+because it is baked at eighteen octaves and a picture on this rasteriser
+is bought down to fourteen, which is a different world with different
+coasts. The tool that is missing is a `--nightwater` that solves a shore
+at a given sun elevation the way `--sunward` solves an orbit, and until it
+exists the night path is code with a test behind it and no picture.
 
 ## Cities are MODELS on the planet, and the ground under them is levelled
 
@@ -985,11 +1148,11 @@ a candidate qualifies on land between three and forty metres over the sea,
 nearly level across the town's width, and apart from every town already
 placed, and the first that qualifies is the port, because a port is the
 town this game is about. A town is a local grid, blocks of `BLOCK` (10 m)
-on a `PITCH` of 14 with `STREET` (4 m) between, a lot per block, taller
-near the middle, a few blocks left as plazas, and every street in `PIECE`
-(3.5 m) pieces, each on its own patch of the sphere, which is the mockup's
-chord lesson at the game's radius: on a 5 km planet a fifty six metre
-chord sags 8 cm, and a piece never has to.
+on a `PITCH` of 18.5 with `STREET` (8.5 m) between, a lot per block,
+taller near the middle, a few blocks left as plazas, and every street's
+RUN cut into pieces about `PIECE` (3.5 m) long, each on its own patch of
+the sphere, which is the mockup's chord lesson at the game's radius: on a
+5 km planet a fifty six metre chord sags 8 cm, and a piece never has to.
 
 **A city FLATTENS ground and never adds any.** `Planet::surface` takes
 whichever is lower of a site's own blend and the bare relief, and
@@ -1082,12 +1245,80 @@ town's plan being right and the test being wrong. A render of this world on
 a software rasteriser is seventeen minutes, so the walk is measured where
 it costs nothing.
 
-**A street is one quad and it stops nothing.** The site under a town is
-levelled, so the ground there is a plane, and dual contouring holds a
-plane to two millimetres (the audit's own number): paving laid five
-centimetres over it clears that by twenty five times, is under any step,
-and needs no collider, so a walker never sinks into a kerb. 7,744 pieces
-are 15,488 triangles.
+**A street is a CROSS SECTION, and that is the whole of `town/street.rs`.**
+It was ONE QUAD four metres wide, and mining-mike's `city_road.gd` (in
+`godot-sandbox`) says in its own note what is wrong with that: a box has
+no cross section, so the road has no kerb, no pavement and no markings,
+its corners meet at hard mitres, and a dead end stops mid cell with an
+open edge. Four metres is also too narrow for two cars to pass. So a
+street is `LANE` (2.75 m) of carriageway each way with `WALK` (1.5 m) of
+raised pavement either side of it, which is 8.5 m of `STREET`, and the
+`PITCH` is that plus the block, because those are not three numbers that
+have to agree, they are one number said three ways. A car is 1.6 m
+across, so two pass with better than a metre between them; a person is
+0.45, so two pass on the pavement too.
+
+**A CROSSING is a piece of its own, and it owns its whole square.** A run
+spans the BLOCK it serves and stops at the crossing squares either end of
+it, which is what leaves a crossing somewhere to be, and `streets_of`
+emits one wherever a street could leave a node, carrying the ARMS it
+actually has. Its square is three bands each way, nine cells: the middle
+is always carriageway, the four corners never are, and each of the four
+bands between is carriageway exactly when its own arm is there. A
+crossroads is a plus of tarmac with four kerbed corners, a bend's kerb
+turns the corner as an L, and a dead end closes with a pavement across it.
+`town::paved` is that one decision, asked by the mesh that draws a
+crossing AND by the traffic that has to know where a pedestrian steps
+down off the kerb: a second copy of those nine cells would be a person
+walking a hand over the tarmac at one junction in a hundred, which nothing
+would say.
+
+**And that is what killed the BARE CORNER the last commit named.** A run
+used to reach only as far as a crossing's own centre line, so the square
+where two streets met was covered from the sides a street arrived on and
+no further: at an L bend the far quadrant was bare and the lane turning
+left crossed it, 1.62 m of levelled verge. With the square paved whole,
+`nobody_steps_off_the_paving_at_all` measures 0.000 m.
+
+**A marking is PAINT, which is a material and not a mesh.** One dash of
+the centreline a piece and a solid line down each side of the
+carriageway, four millimetres over the tarmac in `field::PAINT`, which
+`terrain.wgsl` draws as the concrete set BRIGHTENED the same way a street
+is that set darkened. So a marking costs no texture, no second draw and
+no shader of its own, and the whole town is still one shader and the five
+sets it already binds.
+
+**And a wider street COSTS a town its density, which is arithmetic and
+is reported rather than compensated for.** The `PITCH` is the block plus
+the street, so at a fixed town radius the count of blocks falls as the
+square of it: 14 m to 18.5 is (14/18.5)^2, and measured on one binary
+either side of that one constant, the 8 built towns are 400 buildings
+against 695, 1,644,942 triangles against 2,791,902, and 300 people and
+76 cars out against 522 and 132. The ratio is 0.575 against the 0.573
+the area predicts, which is what says nothing else moved. Getting the
+buildings back means growing the BLOCK or the town's own radius, and
+neither is what was asked for: a street you can pass two cars on is
+wider, and a town of a given size has fewer buildings on it when its
+streets are.
+
+**The carriageway stops nothing and the PAVEMENT does**, and that
+difference is what a body does with each. The site under a town is
+levelled, so the ground there is a plane and dual contouring holds it to
+two millimetres (the audit's own number): five centimetres of paving
+clears that by twenty five times and is under anything, so a walker
+stands on the ground through it and it needs no collider, which is what
+this always said. A `KERB` of 12 cm is not under anything: it is ANKLE
+DEEP, so a pavement that only drew would be a pavement a walker waded
+along. It is one `Model::solid` a strip, which is this file's own rule
+that a box is DRAWN and COLLIDED from one set of numbers, and 12 cm is
+well under the walker's 60 cm step, so he steps up onto it rather than
+being stopped: `resolve`'s ring of points starts AT the step, so it never
+sees a kerb at all. Measured underfoot across a run, at the middle of
+each of eighteen bands: flat to 2.72 m out and 0.172 m up from 2.95 to
+4.13. It cost 6,576 boxes on the eight built towns, 87,691 against
+81,115, and not one triangle, because a `solid` draws what a `trim` did.
+A pavement's slab is SUNK 15 cm into the ground, because an underside
+lying exactly on that plane would fleck along its whole length.
 
 **One mesh a town, and eight towns are eight draws.** `model::fabric`
 welds every lot's model and every piece of street into one mesh in the
@@ -1290,6 +1521,291 @@ area of any of them. A chunk near the port is 17 ms on lavapipe against
 12 before, which is what a site that cuts costs: `surface` can no longer
 return a level without asking the relief what was under it.
 
+## A town is INHABITED, and a townsman is on rails
+
+`traffic.rs` in the core says who is out on a town's streets and where
+they are at a moment; `traffic.rs` in the app draws the few dozen near
+the eye; `figure.rs` is what a person and a car are made of.
+
+**An NPC and a car are ON RAILS**, which is this file's own rule for
+everything that moves and is not the player. A townsman's place is a
+closed form function of his town, his own index and the world clock:
+nothing integrates, nothing is saved, two clients agree by construction,
+and a town nobody is near costs exactly NOTHING, because the function is
+never asked. 160 towns carrying tens of thousands of people is a world
+that costs what an empty one does until you land in it, which is the
+lamps' rule ("a light near the eye and a number everywhere else") on the
+other thing a city is full of.
+
+It also makes spawning by distance seamless for free. An entity that has
+just appeared is exactly where it would have been had it existed all
+along, because there is no state to carry across the boundary.
+
+**The streets are a GRAPH, derived from the paving that is DRAWN.**
+`town::streets_of` lays its pieces on the lines of the block grid, so a
+crossing is a node, a block's frontage is an edge, and `Streets::of`
+reads both off `town.pieces` rather than off the plan that made them.
+That is a wall's own rule again: traffic rides the tarmac a player can
+see, so a street nobody laid can never have a car on it and the two
+cannot drift. No `HashMap` in any of it, because this is replayed state:
+the edges are a sorted vector and a lookup is a binary search.
+
+**A circuit is not SEARCHED for, it is FOLLOWED.** `Streets::next` is the
+classic face traversal of a planar graph: arrive at a node and leave
+along the next street clockwise from the way back. The successor is a
+PERMUTATION of the directed edges, so every orbit of it closes and the
+orbits partition them, which `every_street_is_on_exactly_one_circuit`
+measures both halves of. On a street grid an orbit is the way round one
+block, or round a group of them where the grid has gaps, or the outside
+of the whole town. A dead end has one way off it, which is the way back,
+so a face walks up a cul de sac and turns round, and so does a car.
+
+**A lane is the face offset to its RIGHT and FILLETED at every corner.**
+Neither offset is a number of its own: a car rides the MIDDLE OF ITS LANE
+(`LANE * 0.5`, 1.375 m) and a person the middle of the pavement
+(`LANE + WALK * 0.5`, 3.5), so both are read off the street's own cross
+section and cannot drift from the paving they are drawn over. Oncoming
+traffic passes on the left and a pavement is the outside of the street,
+measured: the two ways down one street are 2.69 m apart.
+
+**And a person steps DOWN off the kerb where he crosses a street, and
+nowhere else.** Along a run the pavement is the only ground there is, so
+he is always up on it; at a crossing his own lane takes him over the side
+street's band, and that band is carriageway exactly when the arm is
+there. `Traffic::lift` asks `town::paved` the same question the mesh
+asks, so a foot and the concrete under it cannot disagree. Measured on a
+plain grid, a 118.8 m walk is 96.6 m on the kerb and 22.2 m crossing. The fillet is the part worth the code. An agent walking the
+offset polyline straight would turn ninety degrees BETWEEN TWO FRAMES,
+which reads as a car teleporting round the corner, so a corner is a
+quarter circle of `CAR_TURN` (1.15 m) or `FOOT_TURN` (0.7) and a dead end
+is a half circle round the end of the street at the lane's own offset.
+Measured over 2 cm of travel: the place is out by 6.8e-7 m and the
+heading turns by at most 1.6 degrees.
+
+**Nobody ever leaves the street, and that is a test rather than a
+picture.** `nobody_ever_leaves_the_street` samples every agent every
+tenth of a metre all the way round its own loop and holds it inside the
+corridor of some street the town actually paved: the worst is 3.673 m
+against a half street of 4.25. That number is understood rather than
+observed, which is the difference between a bound and a coincidence: a
+RIGHT turn's fillet bulges by `lane + radius * (1 - 1/root 2)`, which is
+3.5 + 0.205 on foot and 1.375 + 0.337 driving.
+
+**And NOBODY steps off the paving at all**, which
+`nobody_steps_off_the_paving_at_all` measures at 0.000 m. A run used to
+reach only as far as a crossing's own centre line, so the square of
+tarmac where two streets met was covered from the sides a street arrived
+on and no further: at a four way crossing that is all four quadrants and
+nothing could leave it, and at an L BEND the far quadrant was bare and
+the lane turning LEFT crossed it, because keeping right round the outside
+of a bend is what the far corner IS. The ground a town stands on is
+levelled flat, so what that looked like was somebody cutting a corner
+over a verge, and it measured 1.62 m. A crossing is a PIECE of its own
+now, paved whole whatever arms reach it, which is the section on the
+cities above.
+
+**A person and a car are PARAMETRIC**, in `figure.rs`, which is
+`model.rs`'s rule for the things that move: a procedural game's default
+for new geometry is procedural. A townsman is three parts, a body and two
+legs that swing on their own hips, and a car is one. Three and not five,
+because at the size a person is drawn on a street the silhouette that
+says WALKING is the gap between the legs, and an arm that swung would be
+two more entities each for something nobody can see.
+
+**A gait is measured in METRES and never in seconds.** A leg swings on
+`along / STRIDE`, which is how far the figure has actually come, so a
+thing that has stopped has stopped its legs too and nothing needs a clock
+of its own.
+
+**A figure wears its colour in the VERTEX.** Eight tints times four parts
+is thirty two meshes built once at startup, against a material per agent
+spawned and dropped every time somebody walks past. The core hands out a
+material BYTE and the app owns the palette, which is this file's own
+crate split: what a thing IS belongs to the core and what colour it is
+belongs to the app. None of the tints is near white, and the first render
+is why: at this camera's exposure a coat at 0.72 comes back as a
+MANNEQUIN and a street of them reads as a shop window.
+
+**The set of who is DRAWN has hysteresis, and the lamps' does not need
+any.** `light_lamps` holds its set still by not looking again until the
+eye has gone four metres, which works because a lamp does not move. A
+townsman walks across the boundary on his own, so without it the thirty
+second and thirty third nearest swap places every few frames and
+somebody forty metres off blinks in and out. Somebody already out is
+ranked at `KEEP` (three quarters) of his real distance, so a newcomer
+has to be a third nearer to take his place.
+
+**A crowd belongs to ONE body**, and flying to the next planet despawns
+it rather than redrawing this planet's townsmen against that one's radius
+and centre. And it is turned out on the BUILT towns only, because a
+person walking a street nobody has laid the buildings of stands on a bare
+levelled plateau, which is the gap a far city already has.
+
+**What is MISSING, named rather than hidden.** Nothing here COLLIDES: a
+wall is one oriented box that is drawn and collided and a figure is
+`Model::trim`, which only draws, so a walker passes through a townsman
+and two townsmen pass through each other. A body that stops another body
+wants the walker to know about boxes that MOVE, which is a larger change
+than a crowd on a street. Nor does anybody give way: a car crossing a
+junction does not know the other car is there, because knowing would mean
+state, and state is the one thing rails do not have. And a town that is
+planned but not built has nobody on it, for the same reason it has no
+buildings.
+
+## A car can be STOLEN, and the one with you in it leaves the rails
+
+`driver.rs` in the core is the car and `drive.rs` in the app is the
+theft. **E** gets in and out, and it is one key because getting into the
+car you are standing beside and getting out of the one you are in are
+the same verb.
+
+**A stolen car is not an exception to the rails rule, it is the rule.**
+Every other car in a town is a closed form function of the town, its own
+index and the clock; the moment somebody is at the wheel that stops
+being true of it, and this file already says why: **what INTEGRATES is
+the player, and only the player.** A car with a driver IS the player, so
+it comes off the rails and integrates, and a car nobody is in goes back
+to being a number. Nothing new was needed to say that.
+
+**A car you GET OUT OF is a car that is still there**, which is
+tenebris's longest open bug written down as a rule two sections below.
+There is ONE `Driver` per theft whether you are in it or not, so there
+is nowhere for the pose to be lost: getting out sets a flag, the car
+keeps drawing where you left it, and walking up to it and pressing E
+again reads back the same pose it wrote. Two poses, one for driving and
+one for parked, is what that bug IS.
+
+**And the agent stays stolen for good.** Putting it back would teleport
+it to wherever the closed form says it should have got to by now, which
+is a car jumping across the street the moment its driver walks away. So
+`Thefts::stolen` is the list `traffic::near` skips, and it only grows.
+A second theft is allowed and leaves the first parked for ever, which is
+one `Vec` rather than a rule about how many cars a player may own.
+
+**A car is glued to a surface, so it is a BASIS and not a quaternion**,
+which is this file's rule for the walker and for everything that cannot
+roll. What makes it a car rather than a fast walker is ONE thing: **it
+steers with its wheels.** The yaw rate is the BICYCLE model,
+`speed * tan(steer * lock) / WHEELBASE`, so it is proportional to the
+speed and a car standing still cannot turn at all however hard the wheel
+is held, which `a_car_standing_still_cannot_turn_however_hard_the_wheel_is_held`
+measures at 0.0000 degrees over three seconds of full lock. The
+wheelbase is READ off the model that is drawn (`figure::car` puts its
+wheels 1.32 either side of the middle, so it is 2.64 m) rather than
+chosen beside it, and the lock TAPERS with speed, because a car holding
+full lock at 58 km/h would be cornering at four gravities.
+
+**It is pushed out of walls by the same function the walker is**, with
+its own OUTLINE rather than the walker's circle: `walker::resolve_body`
+takes the ring of points a body has and the heights to test them at, and
+a walker hands it twelve round its 0.35 m radius while a car hands it
+its own four corners and four side middles. One circle could not serve
+both: round a 4.1 m car it is two metres across and could not fit down a
+2.75 m lane, and inside it the bonnet passes through the wall.
+
+**A kerb is driven up and a wall is not**, which is the difference
+between a road and a pavement to something with wheels. The car's own
+test heights start at 0.45 m, well over a 0.17 m kerb, so a stolen car
+mounts the pavement; `CLIMB` (0.3 m) is what refuses anything taller,
+and a wall takes `CRASH` (0.15) of the speed off. Measured: a car driven
+at a wall eight metres off stops at 5.53 m, which is eight less its own
+2.05 m of bonnet, and the same car over a 17 cm kerb goes 72.9 m without
+dropping under 16 m/s.
+
+**The camera is a CHASE**, behind and over the car, and the walker's is
+first person. That is the one place this world has two camera rules, and
+the reason is that the point of stealing a car is the car: a first
+person view of one is a view of the inside of its own bonnet.
+
+**And a car burned WHITE at both ends, which is what made that chase
+view unreadable.** The first picture of one came back apparently showing
+the car's FRONT from a camera that is provably behind it, and the
+reason was neither: a head lamp and a tail lamp were ONE mesh in ONE
+material, `LinearRgba::rgb(900, 846, 720)`, so the tail lamps burned
+the head lamp's warm white. An emissive is a property of the MATERIAL
+and not of the vertex: Bevy's standard material multiplies its base
+colour by the vertex colour and adds its emissive whole, so the red in
+`PALETTE[TAIL_LAMP]` was in the table, was in the mesh's own vertex
+colour, and could not reach the picture. Nothing in this world said
+which way a car was pointing. It is a mesh and a material a lamp KIND
+now, and the emissive is the PALETTE's own row times the kind's glow,
+which also collapses a second copy of the head lamp's colour that had
+already drifted (`LAMP_NITS * 0.94` and `* 0.8` against the table's
+0.96 and 0.85).
+
+**And splitting the material was not enough, because the NUMBER was
+wrong by two orders of magnitude.** The second render came back white
+as well: Bevy's `emissive_exposure_weight` is NOUGHT by default, so an
+emissive is added to the frame AFTER the camera's exposure and is not
+in candela at all. `LAMP_NITS` was 900 with a comment claiming it was
+"the same order as a building's lit pane", and a lit pane is 3.0 in
+`terrain.wgsl` and a street lamp 8.0: 900 is a hundred times over
+white, so every lamp clipped to 255 whatever colour it carried. It is
+`GLOW` now, in the SHADER's own units, 8.0 at the front and 2.2 at the
+back, because a tail lamp is far dimmer than a head lamp and that is a
+fact about the LAMP rather than about its colour. Measured on the same
+frame: the lamps were 252, 252, 252 and are 226, 110, 107, and 0.188%
+of the picture moved. A constant whose comment names the units it is
+NOT in is a constant that cannot be checked by reading.
+
+**The end of a car is told by the GAP between its lamps, and that is how
+this was settled rather than by squinting.** The head lamps stand 0.52
+either side of the centreline and are 0.34 m wide, so the gap between
+them is 2.06 of a lamp; the tail lamps stand 0.56 out and are 0.30 wide,
+which is 2.73. Measured on the render itself, the two bright blobs are
+38 px wide with 104 px between them, which is **2.74**: the chase camera
+was right all along and it was the colour that was lying. A picture that
+looks wrong names a symptom, and the number that tells two symptoms
+apart is the one worth finding.
+
+**And the EYE has THREE places to be, not two**, which is what the first
+picture of a stolen car caught and no test did. `place_eye` and `fly`
+both read the WALKER to decide whether the fly camera owns the eye, and
+stealing a car TAKES THE WALKER AWAY: the theft fired, the log said so,
+and the picture came back from the fly camera with no car anywhere in
+it. `fly::Aboard` is the question asked once now, the walker or a car
+with somebody at the wheel, rather than the walker asked twice. A rule
+about who owns a thing, asked in terms of only one of the things that
+can own it, is a rule that is wrong the day a second one arrives.
+
+**And `--drive N` steals one headless and holds the throttle**, which is
+`--walk`'s own rule: a headless run has nobody to press E and then hold
+W, and a car nobody can photograph is a car whose feel nobody can check.
+It waits for the crowds to have turned a car out rather than firing on
+frame nought, because a theft of nothing is a walk.
+
+**A car's place is a PLACE, and returning a DIRECTION cost a theft
+everything.** `Crowds::cars_near` handed back `at.normalize()` and the
+caller compared `c.2 * planet.radius`, which puts every car on the MEAN
+radius: the nearest car to a walker standing 1,105.7 m up measured
+1,105.8 m away, which is his own ALTITUDE and not a distance to
+anything, while town 0's own centre was 117 m off. So no car was ever
+in reach and the scripted theft never fired, with a log line saying
+nothing was near. A position multiplied by a radius it already carries
+is a number that LOOKS like a distance and is one to the planet's
+centre.
+
+**And a reach is measured from the car's own MIDDLE**, so it has to
+clear the car. `REACH` was 4 m and a car is 4.1 m long, which put the
+door handle a hand's width outside it; it is 8 m, a stride or two off
+the kerb. A SCRIPTED theft reaches `town::OUTLINE * 200`, the whole
+town, because `--drive` has no legs: at a player's own reach a headless
+run stands on the kerb waiting for a car to happen past it, which is a
+flag that photographs nothing most of the time it is used.
+
+**And a stolen car belongs to ONE body**, which is the crowd's own rule
+and the same rule as getting out of it: fly to another planet and the
+car stays parked where it was rather than being drawn against that
+planet's radius and centre, and it is still there when you come back.
+
+**What is MISSING, named rather than hidden.** A stolen car does not
+collide with anything that MOVES, so it drives through townsmen and
+through the traffic, for the same reason nothing else in a town does:
+the walker knows about the boxes a model was drawn from and those do not
+move. Nothing is saved, so a car is stolen afresh every run. And the sea
+does not stop it: the bounds it drives against carry no water, so a car
+driven off a beach keeps going down the sea bed.
+
 ## Cities are JOINED, and the plan of a body is BAKED
 
 `road.rs` routes the network and `atlas.rs` is the file it is kept in.
@@ -1425,9 +1941,9 @@ the towns alone.
 
 ## The sets on the field, and the walker on it, in Bevy
 
-**A triangle carries what it is made of, and there are seven.** `TERRAIN`,
-`CONCRETE`, `PLATE`, `GLASS`, `LAMP`, `LIT` for a glowing pane and
-`STREET`. A chunk's comes from the FIELD, which `dc.rs` asks half a fine
+**A triangle carries what it is made of, and there are eight.** `TERRAIN`,
+`CONCRETE`, `PLATE`, `GLASS`, `LAMP`, `LIT` for a glowing pane, `STREET`
+and `PAINT` for a road marking. A chunk's comes from the FIELD, which `dc.rs` asks half a fine
 cell inside every triangle's middle (`HAND`), and the ground answers
 terrain everywhere; a model's is whatever its own box or quad was given
 (`model.rs`). The app puts it in the vertex colour's red, every corner of
@@ -1783,8 +2299,8 @@ time it was broken.
 
 ## Content: what is generated, what is baked, and where it lives
 
-- **Textures are Material Maker's.** A material is a graph in
-  `materials/<name>.ptex` and nothing else is its source. `tools/bake_materials.sh`
+- **Textures are Material Maker's, with ONE named exception.** A material
+  is a graph in `materials/<name>.ptex` and nothing else is its source. `tools/bake_materials.sh`
   exports every graph through Material Maker's own command line (Godot
   target, which is the glTF layout Bevy reads: `<name>_albedo.png`,
   `<name>_normal.png` in OpenGL green up, `<name>_orm.png` with occlusion in
@@ -1802,9 +2318,41 @@ time it was broken.
   the mobile and GL renderers crash under lavapipe while this one exports
   cleanly, which took an afternoon to find and is written here so nobody
   finds it twice. Seven sets ship: basalt, regolith, ice, dunes, hull
-  plate, grass and concrete, all authored SHALLOW, because a normal map at
+  plate, grass and concrete, plus asphalt from its own generator, all
+  SHALLOW, because a normal map at
   full strength on a flat quad reads as gravel (swarm-demo runs its finishes
   at a fifth).
+- **ASPHALT is the exception, and the reason is written down rather than
+  hidden.** Material Maker DOES NOT EXPORT in the container this was
+  built in any more. Measured, on the SEVEN COMMITTED GRAPHS with
+  nothing changed: it starts, reports its Vulkan device, and then sits
+  for five minutes having written none of its thirty two maps, under
+  forward_plus, mobile and gl_compatibility alike, and `--check` comes
+  back in three seconds having found nothing. The graph is not the
+  problem and neither is the new set; the rig is. So rather than ship a
+  `.ptex` nobody can bake and a PNG nobody can check against it,
+  `tools/make_asphalt_texture.py` IS the source for this one set: numpy,
+  integer hashes, no `sin`, no GPU, six seconds, and byte identical on a
+  re-run, which is what makes its own `--check` mean anything. That is
+  still "every asset has a committed source", and it is the shape
+  swarm-demo's `make_chitin_texture.py` and `make_crystal_texture.py`
+  already have. Re-authoring it as a graph is a follow up for a machine
+  where the bake runs.
+- **And a road was CONCRETE DARKENED, which is two things wrong.** The
+  street wore the concrete set at `1 - 0.45`, so it was the right grey
+  by accident and carried concrete's own 2 by 2 PANEL JOINTS in its
+  height map: a road drawn as poured slabs somebody had driven over.
+  Asphalt is chips of stone in bitumen and has no joint anywhere on it,
+  and it is DARK, about a tenth against concrete's half. Measured on the
+  two albedo maps: 0.106 linear against 0.449, a quarter of the
+  brightness. The paint is the asphalt set BRIGHTENED now rather than
+  the concrete set, which is the same one trick in the right place.
+- **The first cut of it read as GRAVEL**, which is this file's own rule
+  about every other set arriving at the new one: a chip is 15 mm on a
+  3 m tile, so at walking distance it is five pixels and every bit of
+  contrast on it is noise. The chips span 0.06 to 0.21 of albedo rather
+  than 0.05 to 0.27, and the normal leans at 0.20 rather than 0.30,
+  which is swarm-demo's finishes at a fifth.
 - **Grass is hay.** The first grass graph was noise coloured green, and on
   the ground it read as dots. The owner's brief was green hay with its
   stems flattened on the ground, and the graph is that now: two fields of
@@ -1840,14 +2388,15 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 107, the core, about 53 s
+cargo test -p freeport_core                       # 132, the core, about 39 s
 cargo test -p freeport_app                        # 43, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
 cargo clippy -p freeport_app                      # the app's count never rises: it is nought
-tools/bake_materials.sh --check                   # the maps match their graphs
+tools/bake_materials.sh --check                   # the maps match their graphs (Material Maker does not run in every container: see the asphalt note)
+python3 tools/make_asphalt_texture.py --check     # the asphalt set matches its generator, byte for byte
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
 ./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, Tab wires, Esc frees the mouse
@@ -1860,6 +2409,10 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --eye 0,1000012,-14 --look 0,1000012,60 --shot graze.png   # the horizon dead level, which is where the dark band was
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --eye 0,1030000,0 --look 0,1000000,120000 --shot high.png  # 30 km up: the curve, the sea and the haze
 ./target/release/freeport_app --octaves 14 --levels 9 --walk 600 --frames 620 --shot walked.png   # ten seconds of walking, the distance said every second
+# STEAL the nearest car and drive it: the chase camera, the asphalt and
+# the town going past. `--drive` is E and then W held, since a headless
+# run can press neither.
+./target/release/freeport_app --octaves 14 --levels 9 --drive 300 --frames 320 --shot stolen.png
 # The body from orbit, lit: `--sunward N` stands N radii off along the SUN
 # and looks at the centre, which is the only way to aim this that works.
 # The sun stands over wherever the world starts, so where it is depends on
@@ -1912,15 +2465,18 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 107 tests in about 53 s, and `freeport_app` 43 in 12. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 132 tests in about 39 s, and `freeport_app` 43 in 4. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
-  with 8,000 m of relief on 18 octaves and the sea 1,000 m OVER the mean
-  radius, which leaves it 62.1% water in SEVEN continents (17.9, 5.3,
-  4.1, 2.2, 2.1, 2.0 and 1.2% of the body) and 217 islands. At +820 m,
-  where it was, 65.0% in 6 pieces with the biggest 15.3% and 331
-  islands; at -400 m, where it was before that, 26.3%.
+  with 8,000 m of relief on 18 octaves and the sea 1,100 m OVER the mean
+  radius, which leaves it 57.8% water in THREE continents (17.9, 11.0 and
+  10.1% of the body) and 381 islands. At the continent term's old 0.30 of
+  the planet's lumps and a sea at +1,000 m it was 62.2% water in seven
+  pieces of 17.9, 5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% with 217 islands,
+  which is one continent and six scraps; at +820 m, 65.0% in 6 with the
+  biggest 15.3% and 331 islands; at -400 m, 26.3%. Earth, for scale, is
+  71% water in four contiguous masses of 16.6, 8.2, 2.7 and 1.5%.
 - The towns, on that planet: eight planned in 155 ms (four thousand
   candidates on a golden spiral, the port first), and 699 buildings and
   7,744 pieces of street MODELLED in 30 ms into 192,646 triangles, 6,635
@@ -2003,7 +2559,11 @@ Numbers in the commit message. What is measured so far:
   against the CPU's 37.82 on lavapipe, identical mesh geometry, and a
   sign-only density deviation of 440 m, which is the interval arithmetic
   doing its job rather than a disagreement.
-- The roads: 254 of them over 52,525 km joining 156 of the 160 towns,
+- The roads on the WIDER continents: 297 of them over 61,178 km joining
+  153 of the 160 towns, and 613 roadside villages rather than 544, baked
+  in 18.9 s. More road and more of it inland is what a body whose land is
+  gathered into three masses rather than scattered over seven looks like.
+- The roads before that: 254 of them over 52,525 km joining 156 of the 160 towns,
   routed over 125,664 waypoints ten kilometres apart in one multi source
   Dijkstra. It was 155 over 36,716 km joining 123 while the body was 65%
   water with no shelf under it, and 336 over 134,464 km joining 152 while
@@ -2018,6 +2578,14 @@ Numbers in the commit message. What is measured so far:
   kilometre body at the precision of a fraction. The A/B at 800 m is
   0.003% of pixels, because the ripples are faded past 160 m there and the
   quantisation is a motion artifact a still frame understates.
+- The sea's COLOUR, on pale-blue-dot's numbers, at the port's own shore
+  with an eye at the waterline looking three kilometres out: 142, 152, 162
+  at a saturation of 20, which is a grey sheet with sparkle on it, against
+  65, 120, 173 at a saturation of 108. 17.1% of that picture moved by more
+  than 8 of 255. For scale, that project measured a photograph of open
+  ocean at saturation 134 in its middle band and 87 in its foreground, and
+  measured every shine knob in its own shader as worth about one per cent
+  of a sea frame against absorption's thirty.
 - What a planet scale `f32` did to a texture coordinate, at the port, where
   `|rel|` is 999,603 m and one float to the next is 6.25 cm: the ground's
   own coordinate took 8 distinct values over two metres, so a 2 m tile was
@@ -2028,6 +2596,65 @@ Numbers in the commit message. What is measured so far:
   picture moved), and the sea's wants a noise that takes a cell and a
   fraction. On a five kilometre planet the same step is half a millimetre,
   which is why every earlier picture looked right.
+- The traffic on the harness planet: the 8 BUILT towns turn out 300
+  people and 76 cars, of which the nearest 32 and 14 are ever entities.
+  The other 765 settlements on the body turn out nobody at all, because
+  nothing asks: an agent is a function and a function nobody calls costs
+  nothing, which is the whole argument for rails.
+- A car's own lamps, measured at the chase camera's own range on three
+  renders of one frame: 252, 252, 252 with both lamps in one white
+  material; 252, 251, 251 with a material a KIND but the emissive still
+  written as 900 of something the shader adds AFTER the exposure; and
+  226, 110, 107 once the glow is in `terrain.wgsl`'s own units, 8.0 at
+  the front and 2.2 at the back. 0.188% of the picture moved. Which END
+  of a car a camera is looking at is told by the GAP between its lamps
+  over their width, 2.06 at the front and 2.73 at the back: the render
+  measures 104 px between two 38 px blobs, which is 2.74, so the chase
+  camera was behind the car the whole time and it was the COLOUR that
+  was lying.
+- What the cross section cost, measured on one binary either side of the
+  one constant `PITCH`, on the same 773 town atlas: at 14 m the 8 built
+  towns are 695 buildings, 4,250 pieces of street, 2,791,902 triangles,
+  137,221 boxes and 1,390 lamps, turning out 522 people and 132 cars; at
+  18.5 they are 400, 2,467, 1,644,942, 81,115 and 800, turning out 300
+  and 76. 400/695 is 0.575 against the (14/18.5)^2 of 0.573 the area
+  predicts, which is what says nothing else moved. Neither of those box
+  counts carries a kerb collider, because the pair was measured before
+  one existed; with them the 18.5 world is 87,691, so a pavement a body
+  can stand on is 6,576 boxes and not one triangle.
+- The traffic, on the core's own test town: 115 pieces of street are 93
+  of run and 22 crossings over 31 edges, 11 circuits off them, and 17
+  lots turn out 13 people and 3 cars at 0.98 to 9.15 m/s. Nobody strays
+  further than 3.673 m from a street's middle against a half street of
+  4.25, and the furthest anybody steps off the PAVING is 0.000 m, against
+  1.62 before the crossing square was a piece of its own. Over 2 cm of
+  travel the place is out by 6.8e-7 m and the heading turns by at most
+  1.6 degrees, which is what the corner fillets are for.
+- What a street's cross section costs and buys: a run piece was one quad
+  of 2 triangles and is 2 of carriageway, 24 of the two pavement slabs
+  and 6 of markings, and a crossing is 9 cells of the same. A car had
+  1.90 m of street to itself and has 2.75; a pedestrian had a painted
+  stripe and has a kerb 12 cm up.
+- The CAR, driven: it pulls away at 5.5 m/s^2 and tops out at 16 m/s
+  (58 km/h), the brake takes all of that off in 10.5 m, and reverse
+  holds 5. At a crawl it holds a 5.64 m circle against the 5.53 m its
+  own wheelbase and lock say, and three seconds of full lock standing
+  still turns it 0.0000 degrees. Driven at a wall 8 m off it stops at
+  5.53 m, which is eight less its own bonnet, and over a 17 cm kerb it
+  goes 72.9 m without dropping under 16 m/s.
+- The asphalt set, against the concrete it replaces on a road: 0.106
+  linear albedo against 0.449, a quarter of the brightness, with the
+  chips spanning 0.055 to 0.243 and no panel joint anywhere on it. Six
+  seconds to bake on one core, byte identical on a re-run, and 728 KB,
+  2.78 MB, 1.02 MB and 1.33 MB for its four maps, which sits between
+  concrete's and grass's. Material Maker, for the comparison: five
+  minutes on the seven committed graphs with none of its thirty two
+  maps written, in this container, under all three renderers.
+- What a crowd costs: a person is 3 parts and 144 triangles and a car is
+  1 and 132, so the 32 people and 14 cars the eye ever holds at once are
+  6,456 triangles and 124 entities, against the 400,000 triangles of the
+  town they are walking in. Thirty two meshes are built at startup, eight
+  tints by four parts, and not one is made or dropped afterwards.
 - The walker, headless in the core, on a 2 km ball: 8 to 10 m in two
   seconds walking and over 14 running, a jump to between 1.0 and 1.6 m
   landing inside 1.3 s, a 0.4 m kerb climbed, a 1.2 m wall stopping the
