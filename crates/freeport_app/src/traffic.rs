@@ -190,9 +190,15 @@ impl Crowds {
         here: DVec3,
         reach: f64,
         now: f64,
+        built: &[usize],
     ) -> Vec<((usize, usize), usize, DVec3, DVec3)> {
         let mut out = Vec::new();
         for (t, (town, traffic)) in self.towns.iter().enumerate() {
+            // Only a BUILT town has cars on it, for the same reason it
+            // has townsmen: a car driving a street nobody laid.
+            if built.binary_search(&t).is_err() {
+                continue;
+            }
             for (a, agent) in traffic.agents.iter().enumerate() {
                 if agent.kind != Kind::Car {
                     continue;
@@ -391,6 +397,7 @@ pub fn drive_traffic(
     here: Here,
     crowds: Res<Crowds>,
     thefts: Res<crate::drive::Thefts>,
+    fabric: Res<crate::world::Fabric>,
     mut riding: Query<(Entity, &Rider, &mut Transform)>,
 ) {
     let (eye, frame, ground, time, planets) = (
@@ -426,7 +433,19 @@ pub fn drive_traffic(
     // have got to, which is a car jumping across the street the moment
     // its driver walks away from it.
     let stolen = thefts.stolen();
-    let want = near(&crowds, eye, centre, radius, now, &have, &stolen);
+    let built = fabric.standing();
+    let want = near(
+        &crowds,
+        eye,
+        centre,
+        radius,
+        now,
+        Sets {
+            out: &have,
+            stolen: &stolen,
+            built: &built,
+        },
+    );
     for (e, rider, mut tf) in &mut riding {
         let key = (rider.town, rider.agent);
         if want.binary_search(&key).is_err() {
@@ -460,18 +479,35 @@ pub fn drive_traffic(
 /// Which agents are near enough to be worth an entity: the nearest
 /// `MOST_FOLK` and `MOST_CARS` within `REACH`, sorted so a lookup is a
 /// binary search.
+/// The three sorted sets `near` reads: who is already out, which agents
+/// have been STOLEN and so are off the rails for good, and which towns
+/// are BUILT. One thing, because they are all "what the world already
+/// decided" and three more arguments took this over Bevy's own limit.
+struct Sets<'a> {
+    out: &'a [(usize, usize)],
+    stolen: &'a [(usize, usize)],
+    built: &'a [usize],
+}
+
 fn near(
     crowds: &Crowds,
     eye: &Eye,
     centre: DVec3,
     radius: f64,
     now: f64,
-    out: &[(usize, usize)],
-    stolen: &[(usize, usize)],
+    sets: Sets<'_>,
 ) -> Vec<(usize, usize)> {
+    let (out, stolen, built) = (sets.out, sets.stolen, sets.built);
     let mut folk: Vec<(f64, usize, usize)> = Vec::new();
     let mut cars: Vec<(f64, usize, usize)> = Vec::new();
     for (t, (town, traffic)) in crowds.towns.iter().enumerate() {
+        // Nobody is out on a town nobody has BUILT: a townsman walking a
+        // street that has not been laid stands on a bare plateau. The
+        // built set follows the eye (`city::stream`), so this is asked
+        // every frame rather than baked in at startup.
+        if built.binary_search(&t).is_err() {
+            continue;
+        }
         // A whole TOWN first, because on foot the eye is inside one of
         // them and every other is a hundred kilometres off: this is the
         // chunk rule (`Planet::around`) at the crowd's own scale.

@@ -183,11 +183,7 @@ impl Body {
             distant: default(),
             world: Arc::new(World {
                 planet,
-                blocks: vec![],
-                groups: vec![],
-                lamps: vec![],
                 towns: vec![],
-                built: vec![],
                 roads: vec![],
                 bounds: Bounds {
                     radius: d.radius,

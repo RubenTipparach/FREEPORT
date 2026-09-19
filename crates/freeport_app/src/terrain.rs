@@ -16,6 +16,12 @@ use bevy::math::DVec3;
 use bevy::mesh::PrimitiveTopology;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+
+/// The one terrain material the ground and everything built on it wear,
+/// kept as a resource so a town raised mid flight can reach it.
+#[derive(bevy::prelude::Resource)]
+pub struct Ground3d(pub Handle<TerrainMaterial>);
+
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
 use freeport_core::biome::{self, Climate};

@@ -305,11 +305,7 @@ fn moving_waits_for_the_current_layout_then_catches_up() {
 fn test_world() -> Arc<World> {
     Arc::new(World {
         planet: freeport_core::field::Planet::default(),
-        blocks: vec![],
-        groups: vec![],
-        lamps: vec![],
         towns: vec![],
-        built: vec![],
         roads: vec![],
         bounds: freeport_core::walker::Bounds {
             radius: 1e6,

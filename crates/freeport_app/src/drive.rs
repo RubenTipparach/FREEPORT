@@ -85,6 +85,7 @@ pub struct Stolen(pub usize);
 #[derive(SystemParam)]
 pub struct Street<'w> {
     ground: Res<'w, Ground>,
+    fabric: Res<'w, crate::world::Fabric>,
     crowds: Option<Res<'w, Crowds>>,
     time: Res<'w, Time>,
     args: Res<'w, Args>,
@@ -118,7 +119,9 @@ pub fn board(
             let Some(car) = thefts.driving() else { return };
             let dir = car.car.kerbside(ground.0.planet.radius);
             let heading = car.car.fwd;
-            let field = ground.0.underfoot(dir * car.car.foot, 8.0);
+            let field = street
+                .fabric
+                .underfoot(&ground.0.planet, dir * car.car.foot, 8.0);
             let walker = Walker::enter(&field, &ground.0.bounds, dir, heading);
             commands.insert_resource(OnFoot(walker));
             thefts.at_wheel = None;
@@ -147,11 +150,14 @@ pub fn board(
             } else {
                 driver::REACH
             };
-            let Some((who, tint, at, fwd)) = nearest_agent(crowds, ground, here, reach, now) else {
+            let built = street.fabric.standing();
+            let Some((who, tint, at, fwd)) =
+                nearest_agent(crowds, ground, here, reach, now, &built)
+            else {
                 return;
             };
             let dir = at.normalize();
-            let field = ground.0.underfoot(here, 8.0);
+            let field = street.fabric.underfoot(&ground.0.planet, here, 8.0);
             let car = Driver::board(&field, &ground.0.bounds, dir, fwd);
             thefts.cars.push(Theft { who, tint, car });
             thefts.at_wheel = Some(thefts.cars.len() - 1);
@@ -185,9 +191,10 @@ fn nearest_agent(
     here: DVec3,
     reach: f64,
     now: f64,
+    built: &[usize],
 ) -> Option<((usize, usize), usize, DVec3, DVec3)> {
     crowds
-        .cars_near(ground.0.planet.radius, here, reach, now)
+        .cars_near(ground.0.planet.radius, here, reach, now, built)
         .into_iter()
         .min_by(|a, b| a.2.distance(here).total_cmp(&b.2.distance(here)))
 }
@@ -197,7 +204,7 @@ fn nearest_agent(
 pub fn drive_car(
     controls: Controls,
     args: Res<Args>,
-    ground: Res<Ground>,
+    here: crate::world::Surface,
     mut thefts: ResMut<Thefts>,
     mut eye: ResMut<Eye>,
     mut status: ResMut<Status>,
@@ -230,18 +237,18 @@ pub fn drive_car(
         *run -= 1;
     }
     let car = &mut thefts.cars[k].car;
-    let field = ground.0.underfoot(car.dir * car.foot, 12.0);
+    let field = here.underfoot(car.dir * car.foot, 12.0);
     // A car floats on nothing: the sea is where a stolen car stops, so
     // the bounds it drives against carry no water to be held up by.
     let bounds = Bounds {
         sea: 0.0,
-        ..ground.0.bounds
+        ..here.world().bounds
     };
     car.update(&field, &bounds, &input, dt);
-    eye.0 = WorldPos(ground.1 + chase(car));
+    eye.0 = WorldPos(here.centre() + chase(car));
     status.walker = format!(
         "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel",
-        car.foot - ground.0.planet.radius,
+        car.foot - here.world().planet.radius,
         car.speed.abs() * 3.6,
         if car.on_ground { "" } else { ", airborne" },
     );
