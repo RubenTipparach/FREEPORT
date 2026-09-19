@@ -13,6 +13,7 @@ pub mod audit;
 pub mod biome;
 pub mod chart;
 pub mod dc;
+pub mod driver;
 pub mod field;
 pub mod figure;
 pub mod flight;

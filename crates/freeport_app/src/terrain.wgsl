@@ -51,6 +51,7 @@ const L_SAND: i32 = 1;
 const L_GRASS: i32 = 2;
 const L_CONCRETE: i32 = 3;
 const L_PLATE: i32 = 4;
+const L_ASPHALT: i32 = 5;
 
 // The sand band: all sand to this over the sea, all grass past the second,
 // metres. The mockup's numbers, which is a beach a walker wades out of.
@@ -282,8 +283,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let w_grass = level * (1.0 - sand);
     let street = is(material, M_STREET);
     let paint = is(material, M_PAINT);
-    let w_conc = is(material, M_CONCRETE) + street + paint;
+    let w_conc = is(material, M_CONCRETE);
     let w_plate = is(material, M_PLATE);
+    // A street and its markings are ASPHALT, which is a set of its own
+    // rather than concrete darkened: what a road is made of is chips of
+    // stone in bitumen, so it is a fifth as bright as concrete and it has
+    // no panel joint anywhere on it. Concrete's height map carries the
+    // 2 by 2 joints of a poured slab, and a road wearing them read as a
+    // pavement somebody had driven over.
+    let w_asphalt = street + paint;
     // The panes and the lamps are flat colours with no map: what they
     // are is a colour and a glow, not a surface.
     let glass = is(material, M_GLASS);
@@ -299,28 +307,31 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let w = tri_weights(n);
     let local = in_frame(nearest_frame(up), up, n);
     let wc = tri_weights(local.n);
-    let mapped = w_rock + w_sand + w_grass + w_conc + w_plate;
+    let mapped = w_rock + w_sand + w_grass + w_conc + w_plate + w_asphalt;
     var albedo = tri(albedo_maps, albedo_sampler, L_ROCK, pg, w, w_rock).rgb * w_rock
         + tri(albedo_maps, albedo_sampler, L_SAND, pg, w, w_sand).rgb * w_sand
         + tri(albedo_maps, albedo_sampler, L_GRASS, pg, w, w_grass).rgb * w_grass
         + tri(albedo_maps, albedo_sampler, L_CONCRETE, pc, wc, w_conc).rgb * w_conc
-        + tri(albedo_maps, albedo_sampler, L_PLATE, pc, wc, w_plate).rgb * w_plate;
-    // A street is the concrete set DARKER, as tarmac is, and a marking
-    // is the same set brightened, which is what worn road paint looks
-    // like: neither is a texture of its own, so the whole town is still
-    // one shader and the five sets it already binds.
-    albedo = albedo * (1.0 - street * 0.45 + paint * 1.25);
+        + tri(albedo_maps, albedo_sampler, L_PLATE, pc, wc, w_plate).rgb * w_plate
+        + tri(albedo_maps, albedo_sampler, L_ASPHALT, pc, wc, w_asphalt).rgb * w_asphalt;
+    // A marking is the asphalt set BRIGHTENED, which is what worn road
+    // paint on tarmac looks like, and it needs no texture of its own.
+    // The street itself is no longer darkened here: it is dark because
+    // the set it now wears is.
+    albedo = albedo * (1.0 + paint * 7.0);
     var orm = tri(orm_maps, orm_sampler, L_ROCK, pg, w, w_rock).rgb * w_rock
         + tri(orm_maps, orm_sampler, L_SAND, pg, w, w_sand).rgb * w_sand
         + tri(orm_maps, orm_sampler, L_GRASS, pg, w, w_grass).rgb * w_grass
         + tri(orm_maps, orm_sampler, L_CONCRETE, pc, wc, w_conc).rgb * w_conc
-        + tri(orm_maps, orm_sampler, L_PLATE, pc, wc, w_plate).rgb * w_plate;
+        + tri(orm_maps, orm_sampler, L_PLATE, pc, wc, w_plate).rgb * w_plate
+        + tri(orm_maps, orm_sampler, L_ASPHALT, pc, wc, w_asphalt).rgb * w_asphalt;
     let away = length(in.world_position.xyz - view.world_position);
     var nm = n;
     if (away < BUMP_FAR) {
         let built_n = local.to_world
             * (tri_normal(L_CONCRETE, pc, wc, local.n, w_conc) * w_conc
-                + tri_normal(L_PLATE, pc, wc, local.n, w_plate) * w_plate);
+                + tri_normal(L_PLATE, pc, wc, local.n, w_plate) * w_plate
+                + tri_normal(L_ASPHALT, pc, wc, local.n, w_asphalt) * w_asphalt);
         nm = tri_normal(L_ROCK, pg, w, n, w_rock) * w_rock
             + tri_normal(L_SAND, pg, w, n, w_sand) * w_sand
             + soften(tri_normal(L_GRASS, pg, w, n, w_grass), n, GRASS_BUMP) * w_grass

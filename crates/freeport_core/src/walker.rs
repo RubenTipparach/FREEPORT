@@ -15,7 +15,7 @@
 //! tests here are the harness's walks, headless.
 
 use crate::field::Density;
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 
 /// Eye height over the feet, metres.
 pub const EYE: f64 = 1.7;
@@ -180,21 +180,56 @@ pub fn can_stand(
     ground(field, bounds, ahead, Some(foot)) - foot <= STEP
 }
 
+/// The ring of points a WALKER is pushed out of a wall by: twelve round
+/// its own body radius. A circle, because a walker has no width and no
+/// length of its own, only a reach.
+fn ring() -> [DVec2; 12] {
+    let mut out = [DVec2::ZERO; 12];
+    for (a, p) in out.iter_mut().enumerate() {
+        let ang = a as f64 * std::f64::consts::PI / 6.0;
+        *p = DVec2::new(ang.cos() * RADIUS, ang.sin() * RADIUS);
+    }
+    out
+}
+
 /// `to` pushed out of whatever solid a ring of points round the body meets
 /// between its step and its head, along the field's own gradient, sideways
 /// only: up and down are the other two rules' business.
 pub fn resolve(field: &dyn Density, bounds: &Bounds, to: DVec3, foot: f64) -> DVec3 {
+    let heights = [STEP + 0.08, 1.1, HEAD - 0.08];
+    resolve_body(field, bounds, to, foot, DVec3::X, &ring(), &heights)
+}
+
+/// The same push, for a body of any SHAPE: `ring` is where its own points
+/// stand in its tangent frame, right and forward in metres, and `heights`
+/// how far over its feet they are tested.
+///
+/// A walker is a circle of one radius and a car is four metres long and
+/// one and a half wide, so one ring cannot serve both: a circle round a
+/// car would be two metres across and could not fit down a 2.75 m lane,
+/// and a circle inside it would let the bonnet pass through a wall. It is
+/// one function rather than two because what it DOES is the same thing,
+/// which is this project's own rule about divergent paths.
+pub fn resolve_body(
+    field: &dyn Density,
+    bounds: &Bounds,
+    to: DVec3,
+    foot: f64,
+    fwd: DVec3,
+    ring: &[DVec2],
+    heights: &[f64],
+) -> DVec3 {
     let mut d = to;
-    let heights = [foot + STEP + 0.08, foot + 1.1, foot + HEAD - 0.08];
     for _ in 0..3 {
+        // The body's own axes on the sphere: forward as it was handed in,
+        // squared to the local up, and right across it.
         let pole = if d.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
-        let e = pole.cross(d).normalize();
-        let n = d.cross(e).normalize();
+        let f = (fwd - d * fwd.dot(d)).normalize_or(pole.cross(d).normalize());
+        let r = f.cross(d).normalize();
         let mut pushed = false;
-        for h in heights {
-            for a in 0..12 {
-                let ang = a as f64 * std::f64::consts::PI / 6.0;
-                let p = d * h + e * (ang.cos() * RADIUS) + n * (ang.sin() * RADIUS);
+        for &h in heights {
+            for off in ring {
+                let p = d * (foot + h) + r * off.x + f * off.y;
                 let dens = field.at(p);
                 if dens <= 0.0 {
                     continue;

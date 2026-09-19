@@ -33,6 +33,7 @@ mod buildings;
 mod city;
 mod compute;
 mod distant;
+mod drive;
 mod flight_bench;
 mod fly;
 mod lamps;
@@ -61,6 +62,7 @@ use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use drive::{board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
@@ -292,6 +294,7 @@ fn main() {
     .init_resource::<Eye>()
     .init_resource::<Frame>()
     .init_resource::<Status>()
+    .init_resource::<Thefts>()
     .init_resource::<flight_bench::Benchmark>()
     .add_systems(
         Startup,
@@ -324,7 +327,9 @@ fn tick(app: &mut App) {
                     grab_mouse,
                     lod_debug::controls,
                     toggle_walk,
+                    board,
                     walk,
+                    drive_car,
                     fly,
                     flight_bench::drive,
                     planets::activate,
@@ -335,6 +340,7 @@ fn tick(app: &mut App) {
                     flight_bench::after_stream,
                     light_lamps,
                     traffic::drive_traffic,
+                    show_cars,
                 )
                     .chain(),
                 (

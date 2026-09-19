@@ -24,7 +24,14 @@ use freeport_core::town::Frame;
 use std::path::PathBuf;
 
 /// The sets, in the order the shader's layers name them.
-pub const SETS: [&str; 5] = ["basalt", "dunes", "grass", "concrete", "hull_plate"];
+pub const SETS: [&str; 6] = [
+    "basalt",
+    "dunes",
+    "grass",
+    "concrete",
+    "hull_plate",
+    "asphalt",
+];
 /// Metres a tile, on the ground and on concrete. The ground's is what a
 /// strand of the hay is long: at four metres a blade was a metre and the
 /// grass read as a ploughed field at a grazing angle.

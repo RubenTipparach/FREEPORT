@@ -1652,6 +1652,90 @@ state, and state is the one thing rails do not have. And a town that is
 planned but not built has nobody on it, for the same reason it has no
 buildings.
 
+## A car can be STOLEN, and the one with you in it leaves the rails
+
+`driver.rs` in the core is the car and `drive.rs` in the app is the
+theft. **E** gets in and out, and it is one key because getting into the
+car you are standing beside and getting out of the one you are in are
+the same verb.
+
+**A stolen car is not an exception to the rails rule, it is the rule.**
+Every other car in a town is a closed form function of the town, its own
+index and the clock; the moment somebody is at the wheel that stops
+being true of it, and this file already says why: **what INTEGRATES is
+the player, and only the player.** A car with a driver IS the player, so
+it comes off the rails and integrates, and a car nobody is in goes back
+to being a number. Nothing new was needed to say that.
+
+**A car you GET OUT OF is a car that is still there**, which is
+tenebris's longest open bug written down as a rule two sections below.
+There is ONE `Driver` per theft whether you are in it or not, so there
+is nowhere for the pose to be lost: getting out sets a flag, the car
+keeps drawing where you left it, and walking up to it and pressing E
+again reads back the same pose it wrote. Two poses, one for driving and
+one for parked, is what that bug IS.
+
+**And the agent stays stolen for good.** Putting it back would teleport
+it to wherever the closed form says it should have got to by now, which
+is a car jumping across the street the moment its driver walks away. So
+`Thefts::stolen` is the list `traffic::near` skips, and it only grows.
+A second theft is allowed and leaves the first parked for ever, which is
+one `Vec` rather than a rule about how many cars a player may own.
+
+**A car is glued to a surface, so it is a BASIS and not a quaternion**,
+which is this file's rule for the walker and for everything that cannot
+roll. What makes it a car rather than a fast walker is ONE thing: **it
+steers with its wheels.** The yaw rate is the BICYCLE model,
+`speed * tan(steer * lock) / WHEELBASE`, so it is proportional to the
+speed and a car standing still cannot turn at all however hard the wheel
+is held, which `a_car_standing_still_cannot_turn_however_hard_the_wheel_is_held`
+measures at 0.0000 degrees over three seconds of full lock. The
+wheelbase is READ off the model that is drawn (`figure::car` puts its
+wheels 1.32 either side of the middle, so it is 2.64 m) rather than
+chosen beside it, and the lock TAPERS with speed, because a car holding
+full lock at 58 km/h would be cornering at four gravities.
+
+**It is pushed out of walls by the same function the walker is**, with
+its own OUTLINE rather than the walker's circle: `walker::resolve_body`
+takes the ring of points a body has and the heights to test them at, and
+a walker hands it twelve round its 0.35 m radius while a car hands it
+its own four corners and four side middles. One circle could not serve
+both: round a 4.1 m car it is two metres across and could not fit down a
+2.75 m lane, and inside it the bonnet passes through the wall.
+
+**A kerb is driven up and a wall is not**, which is the difference
+between a road and a pavement to something with wheels. The car's own
+test heights start at 0.45 m, well over a 0.17 m kerb, so a stolen car
+mounts the pavement; `CLIMB` (0.3 m) is what refuses anything taller,
+and a wall takes `CRASH` (0.15) of the speed off. Measured: a car driven
+at a wall eight metres off stops at 5.53 m, which is eight less its own
+2.05 m of bonnet, and the same car over a 17 cm kerb goes 72.9 m without
+dropping under 16 m/s.
+
+**The camera is a CHASE**, behind and over the car, and the walker's is
+first person. That is the one place this world has two camera rules, and
+the reason is that the point of stealing a car is the car: a first
+person view of one is a view of the inside of its own bonnet.
+
+**And `--drive N` steals one headless and holds the throttle**, which is
+`--walk`'s own rule: a headless run has nobody to press E and then hold
+W, and a car nobody can photograph is a car whose feel nobody can check.
+It waits for the crowds to have turned a car out rather than firing on
+frame nought, because a theft of nothing is a walk.
+
+**And a stolen car belongs to ONE body**, which is the crowd's own rule
+and the same rule as getting out of it: fly to another planet and the
+car stays parked where it was rather than being drawn against that
+planet's radius and centre, and it is still there when you come back.
+
+**What is MISSING, named rather than hidden.** A stolen car does not
+collide with anything that MOVES, so it drives through townsmen and
+through the traffic, for the same reason nothing else in a town does:
+the walker knows about the boxes a model was drawn from and those do not
+move. Nothing is saved, so a car is stolen afresh every run. And the sea
+does not stop it: the bounds it drives against carry no water, so a car
+driven off a beach keeps going down the sea bed.
+
 ## Cities are JOINED, and the plan of a body is BAKED
 
 `road.rs` routes the network and `atlas.rs` is the file it is kept in.
@@ -2145,8 +2229,8 @@ time it was broken.
 
 ## Content: what is generated, what is baked, and where it lives
 
-- **Textures are Material Maker's.** A material is a graph in
-  `materials/<name>.ptex` and nothing else is its source. `tools/bake_materials.sh`
+- **Textures are Material Maker's, with ONE named exception.** A material
+  is a graph in `materials/<name>.ptex` and nothing else is its source. `tools/bake_materials.sh`
   exports every graph through Material Maker's own command line (Godot
   target, which is the glTF layout Bevy reads: `<name>_albedo.png`,
   `<name>_normal.png` in OpenGL green up, `<name>_orm.png` with occlusion in
@@ -2164,9 +2248,41 @@ time it was broken.
   the mobile and GL renderers crash under lavapipe while this one exports
   cleanly, which took an afternoon to find and is written here so nobody
   finds it twice. Seven sets ship: basalt, regolith, ice, dunes, hull
-  plate, grass and concrete, all authored SHALLOW, because a normal map at
+  plate, grass and concrete, plus asphalt from its own generator, all
+  SHALLOW, because a normal map at
   full strength on a flat quad reads as gravel (swarm-demo runs its finishes
   at a fifth).
+- **ASPHALT is the exception, and the reason is written down rather than
+  hidden.** Material Maker DOES NOT EXPORT in the container this was
+  built in any more. Measured, on the SEVEN COMMITTED GRAPHS with
+  nothing changed: it starts, reports its Vulkan device, and then sits
+  for five minutes having written none of its thirty two maps, under
+  forward_plus, mobile and gl_compatibility alike, and `--check` comes
+  back in three seconds having found nothing. The graph is not the
+  problem and neither is the new set; the rig is. So rather than ship a
+  `.ptex` nobody can bake and a PNG nobody can check against it,
+  `tools/make_asphalt_texture.py` IS the source for this one set: numpy,
+  integer hashes, no `sin`, no GPU, six seconds, and byte identical on a
+  re-run, which is what makes its own `--check` mean anything. That is
+  still "every asset has a committed source", and it is the shape
+  swarm-demo's `make_chitin_texture.py` and `make_crystal_texture.py`
+  already have. Re-authoring it as a graph is a follow up for a machine
+  where the bake runs.
+- **And a road was CONCRETE DARKENED, which is two things wrong.** The
+  street wore the concrete set at `1 - 0.45`, so it was the right grey
+  by accident and carried concrete's own 2 by 2 PANEL JOINTS in its
+  height map: a road drawn as poured slabs somebody had driven over.
+  Asphalt is chips of stone in bitumen and has no joint anywhere on it,
+  and it is DARK, about a tenth against concrete's half. Measured on the
+  two albedo maps: 0.106 linear against 0.449, a quarter of the
+  brightness. The paint is the asphalt set BRIGHTENED now rather than
+  the concrete set, which is the same one trick in the right place.
+- **The first cut of it read as GRAVEL**, which is this file's own rule
+  about every other set arriving at the new one: a chip is 15 mm on a
+  3 m tile, so at walking distance it is five pixels and every bit of
+  contrast on it is noise. The chips span 0.06 to 0.21 of albedo rather
+  than 0.05 to 0.27, and the normal leans at 0.20 rather than 0.30,
+  which is swarm-demo's finishes at a fifth.
 - **Grass is hay.** The first grass graph was noise coloured green, and on
   the ground it read as dots. The owner's brief was green hay with its
   stems flattened on the ground, and the graph is that now: two fields of
@@ -2202,14 +2318,15 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 126, the core, about 27 s
+cargo test -p freeport_core                       # 132, the core, about 39 s
 cargo test -p freeport_app                        # 43, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
 cargo clippy -p freeport_core -- -D warnings      # the core's lints
 cargo clippy -p freeport_app                      # the app's count never rises: it is nought
-tools/bake_materials.sh --check                   # the maps match their graphs
+tools/bake_materials.sh --check                   # the maps match their graphs (Material Maker does not run in every container: see the asphalt note)
+python3 tools/make_asphalt_texture.py --check     # the asphalt set matches its generator, byte for byte
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
 ./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, Tab wires, Esc frees the mouse
@@ -2222,6 +2339,10 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --eye 0,1000012,-14 --look 0,1000012,60 --shot graze.png   # the horizon dead level, which is where the dark band was
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --eye 0,1030000,0 --look 0,1000000,120000 --shot high.png  # 30 km up: the curve, the sea and the haze
 ./target/release/freeport_app --octaves 14 --levels 9 --walk 600 --frames 620 --shot walked.png   # ten seconds of walking, the distance said every second
+# STEAL the nearest car and drive it: the chase camera, the asphalt and
+# the town going past. `--drive` is E and then W held, since a headless
+# run can press neither.
+./target/release/freeport_app --octaves 14 --levels 9 --drive 300 --frames 320 --shot stolen.png
 # The body from orbit, lit: `--sunward N` stands N radii off along the SUN
 # and looks at the centre, which is the only way to aim this that works.
 # The sun stands over wherever the world starts, so where it is depends on
@@ -2274,7 +2395,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 126 tests in about 27 s, and `freeport_app` 43 in 3. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 132 tests in about 39 s, and `freeport_app` 43 in 4. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -2433,6 +2554,21 @@ Numbers in the commit message. What is measured so far:
   and 6 of markings, and a crossing is 9 cells of the same. A car had
   1.90 m of street to itself and has 2.75; a pedestrian had a painted
   stripe and has a kerb 12 cm up.
+- The CAR, driven: it pulls away at 5.5 m/s^2 and tops out at 16 m/s
+  (58 km/h), the brake takes all of that off in 10.5 m, and reverse
+  holds 5. At a crawl it holds a 5.64 m circle against the 5.53 m its
+  own wheelbase and lock say, and three seconds of full lock standing
+  still turns it 0.0000 degrees. Driven at a wall 8 m off it stops at
+  5.53 m, which is eight less its own bonnet, and over a 17 cm kerb it
+  goes 72.9 m without dropping under 16 m/s.
+- The asphalt set, against the concrete it replaces on a road: 0.106
+  linear albedo against 0.449, a quarter of the brightness, with the
+  chips spanning 0.055 to 0.243 and no panel joint anywhere on it. Six
+  seconds to bake on one core, byte identical on a re-run, and 728 KB,
+  2.78 MB, 1.02 MB and 1.33 MB for its four maps, which sits between
+  concrete's and grass's. Material Maker, for the comparison: five
+  minutes on the seven committed graphs with none of its thirty two
+  maps written, in this container, under all three renderers.
 - What a crowd costs: a person is 3 parts and 144 triangles and a car is
   1 and 132, so the 32 people and 14 cars the eye ever holds at once are
   6,456 triangles and 124 entities, against the 400,000 triangles of the

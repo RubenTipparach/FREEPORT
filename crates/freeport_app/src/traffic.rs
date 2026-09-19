@@ -140,6 +140,72 @@ pub struct Crowds {
 }
 
 impl Crowds {
+    /// Every car still ON THE RAILS within `reach` of a point, as the
+    /// agent it is, its tint, where it stands and which way it points.
+    ///
+    /// What a theft needs, and it asks the same `Traffic::at` the draw
+    /// does, so a car is taken at exactly where it was drawn and does
+    /// not jump the moment somebody gets into it. Every agent of every
+    /// built town is walked, which is a few hundred and is asked on a
+    /// key press rather than once a frame.
+    pub fn cars_near(
+        &self,
+        radius: f64,
+        here: DVec3,
+        reach: f64,
+        now: f64,
+    ) -> Vec<((usize, usize), usize, DVec3, DVec3)> {
+        let mut out = Vec::new();
+        for (t, (town, traffic)) in self.towns.iter().enumerate() {
+            for (a, agent) in traffic.agents.iter().enumerate() {
+                if agent.kind != Kind::Car {
+                    continue;
+                }
+                let spot = traffic.at(agent, now);
+                let frame = lot_frame(radius, town, spot.at.x, spot.at.y);
+                let at = frame.world(DVec3::ZERO);
+                if at.distance(here) > reach {
+                    continue;
+                }
+                let (sin, cos) = spot.yaw.sin_cos();
+                let fwd = frame.east * cos + frame.north * sin;
+                out.push(((t, a), agent.id as usize % TINTS, at.normalize(), fwd));
+            }
+        }
+        out
+    }
+
+    /// One car in the world, with whatever marker the caller wants on
+    /// it. The traffic's own cars and a STOLEN one are the same mesh in
+    /// the same material with the same lamps hung off it, so there is
+    /// one place that knows how a car is put together.
+    pub fn spawn_car(
+        &self,
+        commands: &mut Commands,
+        tint: usize,
+        transform: Transform,
+        marker: impl Component,
+    ) {
+        commands
+            .spawn((
+                Mesh3d(self.cars[tint].clone()),
+                MeshMaterial3d(self.paint.clone()),
+                transform,
+                marker,
+            ))
+            .with_child((
+                Mesh3d(self.lamps.clone()),
+                MeshMaterial3d(self.glow.clone()),
+                Transform::IDENTITY,
+                bevy::light::NotShadowCaster,
+            ));
+    }
+
+    /// Whether these crowds belong to the body that is active.
+    pub fn on_body(&self, body: usize) -> bool {
+        self.home == body
+    }
+
     /// How many people and cars the built towns turn out in total.
     pub fn count(&self) -> (usize, usize) {
         let of = |k: Kind| {
@@ -276,6 +342,7 @@ pub fn drive_traffic(
     mut commands: Commands,
     here: Here,
     crowds: Res<Crowds>,
+    thefts: Res<crate::drive::Thefts>,
     mut riding: Query<(Entity, &Rider, &mut Transform)>,
 ) {
     let (eye, frame, ground, time, planets) = (
@@ -306,7 +373,12 @@ pub fn drive_traffic(
         .map(|(_, r, _)| (r.town, r.agent))
         .collect();
     have.sort_unstable();
-    let want = near(&crowds, eye, centre, radius, now, &have);
+    // A car the player has taken is OFF the rails for good. Putting it
+    // back would teleport it to wherever the closed form says it should
+    // have got to, which is a car jumping across the street the moment
+    // its driver walks away from it.
+    let stolen = thefts.stolen();
+    let want = near(&crowds, eye, centre, radius, now, &have, &stolen);
     for (e, rider, mut tf) in &mut riding {
         let key = (rider.town, rider.agent);
         if want.binary_search(&key).is_err() {
@@ -347,6 +419,7 @@ fn near(
     radius: f64,
     now: f64,
     out: &[(usize, usize)],
+    stolen: &[(usize, usize)],
 ) -> Vec<(usize, usize)> {
     let mut folk: Vec<(f64, usize, usize)> = Vec::new();
     let mut cars: Vec<(f64, usize, usize)> = Vec::new();
@@ -362,6 +435,9 @@ fn near(
         // is two subtractions rather than a frame apiece.
         let here = lot_frame(radius, town, 0.0, 0.0).local(eye.0 .0 - centre);
         for (a, agent) in traffic.agents.iter().enumerate() {
+            if stolen.binary_search(&(t, a)).is_ok() {
+                continue;
+            }
             let spot = traffic.at(agent, now);
             let d = (spot.at.x - here.x).hypot(spot.at.y - here.y);
             if d > REACH {
@@ -416,21 +492,7 @@ fn spawn(
         ride,
     };
     match agent.kind {
-        Kind::Car => {
-            commands
-                .spawn((
-                    Mesh3d(crowds.cars[tint].clone()),
-                    MeshMaterial3d(crowds.paint.clone()),
-                    transform,
-                    rider(Ride::Whole),
-                ))
-                .with_child((
-                    Mesh3d(crowds.lamps.clone()),
-                    MeshMaterial3d(crowds.glow.clone()),
-                    Transform::IDENTITY,
-                    bevy::light::NotShadowCaster,
-                ));
-        }
+        Kind::Car => crowds.spawn_car(commands, tint, transform, rider(Ride::Whole)),
         Kind::Foot => {
             let mut body = commands.spawn((
                 Mesh3d(crowds.folk[tint][0].clone()),
