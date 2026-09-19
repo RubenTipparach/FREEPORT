@@ -276,7 +276,11 @@ mod tests {
             }],
             ..Default::default()
         };
-        let direction = DVec3::new(80e-6, 1.0, 0.0).normalize();
+        // ON THE SKIRT, which is the middle of the band rather than a
+        // hard coded 80 m: `site_band` is what says where a skirt is.
+        let (inner, outer) = crate::field::site_band(&planet.sites[0]);
+        let across = (inner + outer) * 0.5 / planet.radius;
+        let direction = DVec3::new(across, 1.0, 0.0).normalize();
         let ground = crate::town::surface_radius(&planet, direction);
         let landed = sweep_planet(
             &planet,

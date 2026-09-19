@@ -191,6 +191,37 @@ impl Rings {
         old != self.min_level
     }
 
+    /// How much of the COARSEST box's own half width is kept for the
+    /// eye's altitude. The rest is what is left to reach out across the
+    /// ground, so at half the box stands half over the eye's own ground
+    /// and half out to either side of it.
+    const KEEP: f64 = 0.5;
+
+    /// The point the boxes FOLLOW: the eye on the ground, and the eye
+    /// pulled DOWN toward its own ground at altitude.
+    ///
+    /// A box is `2 * HALF` chunks a side centred on what it follows, so
+    /// the coarsest reaches `CH * HALF` cells either way and no further.
+    /// Followed on the EYE, which is what this did, the ground drops out
+    /// of the box entirely the moment the eye is higher than that: on
+    /// the harness planet the coarsest box is 16 km either way and an
+    /// eye 49 km up streamed NOUGHT CHUNKS, so the only thing left to
+    /// draw the world with was the chart, six kilometres to a texel. The
+    /// picture was a blurred smear with a HUD reading `0 chunks, 0
+    /// triangles` over it, and nothing said the terrain was missing
+    /// rather than merely coarse.
+    ///
+    /// `height` is how far the eye stands over the ground, in metres.
+    pub fn focus(&self, lat: &Lattice, eye: DVec3, height: f64) -> DVec3 {
+        let top = self.levels().saturating_sub(1);
+        let keep = lat.cell(top) * CH as f64 * HALF as f64 * Self::KEEP;
+        if !height.is_finite() || height <= keep {
+            return eye;
+        }
+        let up = eye.normalize_or(DVec3::Y);
+        eye - up * (height - keep)
+    }
+
     /// The eye's place at a level, in that level's chunks.
     fn eye_in(&self, lat: &Lattice, eye: DVec3, level: u8) -> DVec3 {
         (eye - lat.corner) / (lat.cell(level) * CH as f64)
@@ -374,6 +405,38 @@ mod tests {
     }
 
     #[test]
+    /// THE GROUND IS IN THE BOX AT EVERY ALTITUDE, which is what the
+    /// owner's picture of `0 chunks, 0 triangles` from 49 km up said it
+    /// was not. Followed on the eye, the coarsest box is 16 km either
+    /// way and the surface is simply not in it.
+    #[test]
+    fn the_ground_is_inside_the_coarsest_box_at_every_altitude() {
+        let radius = 1_000_000.0;
+        let lat = Lattice::new(DVec3::splat(-0.25), 0.5);
+        let levels = 10;
+        let half = lat.cell(levels - 1) * CH as f64 * HALF as f64;
+        for height in [0.0, 50.0, 1_200.0, 12_000.0, 49_400.0, 400_000.0] {
+            let eye = DVec3::Y * (radius + height);
+            let mut rings = Rings::around(&lat, eye, levels);
+            let focus = rings.focus(&lat, eye, height);
+            rings.adapt(&lat, height);
+            rings.follow(&lat, focus);
+            // The box at the coarsest level, in metres, and the ground
+            // right under the eye.
+            let top = (levels - 1) as usize;
+            let c = rings.centre[top];
+            let cell = lat.cell(levels - 1) * CH as f64;
+            let mid = DVec3::new(c[0] as f64, c[1] as f64, c[2] as f64) * cell + lat.corner;
+            let ground = DVec3::Y * radius;
+            let off = (ground - mid).abs();
+            assert!(
+                off.max_element() <= half,
+                "at {height} m up the ground is {:.0} m outside a box {half:.0} m wide",
+                off.max_element() - half
+            );
+        }
+    }
+
     fn altitude_drops_air_rings_without_leaving_a_hole() {
         let lat = Lattice::new(DVec3::ZERO, 0.25);
         let mut rings = Rings::around(&lat, DVec3::ZERO, 8);
