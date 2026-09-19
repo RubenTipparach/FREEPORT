@@ -211,7 +211,7 @@ pub fn drive_car(
     mut thefts: ResMut<Thefts>,
     mut eye: ResMut<Eye>,
     mut status: ResMut<Status>,
-    mut left: Local<Option<u32>>,
+    mut auto: Local<Auto>,
 ) {
     let Some(k) = thefts.at_wheel else { return };
     let keys = &controls.keys;
@@ -230,7 +230,7 @@ pub fn drive_car(
     // which is `--walk`'s own rule and for the same reason: the frame's
     // own delta on a software rasteriser is most of a second and a car
     // that moves nine metres a frame measures nothing.
-    let run = left.get_or_insert(script.args.drive);
+    let run = auto.left.get_or_insert(script.args.drive);
     let car = &mut thefts.cars[k].car;
     let mut steps = 1;
     if *run > 0 {
@@ -265,13 +265,10 @@ pub fn drive_car(
         // The wheel is re-read every sub step, or a scripted drive
         // holds one bearing for a whole second and weaves round its own
         // line at sixteen metres a second.
-        let input = Drive {
-            steer: if steps > 1 {
-                script.goal.0.map_or(0.0, |g| car.toward(g))
-            } else {
-                input.steer
-            },
-            ..input
+        let input = if steps > 1 {
+            auto.drive(car, script.goal.0, dt)
+        } else {
+            input
         };
         car.update(&field, &bounds, &input, dt);
     }
@@ -287,6 +284,72 @@ pub fn drive_car(
             car.dir.angle_between(g) * here.world().planet.radius / 1000.0
         )),
     );
+}
+
+/// How long a scripted car has to have made no ground before it is
+/// STUCK, seconds, and how long it then backs off for.
+const WEDGED: f64 = 1.5;
+const BACK_OFF: f64 = 2.5;
+/// How slowly it has to be going to count as making no ground, metres a
+/// second. Well under the 2.4 m/s a second `DRAG` alone takes off, so a
+/// car merely easing round a corner is never called stuck.
+const CRAWL: f64 = 1.0;
+
+/// What a SCRIPTED drive is doing: how much of it is left to run, and
+/// what the car is doing about whatever it has driven into.
+///
+/// It steers STRAIGHT AT where it is going, which on a street between
+/// two buildings is straight at a wall: the first drive to the next
+/// town wedged the car against a corner of the port and held the
+/// throttle on it for eight hundred seconds, closing ten metres of nine
+/// kilometres. A player steers round a building and a script has to be
+/// told to.
+///
+/// This is not path finding and is not pretending to be. It is what a
+/// driver does when the nose is against something: back off, turn, and
+/// try again. The way it turns is the way the goal is, so it works its
+/// way round the obstruction rather than oscillating on one side of it.
+#[derive(Default)]
+pub struct Auto {
+    /// How many seconds of the scripted drive are left to run.
+    left: Option<u32>,
+    /// How long it has been going nowhere, seconds.
+    wedged: f64,
+    /// How much of the backing off is left, seconds.
+    backing: f64,
+}
+
+impl Auto {
+    /// The pedals and the wheel for one sub step.
+    fn drive(&mut self, car: &Driver, goal: Option<DVec3>, dt: f64) -> Drive {
+        let want = goal.map_or(0.0, |g| car.toward(g));
+        if self.backing > 0.0 {
+            self.backing -= dt;
+            // Backing out with the wheel the OTHER way, so the nose
+            // swings toward the goal as the car comes off whatever it
+            // met. A car reverses along the arc its front wheels cut,
+            // so the same lock backwards turns it the other way.
+            return Drive {
+                throttle: -1.0,
+                steer: -want.signum(),
+                brake: false,
+            };
+        }
+        if car.speed.abs() < CRAWL {
+            self.wedged += dt;
+        } else {
+            self.wedged = 0.0;
+        }
+        if self.wedged > WEDGED {
+            self.wedged = 0.0;
+            self.backing = BACK_OFF;
+        }
+        Drive {
+            throttle: 1.0,
+            steer: want,
+            brake: false,
+        }
+    }
 }
 
 /// What a SCRIPTED drive is: the flags it was given and where it is
