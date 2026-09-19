@@ -1148,11 +1148,11 @@ a candidate qualifies on land between three and forty metres over the sea,
 nearly level across the town's width, and apart from every town already
 placed, and the first that qualifies is the port, because a port is the
 town this game is about. A town is a local grid, blocks of `BLOCK` (10 m)
-on a `PITCH` of 14 with `STREET` (4 m) between, a lot per block, taller
-near the middle, a few blocks left as plazas, and every street in `PIECE`
-(3.5 m) pieces, each on its own patch of the sphere, which is the mockup's
-chord lesson at the game's radius: on a 5 km planet a fifty six metre
-chord sags 8 cm, and a piece never has to.
+on a `PITCH` of 18.5 with `STREET` (8.5 m) between, a lot per block,
+taller near the middle, a few blocks left as plazas, and every street's
+RUN cut into pieces about `PIECE` (3.5 m) long, each on its own patch of
+the sphere, which is the mockup's chord lesson at the game's radius: on a
+5 km planet a fifty six metre chord sags 8 cm, and a piece never has to.
 
 **A city FLATTENS ground and never adds any.** `Planet::surface` takes
 whichever is lower of a site's own blend and the bare relief, and
@@ -1245,12 +1245,80 @@ town's plan being right and the test being wrong. A render of this world on
 a software rasteriser is seventeen minutes, so the walk is measured where
 it costs nothing.
 
-**A street is one quad and it stops nothing.** The site under a town is
-levelled, so the ground there is a plane, and dual contouring holds a
-plane to two millimetres (the audit's own number): paving laid five
-centimetres over it clears that by twenty five times, is under any step,
-and needs no collider, so a walker never sinks into a kerb. 7,744 pieces
-are 15,488 triangles.
+**A street is a CROSS SECTION, and that is the whole of `town/street.rs`.**
+It was ONE QUAD four metres wide, and mining-mike's `city_road.gd` (in
+`godot-sandbox`) says in its own note what is wrong with that: a box has
+no cross section, so the road has no kerb, no pavement and no markings,
+its corners meet at hard mitres, and a dead end stops mid cell with an
+open edge. Four metres is also too narrow for two cars to pass. So a
+street is `LANE` (2.75 m) of carriageway each way with `WALK` (1.5 m) of
+raised pavement either side of it, which is 8.5 m of `STREET`, and the
+`PITCH` is that plus the block, because those are not three numbers that
+have to agree, they are one number said three ways. A car is 1.6 m
+across, so two pass with better than a metre between them; a person is
+0.45, so two pass on the pavement too.
+
+**A CROSSING is a piece of its own, and it owns its whole square.** A run
+spans the BLOCK it serves and stops at the crossing squares either end of
+it, which is what leaves a crossing somewhere to be, and `streets_of`
+emits one wherever a street could leave a node, carrying the ARMS it
+actually has. Its square is three bands each way, nine cells: the middle
+is always carriageway, the four corners never are, and each of the four
+bands between is carriageway exactly when its own arm is there. A
+crossroads is a plus of tarmac with four kerbed corners, a bend's kerb
+turns the corner as an L, and a dead end closes with a pavement across it.
+`town::paved` is that one decision, asked by the mesh that draws a
+crossing AND by the traffic that has to know where a pedestrian steps
+down off the kerb: a second copy of those nine cells would be a person
+walking a hand over the tarmac at one junction in a hundred, which nothing
+would say.
+
+**And that is what killed the BARE CORNER the last commit named.** A run
+used to reach only as far as a crossing's own centre line, so the square
+where two streets met was covered from the sides a street arrived on and
+no further: at an L bend the far quadrant was bare and the lane turning
+left crossed it, 1.62 m of levelled verge. With the square paved whole,
+`nobody_steps_off_the_paving_at_all` measures 0.000 m.
+
+**A marking is PAINT, which is a material and not a mesh.** One dash of
+the centreline a piece and a solid line down each side of the
+carriageway, four millimetres over the tarmac in `field::PAINT`, which
+`terrain.wgsl` draws as the concrete set BRIGHTENED the same way a street
+is that set darkened. So a marking costs no texture, no second draw and
+no shader of its own, and the whole town is still one shader and the five
+sets it already binds.
+
+**And a wider street COSTS a town its density, which is arithmetic and
+is reported rather than compensated for.** The `PITCH` is the block plus
+the street, so at a fixed town radius the count of blocks falls as the
+square of it: 14 m to 18.5 is (14/18.5)^2, and measured on one binary
+either side of that one constant, the 8 built towns are 400 buildings
+against 695, 1,644,942 triangles against 2,791,902, and 300 people and
+76 cars out against 522 and 132. The ratio is 0.575 against the 0.573
+the area predicts, which is what says nothing else moved. Getting the
+buildings back means growing the BLOCK or the town's own radius, and
+neither is what was asked for: a street you can pass two cars on is
+wider, and a town of a given size has fewer buildings on it when its
+streets are.
+
+**The carriageway stops nothing and the PAVEMENT does**, and that
+difference is what a body does with each. The site under a town is
+levelled, so the ground there is a plane and dual contouring holds it to
+two millimetres (the audit's own number): five centimetres of paving
+clears that by twenty five times and is under anything, so a walker
+stands on the ground through it and it needs no collider, which is what
+this always said. A `KERB` of 12 cm is not under anything: it is ANKLE
+DEEP, so a pavement that only drew would be a pavement a walker waded
+along. It is one `Model::solid` a strip, which is this file's own rule
+that a box is DRAWN and COLLIDED from one set of numbers, and 12 cm is
+well under the walker's 60 cm step, so he steps up onto it rather than
+being stopped: `resolve`'s ring of points starts AT the step, so it never
+sees a kerb at all. Measured underfoot across a run, at the middle of
+each of eighteen bands: flat to 2.72 m out and 0.172 m up from 2.95 to
+4.13. It cost 6,576 boxes on the eight built towns, 87,691 against
+81,115, and not one triangle, because a `solid` draws what a `trim` did.
+A pavement's slab is SUNK 15 cm into the ground, because an underside
+lying exactly on that plane would fleck along its whole length.
 
 **One mesh a town, and eight towns are eight draws.** `model::fabric`
 welds every lot's model and every piece of street into one mesh in the
@@ -1493,10 +1561,20 @@ of the whole town. A dead end has one way off it, which is the way back,
 so a face walks up a cul de sac and turns round, and so does a car.
 
 **A lane is the face offset to its RIGHT and FILLETED at every corner.**
-A car keeps `CAR_LANE` (0.95 m) off the centreline and a person
-`FOOT_LANE` (1.62), so oncoming traffic passes on the left and a pavement
-is the outside of the street, measured: the two ways down one street are
-1.86 m apart. The fillet is the part worth the code. An agent walking the
+Neither offset is a number of its own: a car rides the MIDDLE OF ITS LANE
+(`LANE * 0.5`, 1.375 m) and a person the middle of the pavement
+(`LANE + WALK * 0.5`, 3.5), so both are read off the street's own cross
+section and cannot drift from the paving they are drawn over. Oncoming
+traffic passes on the left and a pavement is the outside of the street,
+measured: the two ways down one street are 2.69 m apart.
+
+**And a person steps DOWN off the kerb where he crosses a street, and
+nowhere else.** Along a run the pavement is the only ground there is, so
+he is always up on it; at a crossing his own lane takes him over the side
+street's band, and that band is carriageway exactly when the arm is
+there. `Traffic::lift` asks `town::paved` the same question the mesh
+asks, so a foot and the concrete under it cannot disagree. Measured on a
+plain grid, a 118.8 m walk is 96.6 m on the kerb and 22.2 m crossing. The fillet is the part worth the code. An agent walking the
 offset polyline straight would turn ninety degrees BETWEEN TWO FRAMES,
 which reads as a car teleporting round the corner, so a corner is a
 quarter circle of `CAR_TURN` (1.15 m) or `FOOT_TURN` (0.7) and a dead end
@@ -1507,24 +1585,24 @@ heading turns by at most 1.6 degrees.
 **Nobody ever leaves the street, and that is a test rather than a
 picture.** `nobody_ever_leaves_the_street` samples every agent every
 tenth of a metre all the way round its own loop and holds it inside the
-corridor of some street the town actually paved: the worst is 1.82 m
-against a half street of 2.00. That number is understood rather than
+corridor of some street the town actually paved: the worst is 3.673 m
+against a half street of 4.25. That number is understood rather than
 observed, which is the difference between a bound and a coincidence: a
 RIGHT turn's fillet bulges by `lane + radius * (1 - 1/root 2)`, which is
-1.62 + 0.205 on foot and 0.95 + 0.337 driving.
+3.5 + 0.205 on foot and 1.375 + 0.337 driving.
 
-**And the only bare ground anybody crosses is the far corner of a BEND**,
-by exactly one lane offset, which
-`the_only_ground_anybody_cuts_is_the_bare_corner_of_a_bend` measures at
-1.62 m. `streets_of` lays a run BETWEEN two crossings, so the square of
-tarmac at a crossing is covered only from the sides a street reaches it
-on: at a four way crossing that is all four quadrants and nothing can
-leave the tarmac, and at an L bend the far quadrant is bare and the lane
-turning LEFT crosses it, because keeping right round the outside of a
-bend is what the far corner IS. The ground a town stands on is levelled
-flat, so what that looks like is somebody cutting a corner over a verge.
-Paving the crossing square outright is the fix and it is a change to
-every town's geometry that nobody has asked for.
+**And NOBODY steps off the paving at all**, which
+`nobody_steps_off_the_paving_at_all` measures at 0.000 m. A run used to
+reach only as far as a crossing's own centre line, so the square of
+tarmac where two streets met was covered from the sides a street arrived
+on and no further: at a four way crossing that is all four quadrants and
+nothing could leave it, and at an L BEND the far quadrant was bare and
+the lane turning LEFT crossed it, because keeping right round the outside
+of a bend is what the far corner IS. The ground a town stands on is
+levelled flat, so what that looked like was somebody cutting a corner
+over a verge, and it measured 1.62 m. A crossing is a PIECE of its own
+now, paved whole whatever arms reach it, which is the section on the
+cities above.
 
 **A person and a car are PARAMETRIC**, in `figure.rs`, which is
 `model.rs`'s rule for the things that move: a procedural game's default
@@ -1709,9 +1787,9 @@ the towns alone.
 
 ## The sets on the field, and the walker on it, in Bevy
 
-**A triangle carries what it is made of, and there are seven.** `TERRAIN`,
-`CONCRETE`, `PLATE`, `GLASS`, `LAMP`, `LIT` for a glowing pane and
-`STREET`. A chunk's comes from the FIELD, which `dc.rs` asks half a fine
+**A triangle carries what it is made of, and there are eight.** `TERRAIN`,
+`CONCRETE`, `PLATE`, `GLASS`, `LAMP`, `LIT` for a glowing pane, `STREET`
+and `PAINT` for a road marking. A chunk's comes from the FIELD, which `dc.rs` asks half a fine
 cell inside every triangle's middle (`HAND`), and the ground answers
 terrain everywhere; a model's is whatever its own box or quad was given
 (`model.rs`). The app puts it in the vertex colour's red, every corner of
@@ -2327,19 +2405,36 @@ Numbers in the commit message. What is measured so far:
   picture moved), and the sea's wants a noise that takes a cell and a
   fraction. On a five kilometre planet the same step is half a millimetre,
   which is why every earlier picture looked right.
-- The traffic on the harness planet: the 8 BUILT towns turn out 1,222
-  people and 310 cars, of which the nearest 32 and 14 are ever entities.
-  The other 696 settlements on the body turn out nobody at all, because
+- The traffic on the harness planet: the 8 BUILT towns turn out 300
+  people and 76 cars, of which the nearest 32 and 14 are ever entities.
+  The other 765 settlements on the body turn out nobody at all, because
   nothing asks: an agent is a function and a function nobody calls costs
   nothing, which is the whole argument for rails.
-- The traffic, on the core's own test town of 31 lots and 200 pieces of
-  street: 50 edges between crossings and 20 circuits off them, 23 people
-  and 6 cars at 0.98 to 9.11 m/s. Nobody strays further than 1.82 m from
-  a street's middle against a half street of 2.00, and the furthest
-  anybody steps off the PAVING is 1.62 m, which is one lane offset and is
-  the far corner of an L bend. Over 2 cm of travel the place is out by
-  6.8e-7 m and the heading turns by at most 1.6 degrees, which is what
-  the corner fillets are for.
+- What the cross section cost, measured on one binary either side of the
+  one constant `PITCH`, on the same 773 town atlas: at 14 m the 8 built
+  towns are 695 buildings, 4,250 pieces of street, 2,791,902 triangles,
+  137,221 boxes and 1,390 lamps, turning out 522 people and 132 cars; at
+  18.5 they are 400, 2,467, 1,644,942, 81,115 and 800, turning out 300
+  and 76. 400/695 is 0.575 against the (14/18.5)^2 of 0.573 the area
+  predicts, which is what says nothing else moved. Neither of those box
+  counts carries a kerb collider, because the pair was measured before
+  one existed; with them the 18.5 world is 87,691, so a pavement a body
+  can stand on is 6,576 boxes and not one triangle. A street piece went
+  the other way: one quad of 2 triangles became 2 of carriageway, 24 of
+  pavement slab and 6 of marking.
+- The traffic, on the core's own test town: 115 pieces of street are 93
+  of run and 22 crossings over 31 edges, 11 circuits off them, and 17
+  lots turn out 13 people and 3 cars at 0.98 to 9.15 m/s. Nobody strays
+  further than 3.673 m from a street's middle against a half street of
+  4.25, and the furthest anybody steps off the PAVING is 0.000 m, against
+  1.62 before the crossing square was a piece of its own. Over 2 cm of
+  travel the place is out by 6.8e-7 m and the heading turns by at most
+  1.6 degrees, which is what the corner fillets are for.
+- What a street's cross section costs and buys: a run piece was one quad
+  of 2 triangles and is 2 of carriageway, 24 of the two pavement slabs
+  and 6 of markings, and a crossing is 9 cells of the same. A car had
+  1.90 m of street to itself and has 2.75; a pedestrian had a painted
+  stripe and has a kerb 12 cm up.
 - What a crowd costs: a person is 3 parts and 144 triangles and a car is
   1 and 132, so the 32 people and 14 cars the eye ever holds at once are
   6,456 triangles and 124 entities, against the 400,000 triangles of the

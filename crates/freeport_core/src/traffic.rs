@@ -17,7 +17,7 @@
 //! is what `town::lot_frame` maps onto the sphere.
 
 use crate::noise::hash3;
-use crate::town::{Piece, Town, BLOCK, PITCH, STREET};
+use crate::town::{arm, band, paved, Piece, Town, BLOCK, KERB, LANE, PITCH, STREET, WALK};
 use glam::DVec2;
 
 /// Half the street, metres: how far its edge stands from its centreline,
@@ -25,16 +25,23 @@ use glam::DVec2;
 pub const HALF_STREET: f64 = STREET / 2.0;
 /// How far from the centreline a car and a person keep, metres, on the
 /// RIGHT of the way they are going, so oncoming traffic passes on the
-/// left and a pavement is the outside of the street. A car is 1.6 m
-/// across and a person 0.45, so at these offsets both stay inside the
-/// two metres the paving actually covers.
-const CAR_LANE: f64 = 0.95;
-const FOOT_LANE: f64 = 1.62;
+/// left and a pavement is the outside of the street.
+///
+/// Neither is a number of its own: a car rides the MIDDLE OF ITS LANE
+/// and a person the middle of the pavement, so both are read off the
+/// street's own cross section and cannot drift from the paving they are
+/// drawn over. A lane is 2.75 m and a car 1.6 across, so two passing
+/// cars have better than a metre between them; the pavement is 1.5 m
+/// and a person 0.45.
+const CAR_LANE: f64 = LANE * 0.5;
+const FOOT_LANE: f64 = LANE + WALK * 0.5;
 /// How tightly each turns a corner, metres. A fillet rather than a
 /// vertex: an agent walking the offset polyline straight would turn
 /// ninety degrees between two frames, which reads as a car teleporting
 /// round the corner, and an arc is what a TANGENT that does not jump
-/// costs. Both are well inside the four metre street they turn in.
+/// costs. A right turn's fillet bulges by `radius * (1 - 1 / root 2)`
+/// past the lane, so a car reaches 1.71 m and a person 3.71 of the
+/// 4.25 the street's own half width is: both stay on the paving.
 const CAR_TURN: f64 = 1.15;
 const FOOT_TURN: f64 = 0.7;
 /// How fast each goes, metres a second. A town car is slow, and the pace
@@ -166,7 +173,14 @@ pub struct Streets {
 impl Streets {
     /// The graph of a town's own paving.
     pub fn of(town: &Town) -> Streets {
-        let mut edges: Vec<(Node, usize)> = town.pieces.iter().map(Streets::edge_of).collect();
+        // The RUNS only: a crossing is a node rather than an edge, and
+        // it is square, so `edge_of` could not tell which way it lay.
+        let mut edges: Vec<(Node, usize)> = town
+            .pieces
+            .iter()
+            .filter(|p| p.run())
+            .map(Streets::edge_of)
+            .collect();
         edges.sort_unstable();
         edges.dedup();
         Streets { edges }
@@ -183,15 +197,25 @@ impl Streets {
         self.edges.is_empty()
     }
 
-    /// Which edge a piece of street lies on. A piece wider east than
-    /// north is part of a street running NORTH (`STREET` across it and
-    /// `PIECE` along it), and the other way about for one running east.
+    /// Which edge a RUN of street lies on. A run wider east than north
+    /// is part of a street running NORTH (`STREET` across it and a
+    /// piece's length along it), and the other way about for one
+    /// running east.
     fn edge_of(p: &Piece) -> (Node, usize) {
-        if p.w > p.d {
+        if p.northerly() {
             ((line_at(p.x), block_at(p.z)), 1)
         } else {
             ((block_at(p.x), line_at(p.z)), 0)
         }
+    }
+
+    /// Which ARMS a node has, as `town::arm`'s own bits, which is what
+    /// `town::streets_of` writes onto a crossing piece. The graph and
+    /// the plan agree by construction, because the graph is read off
+    /// the pieces the plan laid.
+    pub fn arms(&self, n: Node) -> u8 {
+        let bit = [arm::EAST, arm::NORTH, arm::WEST, arm::SOUTH];
+        (0..4).filter(|&w| self.has(n, w)).map(|w| bit[w]).sum()
     }
 
     /// Is there a street from `n` along `way`?
@@ -442,11 +466,15 @@ pub struct Agent {
     pub id: u32,
 }
 
-/// A town's traffic: its circuits and everybody on them.
+/// A town's traffic: its streets, its circuits and everybody on them.
 #[derive(Clone, Debug, Default)]
 pub struct Traffic {
     pub faces: Vec<Lanes>,
     pub agents: Vec<Agent>,
+    /// The graph the circuits were cut from, kept because a PAVEMENT is
+    /// higher than a carriageway and which of the two a point stands on
+    /// is a question about the crossing it is in.
+    streets: Streets,
 }
 
 impl Traffic {
@@ -466,7 +494,36 @@ impl Traffic {
                 agents.push(one(&faces, kind, agents.len(), town.index, seed));
             }
         }
-        Traffic { faces, agents }
+        Traffic {
+            faces,
+            agents,
+            streets,
+        }
+    }
+
+    /// How high the ground a point stands on is over the carriageway,
+    /// metres: `KERB` on a pavement and nought on the road.
+    ///
+    /// A person keeps to the middle of the pavement, so along a RUN he
+    /// is always up on the kerb. What he crosses is a crossing's own
+    /// arms: walking straight through a crossroads takes him over the
+    /// side street, and that band of the square is carriageway exactly
+    /// when the arm is there. So he steps DOWN off the kerb where he
+    /// crosses a street and nowhere else, off the same three bands
+    /// `model::crossing` paves, rather than off a second rule about
+    /// where a kerb is.
+    pub fn lift(&self, at: DVec2) -> f64 {
+        let node = (line_at(at.x), line_at(at.y));
+        let d = at - place(node);
+        let h = HALF_STREET;
+        if d.x.abs() > h || d.y.abs() > h {
+            return KERB;
+        }
+        if paved(self.streets.arms(node), band(d.x), band(d.y)) {
+            0.0
+        } else {
+            KERB
+        }
     }
 
     /// Where an agent is at `time` seconds. The ONE place the clock is

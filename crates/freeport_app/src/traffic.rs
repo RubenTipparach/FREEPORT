@@ -22,7 +22,7 @@ use bevy::prelude::*;
 use freeport_core::dc::DcMesh;
 use freeport_core::figure;
 use freeport_core::pos::WorldPos;
-use freeport_core::town::{lot_frame, Town};
+use freeport_core::town::{self, lot_frame, Town};
 use freeport_core::traffic::{Kind, Traffic};
 
 /// How far a townsman is drawn from, metres, and how many at most of
@@ -254,7 +254,16 @@ fn pose(town: &Town, radius: f64, traffic: &Traffic, agent: usize, time: f64) ->
     let fwd = frame.east * cos + frame.north * sin;
     let right = frame.east * sin - frame.north * cos;
     let basis = Mat3::from_cols(right.as_vec3(), fwd.as_vec3(), frame.dir.as_vec3());
-    (frame.world(DVec3::ZERO), Quat::from_mat3(&basis))
+    // What it stands ON: a car the carriageway, a person the pavement,
+    // which is a kerb higher except where he crosses a street. Asked of
+    // the same nine cells the crossing's mesh is paved from, so a foot
+    // and the concrete under it cannot disagree.
+    let up = town::LIFT
+        + match traffic.agents[agent].kind {
+            Kind::Foot => traffic.lift(spot.at),
+            Kind::Car => 0.0,
+        };
+    (frame.world(DVec3::Z * up), Quat::from_mat3(&basis))
 }
 
 /// Spawn the townsmen within reach of the eye, despawn those out of it,

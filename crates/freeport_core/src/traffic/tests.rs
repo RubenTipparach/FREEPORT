@@ -24,27 +24,56 @@ fn town() -> Town {
 /// reader can picture rather than on whatever the planet grew.
 fn grid(n: i32) -> Town {
     let mut pieces = Vec::new();
-    let steps = (PITCH / crate::town::PIECE).ceil() as i64;
+    let steps = (crate::town::BLOCK / crate::town::PIECE).ceil();
+    let cut = crate::town::BLOCK / steps;
+    let steps = steps as i64;
     for i in 0..=n {
         for j in 0..n {
             for k in 0..steps {
-                let mid =
-                    j as f64 * PITCH + (k as f64 + 0.5 - steps as f64 / 2.0) * crate::town::PIECE;
+                let mid = j as f64 * PITCH + (k as f64 + 0.5 - steps as f64 / 2.0) * cut;
                 // Running north, at the street line i.
                 pieces.push(Piece {
                     x: line(i),
                     z: mid,
                     w: STREET,
-                    d: crate::town::PIECE,
+                    d: cut,
+                    arms: 0,
                 });
                 // Running east, at the street line i, over block row j.
                 pieces.push(Piece {
                     x: mid,
                     z: line(i),
-                    w: crate::town::PIECE,
+                    w: cut,
                     d: STREET,
+                    arms: 0,
                 });
             }
+        }
+    }
+    // And the crossing at every corner of it, with whichever of its four
+    // arms the grid actually reaches it on.
+    for i in 0..=n {
+        for j in 0..=n {
+            let mut arms = 0u8;
+            if j < n {
+                arms |= arm::NORTH;
+            }
+            if j > 0 {
+                arms |= arm::SOUTH;
+            }
+            if i < n {
+                arms |= arm::EAST;
+            }
+            if i > 0 {
+                arms |= arm::WEST;
+            }
+            pieces.push(Piece {
+                x: line(i),
+                z: line(j),
+                w: STREET,
+                d: STREET,
+                arms,
+            });
         }
     }
     Town {
@@ -90,14 +119,27 @@ fn the_streets_are_the_graph_of_the_paving() {
     let town = town();
     let streets = Streets::of(&town);
     assert!(!streets.is_empty(), "the port paved nothing");
+    let runs = town.pieces.iter().filter(|p| p.run()).count();
+    let crossings = town.pieces.len() - runs;
     println!(
-        "{} pieces of street are {} edges between crossings",
+        "{} pieces of street are {runs} of run and {crossings} crossings, \
+         over {} edges",
         town.pieces.len(),
         streets.len()
     );
-    // Four pieces to a block's frontage, so an edge is four pieces, and
-    // nothing is counted twice.
-    assert_eq!(streets.len(), town.pieces.len() / 4);
+    // A run is the frontage of one block cut into whole pieces, so an
+    // edge is exactly that many of them and nothing is counted twice.
+    let steps = (crate::town::BLOCK / crate::town::PIECE).ceil() as usize;
+    assert_eq!(runs, streets.len() * steps);
+    // And a crossing wherever an edge ends, once each.
+    let mut nodes: Vec<Node> = streets
+        .edges
+        .iter()
+        .flat_map(|&(n, w)| [n, step(n, w)])
+        .collect();
+    nodes.sort_unstable();
+    nodes.dedup();
+    assert_eq!(crossings, nodes.len());
     // Every edge's two ends are a block's pitch apart and nowhere else.
     for &(n, w) in &streets.edges {
         let d = place(step(n, w)) - place(n);
@@ -267,6 +309,11 @@ fn a_car_keeps_right_and_a_person_walks_outside_it() {
         FOOT_LANE + 0.23 <= HALF_STREET,
         "a person hangs off the kerb"
     );
+    // And each rides the MIDDLE of what it is on: a car its own lane, a
+    // person the pavement. That is what ties a lane to the paving it is
+    // drawn over rather than to a number somebody picked.
+    assert!((CAR_LANE - crate::town::LANE * 0.5).abs() < 1e-12);
+    assert!((FOOT_LANE - crate::town::LANE - crate::town::WALK * 0.5).abs() < 1e-12);
     // And the two ways round one street are a whole car apart.
     let town = grid(2);
     let traffic = Traffic::of(&town, 7);
@@ -381,25 +428,22 @@ fn everybody_moves_at_their_own_pace_and_comes_round_again() {
     assert!(fastest > slowest, "everybody goes at exactly one speed");
 }
 
-/// How far off the PAVING itself anybody gets, which is a stronger claim
-/// than the corridor and the one with a real limit in it.
+/// NOBODY steps off the paving at all, which is a stronger claim than
+/// the corridor and is the one the crossing square bought.
 ///
-/// `town::streets_of` lays a street's pieces BETWEEN two crossings, so a
-/// run stops at the crossing's own centre line and the square of tarmac
-/// at a crossing is only covered from the sides a street reaches it on.
-/// At a four way crossing that is all four quadrants and nothing can
-/// leave the tarmac. At an L BEND, where a street arrives and another
-/// leaves at a right angle, the far quadrant is bare, and the lane that
-/// turns LEFT there crosses it, because keeping right round the outside
-/// of a bend is what the far corner IS.
+/// A run used to reach only as far as a crossing's own centre line, so
+/// the square where two streets met was covered from the sides a street
+/// arrived on and no further: at an L BEND the far quadrant was BARE,
+/// and the lane turning left there crossed it, because keeping right
+/// round the outside of a bend is what the far corner IS. Measured on
+/// this town it was 1.62 m of levelled verge, which reads as a person
+/// walking a corner over the grass.
 ///
-/// The ground a town stands on is levelled flat, so what that looks like
-/// is somebody cutting the corner over a verge, and it is named here with
-/// its number rather than hidden. Paving the crossing square outright is
-/// the fix, and it is a change to the town's geometry that nobody has
-/// asked for.
+/// A crossing is a PIECE of its own now (mining-mike's junction that
+/// owns its whole cell), so the square is paved whole whatever arms
+/// reach it, and this measures nought.
 #[test]
-fn the_only_ground_anybody_cuts_is_the_bare_corner_of_a_bend() {
+fn nobody_steps_off_the_paving_at_all() {
     let town = town();
     let traffic = Traffic::of(&town, 7);
     let mut worst: f64 = 0.0;
@@ -427,11 +471,55 @@ fn the_only_ground_anybody_cuts_is_the_bare_corner_of_a_bend() {
             }
         }
     }
-    println!("the furthest anybody steps off the paving is {worst:.2} m ({which:?})");
-    // A lane offset is the whole of it: nobody can be further off the
-    // tarmac than the far corner of a bend stands from it.
+    println!("the furthest anybody steps off the paving is {worst:.3} m ({which:?})");
     assert!(
-        worst <= FOOT_LANE + 1e-6,
-        "somebody is {worst:.2} m off the paving, past the {FOOT_LANE:.2} m a lane can be"
+        worst <= 1e-6,
+        "somebody is {worst:.3} m off the paving, which the crossings are there to stop"
     );
+}
+
+/// A person keeps to the PAVEMENT, a kerb over the road, and steps down
+/// off it exactly where he crosses a street.
+///
+/// That is one answer rather than two: the nine cells of a crossing the
+/// mesh is paved from are the nine cells `Traffic::lift` reads, so a
+/// foot and the concrete under it cannot disagree. Measured on a plain
+/// grid, where every crossing has all four arms and the walk between
+/// two of them is entirely on the kerb.
+#[test]
+fn a_person_walks_the_kerb_and_steps_down_to_cross() {
+    let town = grid(2);
+    let traffic = Traffic::of(&town, 7);
+    let lanes = traffic
+        .faces
+        .iter()
+        .max_by(|a, b| a.foot.length().total_cmp(&b.foot.length()))
+        .expect("the grid laid no circuit");
+    let c = &lanes.foot;
+    let len = c.length();
+    let n = (len / 0.05).ceil() as usize;
+    let (mut up, mut down) = (0.0f64, 0.0f64);
+    for k in 0..n {
+        let at = c.at(k as f64 * len / n as f64).at;
+        let lift = traffic.lift(at);
+        assert!(
+            lift == 0.0 || lift == crate::town::KERB,
+            "a foot stands {lift} m up, which is neither the road nor the kerb"
+        );
+        if lift > 0.0 {
+            up += len / n as f64;
+        } else {
+            down += len / n as f64;
+        }
+    }
+    println!("a walk of {len:.1} m is {up:.1} m on the kerb and {down:.1} m crossing a street");
+    // Most of a walk is on the pavement, and some of it is not: a
+    // pedestrian who never left the kerb would be one who never crossed
+    // a road, which on a grid of crossroads is impossible.
+    assert!(down > 1.0, "nobody ever steps off the kerb");
+    assert!(up > down * 2.0, "a pedestrian spends his walk in the road");
+    // On a RUN he is always up: the pavement is the only ground there.
+    let node = place((0, 0));
+    let mid = DVec2::new(node.x + FOOT_LANE, node.y + PITCH * 0.5);
+    assert_eq!(traffic.lift(mid), crate::town::KERB);
 }

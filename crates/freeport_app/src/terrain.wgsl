@@ -99,6 +99,7 @@ const M_GLASS: f32 = 3.0;
 const M_LAMP: f32 = 4.0;
 const M_LIT: f32 = 5.0;
 const M_STREET: f32 = 6.0;
+const M_PAINT: f32 = 7.0;
 
 // One where the material is `m`, else nought: the vertex colour carries
 // the material as a whole number, flat over the triangle.
@@ -280,7 +281,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let w_sand = level * sand;
     let w_grass = level * (1.0 - sand);
     let street = is(material, M_STREET);
-    let w_conc = is(material, M_CONCRETE) + street;
+    let paint = is(material, M_PAINT);
+    let w_conc = is(material, M_CONCRETE) + street + paint;
     let w_plate = is(material, M_PLATE);
     // The panes and the lamps are flat colours with no map: what they
     // are is a colour and a glow, not a surface.
@@ -303,8 +305,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         + tri(albedo_maps, albedo_sampler, L_GRASS, pg, w, w_grass).rgb * w_grass
         + tri(albedo_maps, albedo_sampler, L_CONCRETE, pc, wc, w_conc).rgb * w_conc
         + tri(albedo_maps, albedo_sampler, L_PLATE, pc, wc, w_plate).rgb * w_plate;
-    // A street is the concrete set, darker, as paving is.
-    albedo = albedo * (1.0 - street * 0.45);
+    // A street is the concrete set DARKER, as tarmac is, and a marking
+    // is the same set brightened, which is what worn road paint looks
+    // like: neither is a texture of its own, so the whole town is still
+    // one shader and the five sets it already binds.
+    albedo = albedo * (1.0 - street * 0.45 + paint * 1.25);
     var orm = tri(orm_maps, orm_sampler, L_ROCK, pg, w, w_rock).rgb * w_rock
         + tri(orm_maps, orm_sampler, L_SAND, pg, w, w_sand).rgb * w_sand
         + tri(orm_maps, orm_sampler, L_GRASS, pg, w, w_grass).rgb * w_grass
