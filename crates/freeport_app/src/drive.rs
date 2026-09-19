@@ -25,6 +25,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::driver::{self, Drive, Driver};
 use freeport_core::pos::WorldPos;
+use freeport_core::town;
 use freeport_core::walker::{Bounds, Walker};
 
 /// How far behind the car the camera sits and how far over it, metres.
@@ -35,6 +36,8 @@ const CHASE: f64 = 8.5;
 const LIFT: f64 = 3.2;
 /// How far over the road the camera AIMS, metres: the car's own roof.
 const AIM: f64 = 1.4;
+/// How many town radii a SCRIPTED theft reaches, which is the whole town.
+const SCRIPT_REACH: f64 = 200.0;
 
 /// One car that has been stolen: which agent it was, where it is, and
 /// whether anybody is in it.
@@ -133,9 +136,21 @@ pub fn board(
                 return;
             }
             let now = street.time.elapsed_secs_f64();
-            let Some((who, tint, dir, fwd)) = nearest_agent(crowds, ground, here, now) else {
+            // A SCRIPTED theft reaches as far as the town, and a player
+            // reaches as far as his arm. The flag exists to photograph a
+            // car and it has no legs to walk over with: at a player's
+            // own reach a headless run stands on the kerb waiting for
+            // one to brush past, which on the first try took seven
+            // minutes of rendering to happen by luck.
+            let reach = if street.args.drive > 0 && thefts.cars.is_empty() {
+                town::OUTLINE * SCRIPT_REACH
+            } else {
+                driver::REACH
+            };
+            let Some((who, tint, at, fwd)) = nearest_agent(crowds, ground, here, reach, now) else {
                 return;
             };
+            let dir = at.normalize();
             let field = ground.0.underfoot(here, 8.0);
             let car = Driver::board(&field, &ground.0.bounds, dir, fwd);
             thefts.cars.push(Theft { who, tint, car });
@@ -168,16 +183,13 @@ fn nearest_agent(
     crowds: &Crowds,
     ground: &Ground,
     here: DVec3,
+    reach: f64,
     now: f64,
 ) -> Option<((usize, usize), usize, DVec3, DVec3)> {
     crowds
-        .cars_near(ground.0.planet.radius, here, driver::REACH, now)
+        .cars_near(ground.0.planet.radius, here, reach, now)
         .into_iter()
-        .min_by(|a, b| {
-            (a.2 * ground.0.planet.radius)
-                .distance(here)
-                .total_cmp(&(b.2 * ground.0.planet.radius).distance(here))
-        })
+        .min_by(|a, b| a.2.distance(here).total_cmp(&b.2.distance(here)))
 }
 
 /// One frame at the wheel: the pedals, the wheel, and where the camera

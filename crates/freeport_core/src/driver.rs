@@ -56,8 +56,15 @@ const GRAVITY: f64 = 9.81;
 pub const SEAT: f64 = 1.15;
 pub const DOOR: f64 = 1.5;
 /// How near a car a body has to be to open its door, metres, measured
-/// from the car's own middle.
-pub const REACH: f64 = 4.0;
+/// from the car's own MIDDLE.
+///
+/// Eight and not four, which is what a scripted theft measured: a car is
+/// 4.1 m long, so four metres from its middle is a hand's width from its
+/// own bodywork, and a headless run that walked up a street and pressed
+/// E took nothing at all because no car happened to be that close on the
+/// frame it asked. Eight is a stride or two off the kerb, which is what
+/// walking up to a car is.
+pub const REACH: f64 = 8.0;
 
 /// What the driver asked for this frame.
 #[derive(Clone, Copy, Debug, Default)]

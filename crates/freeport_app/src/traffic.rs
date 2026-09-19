@@ -141,7 +141,15 @@ pub struct Crowds {
 
 impl Crowds {
     /// Every car still ON THE RAILS within `reach` of a point, as the
-    /// agent it is, its tint, where it stands and which way it points.
+    /// agent it is, its tint, WHERE IT STANDS in the planet's frame and
+    /// which way it points.
+    ///
+    /// The place is the car's own, at the town's own ground, and not a
+    /// direction: handing back `at.normalize()` and multiplying by the
+    /// planet's RADIUS to compare distances put every car on the mean
+    /// radius, so the nearest one to a walker standing 1,106 m up read
+    /// as 1,106 m away, which is his own altitude and not a distance to
+    /// anything.
     ///
     /// What a theft needs, and it asks the same `Traffic::at` the draw
     /// does, so a car is taken at exactly where it was drawn and does
@@ -169,7 +177,7 @@ impl Crowds {
                 }
                 let (sin, cos) = spot.yaw.sin_cos();
                 let fwd = frame.east * cos + frame.north * sin;
-                out.push(((t, a), agent.id as usize % TINTS, at.normalize(), fwd));
+                out.push(((t, a), agent.id as usize % TINTS, at, fwd));
             }
         }
         out
