@@ -1717,6 +1717,16 @@ first person. That is the one place this world has two camera rules, and
 the reason is that the point of stealing a car is the car: a first
 person view of one is a view of the inside of its own bonnet.
 
+**And the EYE has THREE places to be, not two**, which is what the first
+picture of a stolen car caught and no test did. `place_eye` and `fly`
+both read the WALKER to decide whether the fly camera owns the eye, and
+stealing a car TAKES THE WALKER AWAY: the theft fired, the log said so,
+and the picture came back from the fly camera with no car anywhere in
+it. `fly::Aboard` is the question asked once now, the walker or a car
+with somebody at the wheel, rather than the walker asked twice. A rule
+about who owns a thing, asked in terms of only one of the things that
+can own it, is a rule that is wrong the day a second one arrives.
+
 **And `--drive N` steals one headless and holds the throttle**, which is
 `--walk`'s own rule: a headless run has nobody to press E and then hold
 W, and a car nobody can photograph is a car whose feel nobody can check.

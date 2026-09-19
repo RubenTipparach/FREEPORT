@@ -706,17 +706,26 @@ fn place_eye(
     frame: Res<Frame>,
     eye: Res<Eye>,
     walker: Option<Res<OnFoot>>,
+    thefts: Res<Thefts>,
     mut cam: Query<(&mut Transform, &Fly), With<Camera3d>>,
 ) {
     let Ok((mut tf, fly)) = cam.single_mut() else {
         return;
     };
     let at = frame.0.local(eye.0);
-    *tf = match walker {
-        Some(w) => {
+    // THREE places the eye can be and not two: on foot, at the wheel of
+    // a stolen car, or in the air. The first cut had two, so stealing a
+    // car (which takes the walker away) put the camera back in the fly
+    // rotation and the picture came back with no car in it at all.
+    *tf = match (thefts.driving(), walker) {
+        (Some(theft), _) => {
+            let look = drive::look_at(&theft.car);
+            Transform::from_translation(at).looking_to(look.as_vec3(), theft.car.dir.as_vec3())
+        }
+        (None, Some(w)) => {
             Transform::from_translation(at).looking_to(w.0.look().as_vec3(), w.0.dir.as_vec3())
         }
-        None => Transform::from_translation(at).with_rotation(fly.rotation),
+        (None, None) => Transform::from_translation(at).with_rotation(fly.rotation),
     };
 }
 

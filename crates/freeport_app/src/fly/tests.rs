@@ -102,6 +102,7 @@ fn harness(dt: f64) -> (App, Entity, Entity) {
         .init_resource::<Eye>()
         .init_resource::<Status>()
         .init_resource::<Frame>()
+        .init_resource::<crate::drive::Thefts>()
         .add_message::<MouseMotion>()
         .add_message::<MouseWheel>()
         .add_systems(Update, (fly, place_eye).chain());

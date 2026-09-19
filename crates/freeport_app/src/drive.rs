@@ -33,6 +33,8 @@ use freeport_core::walker::{Bounds, Walker};
 /// of the inside of its own bonnet.
 const CHASE: f64 = 8.5;
 const LIFT: f64 = 3.2;
+/// How far over the road the camera AIMS, metres: the car's own roof.
+const AIM: f64 = 1.4;
 
 /// One car that has been stolen: which agent it was, where it is, and
 /// whether anybody is in it.
@@ -238,6 +240,13 @@ pub fn drive_car(
 /// backs TOWARD the camera rather than swinging it round.
 fn chase(car: &Driver) -> DVec3 {
     car.dir * (car.foot + LIFT) - car.fwd * CHASE
+}
+
+/// Which way that camera looks: at the car's own ROOF rather than along
+/// its heading, so the car sits in the middle of the frame instead of
+/// under the bottom of it.
+pub fn look_at(car: &Driver) -> DVec3 {
+    (car.dir * (car.foot + AIM) - chase(car)).normalize()
 }
 
 /// Draw every stolen car where its own `Theft` says it is, driven or
