@@ -79,9 +79,37 @@ const PALETTE: [[f32; 3]; figure::KINDS] = [
     [0.55, 0.05, 0.04],
 ];
 
-/// How bright a lamp on a car burns, so a headlight is a headlight after
-/// dark rather than a pale box. The same order as a building's lit pane.
-const LAMP_NITS: f32 = 900.0;
+/// The lamp KINDS a car carries, which is what splits its lamp geometry
+/// and what `spawn_car` hangs off it.
+///
+/// Two draws and not one, because a head lamp and a tail lamp are two
+/// COLOURS and an emissive is a property of the material rather than of
+/// the vertex: Bevy's standard material multiplies its base colour by
+/// the vertex colour and adds its emissive whole, so one material for
+/// both put the head lamp's warm white on the tail lamps as well. The
+/// red was in `PALETTE`, was in the mesh's own vertex colour, and could
+/// not reach the picture, so every car in this world burned white at
+/// both ends and nothing said which way one was pointing.
+const LAMPS: [u8; 2] = [figure::HEAD_LAMP, figure::TAIL_LAMP];
+
+/// How bright each of them burns, in the units an emissive is actually
+/// applied in.
+///
+/// Bevy's `emissive_exposure_weight` is NOUGHT by default, so an
+/// emissive is added to the frame AFTER the camera's exposure and is not
+/// in candela at all: it is in the same units `terrain.wgsl` writes a
+/// street lamp (8.0) and a lit pane (3.0) in. The first cut wrote 900
+/// with a comment claiming it was "the same order as a building's lit
+/// pane", which is a hundred times over white, so every lamp on every
+/// car in the world clipped to pure 255 whatever colour it was painted.
+/// That is what hid the red even once the tail lamps had a material of
+/// their own: the number was wrong by two orders of magnitude and the
+/// comment beside it said the opposite.
+///
+/// A tail lamp is far dimmer than a head lamp, and that is a fact about
+/// the LAMP rather than about its colour, so it is a number a KIND and
+/// not one number times the palette's own row.
+const GLOW: [f32; LAMPS.len()] = [8.0, 2.2];
 
 /// Where the world is this frame: the eye, the origin the render frame
 /// is measured from, the body under it and the clock.
@@ -130,13 +158,13 @@ pub struct Crowds {
     folk: Vec<[Handle<Mesh>; 3]>,
     /// Per tint: the car, less its lamps.
     cars: Vec<Handle<Mesh>>,
-    /// The lamps of a car, which take no tint and are shared.
-    lamps: Handle<Mesh>,
+    /// The lamps of a car, a mesh and a material a KIND, which take no
+    /// tint and are shared.
+    lamps: [(Handle<Mesh>, Handle<StandardMaterial>); LAMPS.len()],
     /// Where each leg's hip stands and how far out of phase it swings,
     /// read off the figure once rather than rebuilt at every spawn.
     legs: [(Vec3, f64); 2],
     paint: Handle<StandardMaterial>,
-    glow: Handle<StandardMaterial>,
 }
 
 impl Crowds {
@@ -194,19 +222,20 @@ impl Crowds {
         transform: Transform,
         marker: impl Component,
     ) {
-        commands
-            .spawn((
-                Mesh3d(self.cars[tint].clone()),
-                MeshMaterial3d(self.paint.clone()),
-                transform,
-                marker,
-            ))
-            .with_child((
-                Mesh3d(self.lamps.clone()),
-                MeshMaterial3d(self.glow.clone()),
+        let mut car = commands.spawn((
+            Mesh3d(self.cars[tint].clone()),
+            MeshMaterial3d(self.paint.clone()),
+            transform,
+            marker,
+        ));
+        for (mesh, glow) in &self.lamps {
+            car.with_child((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(glow.clone()),
                 Transform::IDENTITY,
                 bevy::light::NotShadowCaster,
             ));
+        }
     }
 
     /// Whether these crowds belong to the body that is active.
@@ -245,7 +274,6 @@ pub fn turn_out(
 ) {
     let person = figure::person();
     let car = figure::car();
-    let lit = |m: u8| m == figure::HEAD_LAMP || m == figure::TAIL_LAMP;
     let crowds = Crowds {
         home,
         towns: towns
@@ -258,9 +286,26 @@ pub fn turn_out(
             })
             .collect(),
         cars: (0..TINTS)
-            .map(|k| meshes.add(to_mesh(&car.parts[0].mesh, k, |m| !lit(m))))
+            .map(|k| meshes.add(to_mesh(&car.parts[0].mesh, k, |m| !LAMPS.contains(&m))))
             .collect(),
-        lamps: meshes.add(to_mesh(&car.parts[0].mesh, 0, lit)),
+        // The emissive is the PALETTE's own row times the kind's glow, so
+        // the COLOUR of a lamp is written once and its BRIGHTNESS once:
+        // the first cut spelled the head lamp's warm white out a second
+        // time here, as `LAMP_NITS * 0.94` and `* 0.8` against the
+        // table's 0.96 and 0.85, which is two writers for one colour
+        // that had already drifted.
+        lamps: std::array::from_fn(|k| {
+            let kind = LAMPS[k];
+            let c = PALETTE[kind as usize];
+            (
+                meshes.add(to_mesh(&car.parts[0].mesh, 0, |m| m == kind)),
+                materials.add(StandardMaterial {
+                    base_color: Color::WHITE,
+                    emissive: LinearRgba::rgb(c[0] * GLOW[k], c[1] * GLOW[k], c[2] * GLOW[k]),
+                    ..default()
+                }),
+            )
+        }),
         legs: std::array::from_fn(|k| match person.parts[k + 1].swing {
             figure::Swing::Leg { phase } => (person.parts[k + 1].at.as_vec3(), phase),
             figure::Swing::Still => (Vec3::ZERO, 0.0),
@@ -268,11 +313,6 @@ pub fn turn_out(
         paint: materials.add(StandardMaterial {
             base_color: Color::WHITE,
             perceptual_roughness: 0.75,
-            ..default()
-        }),
-        glow: materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            emissive: LinearRgba::rgb(LAMP_NITS, LAMP_NITS * 0.94, LAMP_NITS * 0.8),
             ..default()
         }),
     };

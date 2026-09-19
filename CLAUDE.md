@@ -1717,6 +1717,47 @@ first person. That is the one place this world has two camera rules, and
 the reason is that the point of stealing a car is the car: a first
 person view of one is a view of the inside of its own bonnet.
 
+**And a car burned WHITE at both ends, which is what made that chase
+view unreadable.** The first picture of one came back apparently showing
+the car's FRONT from a camera that is provably behind it, and the
+reason was neither: a head lamp and a tail lamp were ONE mesh in ONE
+material, `LinearRgba::rgb(900, 846, 720)`, so the tail lamps burned
+the head lamp's warm white. An emissive is a property of the MATERIAL
+and not of the vertex: Bevy's standard material multiplies its base
+colour by the vertex colour and adds its emissive whole, so the red in
+`PALETTE[TAIL_LAMP]` was in the table, was in the mesh's own vertex
+colour, and could not reach the picture. Nothing in this world said
+which way a car was pointing. It is a mesh and a material a lamp KIND
+now, and the emissive is the PALETTE's own row times the kind's glow,
+which also collapses a second copy of the head lamp's colour that had
+already drifted (`LAMP_NITS * 0.94` and `* 0.8` against the table's
+0.96 and 0.85).
+
+**And splitting the material was not enough, because the NUMBER was
+wrong by two orders of magnitude.** The second render came back white
+as well: Bevy's `emissive_exposure_weight` is NOUGHT by default, so an
+emissive is added to the frame AFTER the camera's exposure and is not
+in candela at all. `LAMP_NITS` was 900 with a comment claiming it was
+"the same order as a building's lit pane", and a lit pane is 3.0 in
+`terrain.wgsl` and a street lamp 8.0: 900 is a hundred times over
+white, so every lamp clipped to 255 whatever colour it carried. It is
+`GLOW` now, in the SHADER's own units, 8.0 at the front and 2.2 at the
+back, because a tail lamp is far dimmer than a head lamp and that is a
+fact about the LAMP rather than about its colour. Measured on the same
+frame: the lamps were 252, 252, 252 and are 226, 110, 107, and 0.188%
+of the picture moved. A constant whose comment names the units it is
+NOT in is a constant that cannot be checked by reading.
+
+**The end of a car is told by the GAP between its lamps, and that is how
+this was settled rather than by squinting.** The head lamps stand 0.52
+either side of the centreline and are 0.34 m wide, so the gap between
+them is 2.06 of a lamp; the tail lamps stand 0.56 out and are 0.30 wide,
+which is 2.73. Measured on the render itself, the two bright blobs are
+38 px wide with 104 px between them, which is **2.74**: the chase camera
+was right all along and it was the colour that was lying. A picture that
+looks wrong names a symptom, and the number that tells two symptoms
+apart is the one worth finding.
+
 **And the EYE has THREE places to be, not two**, which is what the first
 picture of a stolen car caught and no test did. `place_eye` and `fly`
 both read the WALKER to decide whether the fly camera owns the eye, and
@@ -1732,6 +1773,25 @@ can own it, is a rule that is wrong the day a second one arrives.
 W, and a car nobody can photograph is a car whose feel nobody can check.
 It waits for the crowds to have turned a car out rather than firing on
 frame nought, because a theft of nothing is a walk.
+
+**A car's place is a PLACE, and returning a DIRECTION cost a theft
+everything.** `Crowds::cars_near` handed back `at.normalize()` and the
+caller compared `c.2 * planet.radius`, which puts every car on the MEAN
+radius: the nearest car to a walker standing 1,105.7 m up measured
+1,105.8 m away, which is his own ALTITUDE and not a distance to
+anything, while town 0's own centre was 117 m off. So no car was ever
+in reach and the scripted theft never fired, with a log line saying
+nothing was near. A position multiplied by a radius it already carries
+is a number that LOOKS like a distance and is one to the planet's
+centre.
+
+**And a reach is measured from the car's own MIDDLE**, so it has to
+clear the car. `REACH` was 4 m and a car is 4.1 m long, which put the
+door handle a hand's width outside it; it is 8 m, a stride or two off
+the kerb. A SCRIPTED theft reaches `town::OUTLINE * 200`, the whole
+town, because `--drive` has no legs: at a player's own reach a headless
+run stands on the kerb waiting for a car to happen past it, which is a
+flag that photographs nothing most of the time it is used.
 
 **And a stolen car belongs to ONE body**, which is the crowd's own rule
 and the same rule as getting out of it: fly to another planet and the
@@ -2541,6 +2601,17 @@ Numbers in the commit message. What is measured so far:
   The other 765 settlements on the body turn out nobody at all, because
   nothing asks: an agent is a function and a function nobody calls costs
   nothing, which is the whole argument for rails.
+- A car's own lamps, measured at the chase camera's own range on three
+  renders of one frame: 252, 252, 252 with both lamps in one white
+  material; 252, 251, 251 with a material a KIND but the emissive still
+  written as 900 of something the shader adds AFTER the exposure; and
+  226, 110, 107 once the glow is in `terrain.wgsl`'s own units, 8.0 at
+  the front and 2.2 at the back. 0.188% of the picture moved. Which END
+  of a car a camera is looking at is told by the GAP between its lamps
+  over their width, 2.06 at the front and 2.73 at the back: the render
+  measures 104 px between two 38 px blobs, which is 2.74, so the chase
+  camera was behind the car the whole time and it was the COLOUR that
+  was lying.
 - What the cross section cost, measured on one binary either side of the
   one constant `PITCH`, on the same 773 town atlas: at 14 m the 8 built
   towns are 695 buildings, 4,250 pieces of street, 2,791,902 triangles,
