@@ -255,6 +255,13 @@ pub fn drift_sky(
         if let Some(m) = painted.water.get_mut(id) {
             m.extension.fog = fog;
             m.extension.haze = haze;
+            // The SUN, so the sheet knows which side of the terminator a
+            // piece of sea is on: its body takes the night floor there
+            // and its reflection takes the sky the dome is painting.
+            // The w is the floor itself and is the material's, not the
+            // weather's, so it is read back rather than written over,
+            // which is what `distant` already does with its lamps.
+            m.extension.sun = weather.sun.as_vec3().extend(m.extension.sun.w);
         }
     }
     // The SUN into every body drawn from far off, so the half of one that

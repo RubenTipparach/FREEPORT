@@ -417,6 +417,65 @@ Measured on the same body before and after: 6 pieces over a per cent of
 it, the biggest 15.3%, with 331 islands, against 7 continents of 17.9,
 5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% with 217 islands.
 
+## How BIG a continent is, is the swell's own size, and the count is arithmetic
+
+The shelf decided that there ARE continents. What decides how big one is
+is `freq::CONTINENT`, the size of the swell the shelf cuts, and the owner
+read the answer off the chart: the land masses were too small. Seven
+pieces of 17.9, 5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% is one continent and six
+scraps, and the chart of it is a lace of middling blobs with no open
+ocean anywhere.
+
+It is 0.18 of the planet's lumps now rather than 0.30, with the sea 100 m
+higher to hold the water share: **57.8% water in 3 continents of 17.9,
+11.0 and 10.1% with 381 islands**. The biggest is the same and the second
+is TWICE what it was, the third two and a half times, and there are 75%
+more islands. A chunk of ocean you could sail across for a day is the
+thing that appeared, and it is what a continent needs to be a continent.
+
+**The COUNT falls when the size rises, and that is arithmetic rather than
+a setting anybody can have both ways.** Land is a level set of a fractal,
+so a swell twice as wide crosses the sea half as often; the sweep
+(`measure_the_land_at_each_sea_level`) says it plainly, and no setting in
+it gives seven pieces that are each big. The owner asked for six or seven
+earlier and for bigger now, and bigger is the one that was taken, because
+it is the newer word and because the earlier one was reaching for the same
+thing: a map with real places on it.
+
+**EARTH is the scale to read that at.** Its seven named continents are
+four contiguous land masses of 16.6, 8.2, 2.7 and 1.5% of the globe at
+71% water. This body's three are each bigger than any of them and it is
+58% water, so what the count went down to is a MORE continental world than
+Earth rather than a less divided one, and "three continents" and "seven
+continents" are the same kind of statement about the same kind of planet.
+
+**A town's level is tested against the window now, and it was not.**
+`plan` tests the CANDIDATE's own direction against the habitable window
+and `settle` then gives the site the LOWEST of forty nine marches round
+it, which is a different number by up to the `LEVEL` fall the site just
+passed: on this world's first run a town came out 2.96 m over the sea
+where the floor is 3, and nothing said so. What that is on the way to is a
+town accepted on a shore whose settled level falls UNDER the sea, and what
+would be built there is a levelled plateau with water over it. `settle`
+asks `window` itself and refuses, rather than being handed a floor by two
+callers one of which would get it wrong.
+
+**Three fixtures moved with the shape, and each is worth the line.** The
+road test's little planet carried 900 m of relief on a 40 km radius, which
+is nearly three times what this world carries, so its roads ran over
+ground too rough for a village sized site to be level anywhere: it grew
+two villages by luck before and nought after, and at 400 m of relief it
+grows ten. Its village size assertion was wrong in principle and passed
+for the same reason, holding a village smaller than the SMALLEST city when
+size is how near the sea a place stands: a village on a beach is 0.42 of a
+coastal size where a market town up a valley is the 0.32 floor, so the
+village is legitimately the bigger, and what `WAYSIDE` actually promises
+is that a village is smaller than a CITY ON ITS OWN GROUND. And the chart
+test read the water mask back through a `> 8` of its own against an
+`over_sea < -FULL_DEPTH * 0.03`, which are -7.3 m and -6.6 m of water; it
+agreed for as long as no sampled texel fell in the 0.7 m between them, and
+it compares the chart's byte with the byte the field encodes now.
+
 **And how many continents there are is a fact about how much LAND there
 is.** Land is a level set of a fractal, so past about four tenths of the
 body it PERCOLATES and the seven become one: at a sea of +700 m this
@@ -970,11 +1029,115 @@ its own depth as the sea floor). The extension adds tenebris's: the swell
 in the vertex stage along the radial (`water.vs.glsl`), the ripples as the
 gradient of its `fbm` of its gradient noise bending the radial normal, the
 fresnel sky and the foam on the crests (`water.fs.glsl`, named in the WGSL
-line by line), the ripples worn out from 30 m to 160 m because a bump map
-past a few dozen metres is noise rather than detail, the numbers
-`water.yaml`'s, and every coordinate PLANET LOCAL from a centre the
+line by line), and every coordinate PLANET LOCAL from a centre the
 material is handed and `rebase_origin` moves, which is the Sequoia lesson
 kept where it was learned.
+
+**The NUMBERS are pale-blue-dot's, and they are tenebris's own re-measured
+under a tone mapper.** That project is the same water shader carried into
+the same engine, its settings are `assets/config/water.ron` and its
+`openspec/changes/water-look/design.md` is the ablation that picked them:
+every variant rendered on one binary, the sea's mean sRGB measured over a
+fixed band, against a photograph of open ocean. Two of its results are
+worth keeping whatever the sheet is drawn by:
+
+- **Every shine knob in the shader together is worth about one per cent of
+  the colour of a sea frame, and ABSORPTION is worth thirty times that.**
+  Turning the sun's glint off entirely moved its shore frame by ONE level
+  of 255; doubling the absorption moved it by 31 and its saturation by 17.
+  What a sheet of water over a seabed is made of is the transmitted path,
+  so the only terms with authority over it are how much water stands in
+  front of the sand and how hard a metre of that water tints. A look
+  complaint names a symptom, and the first thing to measure is whether the
+  term about to be tuned has any authority over the pixels in question.
+- **Tenebris's own numbers are authored for a renderer that CLIPS.** Its
+  composite ends on a bare write to an eight bit buffer, so its near white
+  horizon reflection (0.85, 0.92, 0.98) and the 0.02 of red in its deep
+  colour are right there and wrong here: under Bevy's default
+  `TonyMcMapface` they lift and desaturate into a pale sheet. This sea was
+  carrying both, so the fix was not a new term, it was the two constants
+  the tone mapper had been quietly ruining.
+
+So `sheet_ext` is that file: the deep colour 0/0.12/0.28 with NO RED IN IT
+AT ALL, which is what a saturated sea needs under a tone mapper; the sky a
+clear day blue (0.10/0.36/0.72 to 0.03/0.18/0.55) rather than near white;
+the fresnel floor 0.22 rather than 0.5, which is the one shine knob with
+measurable authority, worth 22 levels of red on deep water at a grazing
+angle; the waves calmed to a steepness of 0.45 and a slope cap of 0.7; and
+absorption per metre of 0.90, 0.25, 0.08, which is hardest in red because
+the sand under a metre of water is red and only the water in front of it
+can take that out. Measured at the port's own shore, an eye at the
+waterline looking three kilometres out: 142, 152, 162 at saturation 20,
+which is a grey sheet, against 65, 120, 173 at saturation 108. 17.1% of
+the picture moved.
+
+**There is ONE absorption and ONE path.** Bevy's transmission attenuates
+the refracted ray by `attenuation_color ^ (thickness / attenuation_distance)`,
+so `water::attenuation` DERIVES that colour from the absorption vector at
+a distance of one metre rather than authoring a second one beside it, and
+the shader adds back `deep * (1 - exp(-absorption * path))`, which is what
+Bevy's attenuation cannot do: left alone it takes the seabed to NOUGHT
+over a long path, and deep water is not black, it is its own colour. The
+two halves are `mix(deep, scene, exp(-a * path))` and they read the same
+number. The path is the prepass thickness CAPPED at `MAX_PATH` (200 m), so
+a ray that meets no floor at all is the sheet's own colour.
+
+**The ripples are faded by their own FOOTPRINT, not by distance.** They
+were worn out from 30 m to 160 m of range, and that is the right idea with
+the wrong variable: what a fade is for is stopping once a ripple falls
+under a pixel, which is a function of the angle and the field of view. At
+a grazing angle a ripple thirty metres off already covers a pixel and was
+still being point sampled, and fresnel and foam turn that sampling into
+the white sparkle the before picture is full of. It is
+`1 / (1 + |fwidth(world)| * scale * DETAIL_FADE)` now, on the WORLD
+position because that is continuous across a chunk seam where the ripple
+cell is a step, and it fades the height as well as the gradient so the
+foam stops sparkling with them.
+
+**The night side is DARK, and the sheet mirrors the sky the DOME is
+painting.** The reflection was an authored day gradient at every hour, so
+the sea at midnight was a lit blue sheet under a black sky, brighter than
+the land beside it. `sky.rs` writes the sun's direction into the sheet
+every frame, the fragment measures the terminator on the body's own
+RADIAL (the same `DUSK_TO` and `DUSK_FROM` `distant.wgsl` uses, so one
+line falls in one place), and past it the reflection is `water.fog.rgb`,
+which is `atmos::horizon` and is already in this uniform because the fog
+reads it. No authored night colour and no second sky model: the one the
+atmosphere computed is the one the sea mirrors, which is this file's own
+"the fog IS the sky" rule arriving at the other surface. The body and the
+foam take a `NIGHT_FLOOR` of 0.18; the REFLECTION never does, because it
+carries the sky's own level already and dimmed twice the sea went black
+at the horizon, where a mirror should be closest to the sky it mirrors.
+
+**And the murk darkens with the DIVE.** Seen from under the sheet it was
+the bare deep colour at half a metre and at eight, while the seabed under
+it was already attenuated by the water over it: a lit blue room with a
+darkening floor. It is `deep * exp(-absorption * eye_depth) * lit` now, on
+the same absorption everything else reads, so a dive gets darker and a
+night dive gets darker still.
+
+**What was NOT taken from pale-blue-dot, named rather than hidden.** Its
+water is a render graph NODE with three sub passes (a composite that fogs
+and blurs the whole frame when the camera is under, the cap, and a lens
+pass of rain droplets and emerge drips), and it decides the camera's side
+of the surface on the CPU as a tri state. This sheet is still a material
+on Bevy's own transmission, so there is no underwater composite, no lens,
+no rain ripples and no flow field; the underwater view is the cap's own
+back face and nothing else. Its explicit Blinn Phong specular is
+deliberately not taken either: Bevy's PBR already lights this sheet, a
+second highlight is a term drawn twice, and that project measured its own
+at one level of 255. What the standard material carries instead is water's
+real F0 (Bevy `reflectance` 0.25 against 0.02 of reflectance) and a
+roughness of 0.12, which is a sea rather than the mirror 0.06 was.
+
+**And the night sea is not PHOTOGRAPHED**, which is this file's own camera
+rule catching me out: two hand aimed cameras at the antipode and at the
+terminator both landed on dry land, and the atlas cannot solve a third
+because it is baked at eighteen octaves and a picture on this rasteriser
+is bought down to fourteen, which is a different world with different
+coasts. The tool that is missing is a `--nightwater` that solves a shore
+at a given sun elevation the way `--sunward` solves an orbit, and until it
+exists the night path is code with a test behind it and no picture.
 
 ## Cities are MODELS on the planet, and the ground under them is levelled
 
@@ -1916,11 +2079,14 @@ Numbers in the commit message. What is measured so far:
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
-  with 8,000 m of relief on 18 octaves and the sea 1,000 m OVER the mean
-  radius, which leaves it 62.1% water in SEVEN continents (17.9, 5.3,
-  4.1, 2.2, 2.1, 2.0 and 1.2% of the body) and 217 islands. At +820 m,
-  where it was, 65.0% in 6 pieces with the biggest 15.3% and 331
-  islands; at -400 m, where it was before that, 26.3%.
+  with 8,000 m of relief on 18 octaves and the sea 1,100 m OVER the mean
+  radius, which leaves it 57.8% water in THREE continents (17.9, 11.0 and
+  10.1% of the body) and 381 islands. At the continent term's old 0.30 of
+  the planet's lumps and a sea at +1,000 m it was 62.2% water in seven
+  pieces of 17.9, 5.3, 4.1, 2.2, 2.1, 2.0 and 1.2% with 217 islands,
+  which is one continent and six scraps; at +820 m, 65.0% in 6 with the
+  biggest 15.3% and 331 islands; at -400 m, 26.3%. Earth, for scale, is
+  71% water in four contiguous masses of 16.6, 8.2, 2.7 and 1.5%.
 - The towns, on that planet: eight planned in 155 ms (four thousand
   candidates on a golden spiral, the port first), and 699 buildings and
   7,744 pieces of street MODELLED in 30 ms into 192,646 triangles, 6,635
@@ -2003,7 +2169,11 @@ Numbers in the commit message. What is measured so far:
   against the CPU's 37.82 on lavapipe, identical mesh geometry, and a
   sign-only density deviation of 440 m, which is the interval arithmetic
   doing its job rather than a disagreement.
-- The roads: 254 of them over 52,525 km joining 156 of the 160 towns,
+- The roads on the WIDER continents: 297 of them over 61,178 km joining
+  153 of the 160 towns, and 613 roadside villages rather than 544, baked
+  in 18.9 s. More road and more of it inland is what a body whose land is
+  gathered into three masses rather than scattered over seven looks like.
+- The roads before that: 254 of them over 52,525 km joining 156 of the 160 towns,
   routed over 125,664 waypoints ten kilometres apart in one multi source
   Dijkstra. It was 155 over 36,716 km joining 123 while the body was 65%
   water with no shelf under it, and 336 over 134,464 km joining 152 while
@@ -2018,6 +2188,14 @@ Numbers in the commit message. What is measured so far:
   kilometre body at the precision of a fraction. The A/B at 800 m is
   0.003% of pixels, because the ripples are faded past 160 m there and the
   quantisation is a motion artifact a still frame understates.
+- The sea's COLOUR, on pale-blue-dot's numbers, at the port's own shore
+  with an eye at the waterline looking three kilometres out: 142, 152, 162
+  at a saturation of 20, which is a grey sheet with sparkle on it, against
+  65, 120, 173 at a saturation of 108. 17.1% of that picture moved by more
+  than 8 of 255. For scale, that project measured a photograph of open
+  ocean at saturation 134 in its middle band and 87 in its foreground, and
+  measured every shine knob in its own shader as worth about one per cent
+  of a sea frame against absorption's thirty.
 - What a planet scale `f32` did to a texture coordinate, at the port, where
   `|rel|` is 999,603 m and one float to the next is 6.25 cm: the ground's
   own coordinate took 8 distinct values over two metres, so a 2 m tile was

@@ -483,6 +483,19 @@ pub(crate) fn settle(
     if ground.fall > radius * LEVEL {
         return None;
     }
+    // And the level it will actually STAND at has to be inside the
+    // window too. `plan` tests the candidate's own direction and this
+    // takes the LOWEST of forty nine marches round it, which is a
+    // different number by up to the `LEVEL` fall the site just passed:
+    // a candidate accepted at the window's floor could settle under the
+    // sea, and what would be built there is a levelled plateau with
+    // water over it. The window is asked here rather than passed in
+    // because `plan` and `road::waysides` both call this and a floor
+    // handed in twice is a floor one caller gets wrong.
+    let (low, _) = window(planet);
+    if ground.low < low {
+        return None;
+    }
     // A town grows ALONG the shore, which is across the way the land
     // falls: the sea is downhill and the hill is up, so what is left to
     // build on runs between them.

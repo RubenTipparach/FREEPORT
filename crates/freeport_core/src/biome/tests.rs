@@ -367,7 +367,7 @@ fn harness() -> (crate::field::Planet, f64) {
         // and this test is what keeps them one: the core cannot read the
         // app's constant, so it asserts the property the constant is set
         // for, and a sea moved there fails here.
-        1_000_000.0 + 1000.0,
+        1_000_000.0 + 1100.0,
     )
 }
 
@@ -564,23 +564,36 @@ impl Land {
     }
 }
 
-/// The land on this body is a FEW CONTINENTS with a great many islands
-/// off them, which is the owner's own ask rather than anything a single
-/// fractal gives on its own.
+/// The land on this body is a few BIG CONTINENTS with a great many
+/// islands off them, which is the owner's own ask rather than anything a
+/// single fractal gives on its own.
 ///
-/// What decides a continent is the SHELF (`biome::SHELF_AT` and its
-/// neighbours), and what it replaced could not have one. A continent term
-/// that is a smooth swell has a coastal gradient of about 22 m a
+/// What decides a continent AT ALL is the SHELF (`biome::SHELF_AT` and
+/// its neighbours), and what it replaced could not have one. A continent
+/// term that is a smooth swell has a coastal gradient of about 22 m a
 /// kilometre here while the hills riding it are worth 34, so the hills
 /// decided land from water over most of the swell: the body came out as
-/// three hundred middling blobs, 6 of them over a per cent of it with the
-/// biggest 15.3%, and no continent anywhere. With a margin under the sea
-/// it is 7 continents and 217 islands.
+/// three hundred middling blobs with no continent anywhere.
 ///
-/// And the count is a fact about how much LAND there is rather than about
-/// the noise: land is a level set of a fractal, so it percolates past
-/// about four tenths of the body and the seven become one.
-/// `measure_the_land_at_each_sea_level` is the sweep either side.
+/// What decides how BIG one is, which is the owner's next word on it, is
+/// `freq::CONTINENT`, the size of the swell itself. At 0.30 of the
+/// planet's lumps the body was 62.2% water in 7 pieces of 17.9, 5.3, 4.1,
+/// 2.2, 2.1, 2.0 and 1.2%, which is one continent and six scraps; at 0.18
+/// with the sea 100 m higher it is 57.8% water in 3 pieces of 17.9, 11.0
+/// and 10.1% with 381 islands, so the second is twice what it was and the
+/// third two and a half times.
+///
+/// The COUNT falls when the size rises and that is arithmetic rather than
+/// a setting: land is a level set of a fractal, so a swell twice as wide
+/// crosses the sea half as often. Earth is the scale to read this at,
+/// because its seven named continents are four contiguous masses of 16.6,
+/// 8.2, 2.7 and 1.5% of the globe at 71% water; this body's three are
+/// bigger than any of them and it is 58% water, so it is a MORE
+/// continental world than Earth rather than a less divided one.
+/// `measure_the_land_at_each_sea_level` is the sweep either side of it.
+///
+/// So what this holds is the SIZE, which is what was asked for, and the
+/// islands, and never a count, which is the thing that cannot be set.
 #[test]
 fn the_land_is_a_few_continents_and_many_islands() {
     let (planet, sea) = harness();
@@ -603,9 +616,22 @@ fn the_land_is_a_few_continents_and_many_islands() {
         pieces.len() - big.len()
     );
     assert!(
-        (5..=9).contains(&big.len()),
-        "the body has {} continents, and the ask is six or seven",
+        big.len() >= 3,
+        "the body has {} continents, and a world needs a few",
         big.len()
+    );
+    // The third biggest is a real continent and not a scrap off the
+    // biggest: 5% of this body is 630,000 square kilometres, which is
+    // bigger than Earth's own third mass. It is the THIRD rather than the
+    // biggest because one big piece and a fringe of leftovers is exactly
+    // what the owner was looking at when they said the land masses were
+    // too small.
+    let mut order = big.clone();
+    order.sort_by(|a, b| b.total_cmp(a));
+    assert!(
+        order[2] >= 0.05,
+        "the third continent is {:.1}% of the body, which is a scrap",
+        order[2] * 100.0
     );
     assert!(
         pieces.len() - big.len() >= 40,

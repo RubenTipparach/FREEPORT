@@ -113,7 +113,7 @@ const OCTAVES: u32 = 18;
 /// names. Lower, the continents MERGE: at +700 m the body is 54.6% water
 /// and nearly all of its land is one mass, which is percolation rather
 /// than a tuning mistake.
-const SEA: f64 = RADIUS + 1000.0;
+const SEA: f64 = RADIUS + 1100.0;
 /// Towns: how many, and how far across each.
 /// How many towns are PLANNED on the planet. Every one of them levels its
 /// own ground and is painted on the body's chart, so a world with this

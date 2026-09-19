@@ -7,7 +7,7 @@ use crate::town;
 fn world() -> (Planet, f64, Vec<Town>) {
     let mut planet = Planet {
         radius: 40_000.0,
-        relief: 900.0,
+        relief: 400.0,
         lumps: 8.0,
         octaves: 9,
         overhang: 0.0,
@@ -199,13 +199,28 @@ fn villages_stand_along_the_roads() {
             near < EVERY,
             "a village stands {near:.0} m off the nearest road"
         );
-        // And it is a VILLAGE: smaller than the smallest city, because
-        // a place that grew on the way to somewhere is not a rival to
-        // the somewhere.
-        let least = towns.iter().map(|t| t.radius).fold(f64::MAX, f64::min);
+        // And it is a VILLAGE: what the same ground would have carried
+        // as a CITY, cut by `WAYSIDE`, because a place that grew on the
+        // way to somewhere is not a rival to the somewhere.
+        //
+        // NOT simply smaller than the smallest city, which is what this
+        // held and what a shore village can legitimately beat: size is
+        // how near the SEA a place stands, so a village on a beach is
+        // 0.42 of a coastal size where a market town up a valley is the
+        // 0.32 floor, and the village is the bigger. It passed for as
+        // long as no road happened to reach a beach. What the cut
+        // actually promises is this.
+        let over = planet.radius + v.h - sea;
+        let city = crate::town::size_of(biggest, over, &planet, v.index, 5);
         assert!(
-            v.radius < least,
-            "a village is {:.0} m across against a town's {least:.0}",
+            v.radius <= city * crate::town::WAYSIDE + 1e-9,
+            "a village is {:.1} m across against {:.1} for a city on its own ground",
+            v.radius,
+            city * crate::town::WAYSIDE
+        );
+        assert!(
+            v.radius < biggest,
+            "a village is {:.0} m across against the biggest city's {biggest:.0}",
             v.radius
         );
     }

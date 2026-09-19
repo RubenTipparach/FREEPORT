@@ -46,14 +46,29 @@ struct Water {
     // over, y how many times the plain haze it is at the sea, z the
     // radius that is measured from.
     haze: vec4<f32>,
+    // The sun's direction in xyz; w the NIGHT FLOOR, what a share of the
+    // light reaching the water's body is worth on the night side.
+    sun: vec4<f32>,
+    // Absorption per metre a channel, and in w the longest path of water
+    // any of it is measured over.
+    absorb: vec4<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> water: Water;
 
-// How far the ripples are worn out over, metres, which is `terrain.wgsl`'s
-// own bump fade on the other surface.
-const RIPPLE_NEAR: f32 = 30.0;
-const RIPPLE_FAR: f32 = 160.0;
+// How hard the ripples are worn out by their own per pixel FOOTPRINT,
+// pale-blue-dot's `detail_fade`. What it replaces is a fade over 30 m to
+// 160 m of DISTANCE, which is the same thing guessed rather than
+// measured: at a grazing angle a ripple thirty metres away already
+// covers a pixel, and a distance fade leaves it drawn, point sampled,
+// as the sparkle fresnel and foam then make of it. Nought is the
+// unfiltered original.
+const DETAIL_FADE: f32 = 4.0;
+
+// Where the terminator falls on the sun's elevation over the local
+// horizon, as `distant.wgsl` measures the same line on the same body.
+const DUSK_TO: f32 = -0.10;
+const DUSK_FROM: f32 = 0.14;
 
 // The sheet over the chunks, whose vertices ARE a mesh: the swell raises
 // each along its own radial, which is tenebris's `water.vs.glsl`.
@@ -122,41 +137,73 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     frac = vec3<f32>(in.uv, in.uv_b.x);
 #endif
 #endif
-    let h = fbm3_at(cell, frac, t);
+    // The ripples are worn out by their own per pixel FOOTPRINT rather
+    // than over a distance somebody picked. Once a ripple falls under a
+    // pixel its point sampled height and gradient are NOISE, and fresnel
+    // and foam turn that noise into white sparkle across the whole far
+    // sea; what a fade is for is stopping at exactly that size, which is
+    // a function of the angle and the field of view and not of the range.
+    // Measured on the WORLD position, which is continuous across a chunk
+    // seam where the ripple cell is a step.
+    let foot = length(fwidth(in.world_position.xyz)) * water.wave.y;
+    let detail = 1.0 / (1.0 + foot * DETAIL_FADE);
+    let h = fbm3_at(cell, frac, t) * detail;
     let e = 0.08;
+    let at = fbm3_at(cell, frac, t);
     var grad = vec3<f32>(
-        fbm3_at(cell, frac + vec3<f32>(e, 0.0, 0.0), t) - h,
-        fbm3_at(cell, frac + vec3<f32>(0.0, e, 0.0), t) - h,
-        fbm3_at(cell, frac + vec3<f32>(0.0, 0.0, e), t) - h,
-    ) * 12.5;
+        fbm3_at(cell, frac + vec3<f32>(e, 0.0, 0.0), t) - at,
+        fbm3_at(cell, frac + vec3<f32>(0.0, e, 0.0), t) - at,
+        fbm3_at(cell, frac + vec3<f32>(0.0, 0.0, e), t) - at,
+    ) * 12.5 * detail;
     grad = grad - radial * dot(grad, radial);
     let steep = length(grad);
     var bent = grad;
     if (steep > water.zenith.w) {
         bent = grad * (water.zenith.w / steep);
     }
-    // The ripples are worn out with distance, as the ground's normal maps
-    // are and for the same reason: a ripple is detail at its own size, and
-    // past a hundred metres one is under a pixel, so what it adds is not
-    // a sheet of water, it is a sheet of NOISE. Faded, the far sea is the
-    // swell's own shape and the sky on it.
+    let n = normalize(radial - bent * water.wave.z);
     let away = length(in.world_position.xyz - view.world_position);
-    let near = 1.0 - smoothstep(RIPPLE_NEAR, RIPPLE_FAR, away);
-    let n = normalize(radial - bent * water.wave.z * near);
+
+    // Which side of the terminator this piece of sea is on, and what the
+    // light reaching the water's own BODY is worth there. A floor rather
+    // than nought, which is this project's ambient lesson again, and it
+    // is never applied to the REFLECTION: that carries the sky's own
+    // level already, and dimmed twice the sea went black at the horizon,
+    // where a mirror should be closest to the sky it mirrors.
+    let sun = normalize(water.sun.xyz);
+    let daylight = smoothstep(DUSK_TO, DUSK_FROM, dot(radial, sun));
+    let lit = mix(water.sun.w, 1.0, daylight);
+    let absorb = max(water.absorb.rgb, vec3<f32>(0.0));
+    // The deep colour and the foam sit in the frame's own exposed range
+    // beside the standard material's output; the sky colours are in
+    // CANDELA and take the camera's exposure, which is what `fog` already
+    // is and why the two can be mixed.
+    let night = water.fog.rgb;
 
     var out: FragmentOutput;
     if (!is_front) {
-        // Seen from under the sheet: the deep colour, the sky through it
-        // where the view comes up steep enough to leave.
+        // Seen from under the sheet: the deep colour ATTENUATED by the
+        // eye's OWN depth of water, so a dive darkens the way the seabed
+        // under it already does. Left at the bare deep colour it was one
+        // blue at half a metre and at eight, and a lit blue room under a
+        // dark sky. The sky comes through where the view rises steeply
+        // enough to leave through Snell's window.
+        let eye_q = view.world_position - water.centre.xyz;
+        let eye_deep = max(water.centre.w - length(eye_q), 0.0);
+        let murk = water.deep.rgb * exp(-absorb * eye_deep) * lit;
         let up = clamp(dot(-radial, normalize(in.world_position.xyz - view.world_position)), 0.0, 1.0);
         let window = smoothstep(0.55, 0.75, up);
-        out.color = vec4<f32>(mix(water.deep.rgb, water.horizon.rgb * 0.6, window), 1.0);
+        let above = mix(night, water.horizon.rgb, daylight) * view.exposure * 0.6;
+        out.color = vec4<f32>(mix(murk, above, window), 1.0);
         return out;
     }
 
     // How much water the view ray crosses before the ground behind, off
     // the depth prepass: the sheet opts out of that pass itself, so what
-    // it reads is the sea floor rather than its own depth.
+    // it reads is the sea floor rather than its own depth. CAPPED at the
+    // longest path any of this is measured over, so a ray that never
+    // meets a floor at all is the sheet's own colour rather than a
+    // multiply by nothing.
 #ifdef DEPTH_PREPASS
     let scene_z = depth_ndc_to_view_z(prepass_depth(in.position, 0u));
     let here_z = depth_ndc_to_view_z(in.position.z);
@@ -164,28 +211,54 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #else
     let thickness = 2.0;
 #endif
+    let path = min(thickness, water.absorb.w);
 
     var pbr_input = pbr_input_from_standard_material(plain, is_front);
     pbr_input.N = n;
-    pbr_input.material.thickness = thickness;
+    // Bevy's own transmission attenuates the refracted ray over this, on
+    // the colour `water::attenuation` DERIVED from the same absorption
+    // the next line reads, so the two halves of one Beer's law cannot
+    // drift: they are one number and one path.
+    pbr_input.material.thickness = path;
     var color = apply_pbr_lighting(pbr_input);
+
+    // What is left where the path runs out. Bevy's attenuation takes the
+    // seabed to NOUGHT over a long path, which is a black sea; what deep
+    // water actually is is its own body colour, so the share the water
+    // absorbed comes back as that. Together the two are the transmitted
+    // term pale-blue-dot writes as `mix(deep, scene, exp(-a * path))`,
+    // and it is the term with more authority over this picture than
+    // every shine knob in the shader put together: 31 levels of 255 on
+    // its own shore frame, against 1 for the sun's glint.
+    let through = exp(-absorb * path);
+    let body = (color.rgb + water.deep.rgb * (1.0 - through)) * lit;
 
     // The sky, by fresnel: brighter at the horizon than the zenith, and
     // only as much of the horizon as the material allows.
+    //
+    // At NIGHT it is the sky the DOME is actually painting, which the
+    // same march already hands this shader as the fog colour at the
+    // horizon. An authored day gradient there is a lit blue sheet under
+    // a black sky, brighter than the land beside it, and it needs no
+    // second sky model and no authored night colour to avoid: the one
+    // the atmosphere computed is already in this uniform.
     let V = pbr_input.V;
     let r = reflect(-V, n);
     let up = clamp(dot(r, radial), 0.0, 1.0);
-    let sky = mix(water.horizon.rgb, water.zenith.rgb, up);
+    let day = mix(water.horizon.rgb, water.zenith.rgb, up);
+    let sky = mix(night, day, daylight) * view.exposure;
     let fresnel = 0.02 + 0.98 * pow(1.0 - max(dot(V, n), 0.0), 5.0);
     let strength = fresnel * mix(water.horizon.w, 1.0, up);
-    color = vec4<f32>(mix(color.rgb, sky * view.exposure, strength), color.a);
+    var shaded = mix(body, sky, strength);
 
-    // Foam on the crests and on the steep, as the GLSL blends them.
+    // Foam on the crests and on the steep, as the GLSL blends them, and
+    // on the light the water's body gets rather than the sky's.
     let foam = max(
         smoothstep(water.band.x, water.band.y, h) * 0.55,
         smoothstep(water.band.z, water.band.w, steep) * 0.26,
-    ) * water.foam.w * near;
-    color = vec4<f32>(mix(color.rgb, water.foam.rgb * view.exposure, foam), color.a);
+    ) * water.foam.w;
+    shaded = mix(shaded, water.foam.rgb * view.exposure * lit, foam);
+    color = vec4<f32>(shaded, color.a);
 
     color = main_pass_post_lighting_processing(pbr_input, color);
     // The same air the ground fades into, so the sea meets the land in
