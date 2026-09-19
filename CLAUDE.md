@@ -1453,6 +1453,127 @@ area of any of them. A chunk near the port is 17 ms on lavapipe against
 12 before, which is what a site that cuts costs: `surface` can no longer
 return a level without asking the relief what was under it.
 
+## A town is INHABITED, and a townsman is on rails
+
+`traffic.rs` in the core says who is out on a town's streets and where
+they are at a moment; `traffic.rs` in the app draws the few dozen near
+the eye; `figure.rs` is what a person and a car are made of.
+
+**An NPC and a car are ON RAILS**, which is this file's own rule for
+everything that moves and is not the player. A townsman's place is a
+closed form function of his town, his own index and the world clock:
+nothing integrates, nothing is saved, two clients agree by construction,
+and a town nobody is near costs exactly NOTHING, because the function is
+never asked. 160 towns carrying tens of thousands of people is a world
+that costs what an empty one does until you land in it, which is the
+lamps' rule ("a light near the eye and a number everywhere else") on the
+other thing a city is full of.
+
+It also makes spawning by distance seamless for free. An entity that has
+just appeared is exactly where it would have been had it existed all
+along, because there is no state to carry across the boundary.
+
+**The streets are a GRAPH, derived from the paving that is DRAWN.**
+`town::streets_of` lays its pieces on the lines of the block grid, so a
+crossing is a node, a block's frontage is an edge, and `Streets::of`
+reads both off `town.pieces` rather than off the plan that made them.
+That is a wall's own rule again: traffic rides the tarmac a player can
+see, so a street nobody laid can never have a car on it and the two
+cannot drift. No `HashMap` in any of it, because this is replayed state:
+the edges are a sorted vector and a lookup is a binary search.
+
+**A circuit is not SEARCHED for, it is FOLLOWED.** `Streets::next` is the
+classic face traversal of a planar graph: arrive at a node and leave
+along the next street clockwise from the way back. The successor is a
+PERMUTATION of the directed edges, so every orbit of it closes and the
+orbits partition them, which `every_street_is_on_exactly_one_circuit`
+measures both halves of. On a street grid an orbit is the way round one
+block, or round a group of them where the grid has gaps, or the outside
+of the whole town. A dead end has one way off it, which is the way back,
+so a face walks up a cul de sac and turns round, and so does a car.
+
+**A lane is the face offset to its RIGHT and FILLETED at every corner.**
+A car keeps `CAR_LANE` (0.95 m) off the centreline and a person
+`FOOT_LANE` (1.62), so oncoming traffic passes on the left and a pavement
+is the outside of the street, measured: the two ways down one street are
+1.86 m apart. The fillet is the part worth the code. An agent walking the
+offset polyline straight would turn ninety degrees BETWEEN TWO FRAMES,
+which reads as a car teleporting round the corner, so a corner is a
+quarter circle of `CAR_TURN` (1.15 m) or `FOOT_TURN` (0.7) and a dead end
+is a half circle round the end of the street at the lane's own offset.
+Measured over 2 cm of travel: the place is out by 6.8e-7 m and the
+heading turns by at most 1.6 degrees.
+
+**Nobody ever leaves the street, and that is a test rather than a
+picture.** `nobody_ever_leaves_the_street` samples every agent every
+tenth of a metre all the way round its own loop and holds it inside the
+corridor of some street the town actually paved: the worst is 1.82 m
+against a half street of 2.00. That number is understood rather than
+observed, which is the difference between a bound and a coincidence: a
+RIGHT turn's fillet bulges by `lane + radius * (1 - 1/root 2)`, which is
+1.62 + 0.205 on foot and 0.95 + 0.337 driving.
+
+**And the only bare ground anybody crosses is the far corner of a BEND**,
+by exactly one lane offset, which
+`the_only_ground_anybody_cuts_is_the_bare_corner_of_a_bend` measures at
+1.62 m. `streets_of` lays a run BETWEEN two crossings, so the square of
+tarmac at a crossing is covered only from the sides a street reaches it
+on: at a four way crossing that is all four quadrants and nothing can
+leave the tarmac, and at an L bend the far quadrant is bare and the lane
+turning LEFT crosses it, because keeping right round the outside of a
+bend is what the far corner IS. The ground a town stands on is levelled
+flat, so what that looks like is somebody cutting a corner over a verge.
+Paving the crossing square outright is the fix and it is a change to
+every town's geometry that nobody has asked for.
+
+**A person and a car are PARAMETRIC**, in `figure.rs`, which is
+`model.rs`'s rule for the things that move: a procedural game's default
+for new geometry is procedural. A townsman is three parts, a body and two
+legs that swing on their own hips, and a car is one. Three and not five,
+because at the size a person is drawn on a street the silhouette that
+says WALKING is the gap between the legs, and an arm that swung would be
+two more entities each for something nobody can see.
+
+**A gait is measured in METRES and never in seconds.** A leg swings on
+`along / STRIDE`, which is how far the figure has actually come, so a
+thing that has stopped has stopped its legs too and nothing needs a clock
+of its own.
+
+**A figure wears its colour in the VERTEX.** Eight tints times four parts
+is thirty two meshes built once at startup, against a material per agent
+spawned and dropped every time somebody walks past. The core hands out a
+material BYTE and the app owns the palette, which is this file's own
+crate split: what a thing IS belongs to the core and what colour it is
+belongs to the app. None of the tints is near white, and the first render
+is why: at this camera's exposure a coat at 0.72 comes back as a
+MANNEQUIN and a street of them reads as a shop window.
+
+**The set of who is DRAWN has hysteresis, and the lamps' does not need
+any.** `light_lamps` holds its set still by not looking again until the
+eye has gone four metres, which works because a lamp does not move. A
+townsman walks across the boundary on his own, so without it the thirty
+second and thirty third nearest swap places every few frames and
+somebody forty metres off blinks in and out. Somebody already out is
+ranked at `KEEP` (three quarters) of his real distance, so a newcomer
+has to be a third nearer to take his place.
+
+**A crowd belongs to ONE body**, and flying to the next planet despawns
+it rather than redrawing this planet's townsmen against that one's radius
+and centre. And it is turned out on the BUILT towns only, because a
+person walking a street nobody has laid the buildings of stands on a bare
+levelled plateau, which is the gap a far city already has.
+
+**What is MISSING, named rather than hidden.** Nothing here COLLIDES: a
+wall is one oriented box that is drawn and collided and a figure is
+`Model::trim`, which only draws, so a walker passes through a townsman
+and two townsmen pass through each other. A body that stops another body
+wants the walker to know about boxes that MOVE, which is a larger change
+than a crowd on a street. Nor does anybody give way: a car crossing a
+junction does not know the other car is there, because knowing would mean
+state, and state is the one thing rails do not have. And a town that is
+planned but not built has nobody on it, for the same reason it has no
+buildings.
+
 ## Cities are JOINED, and the plan of a body is BAKED
 
 `road.rs` routes the network and `atlas.rs` is the file it is kept in.
@@ -2003,7 +2124,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 107, the core, about 53 s
+cargo test -p freeport_core                       # 123, the core, about 23 s
 cargo test -p freeport_app                        # 43, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
@@ -2075,7 +2196,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 107 tests in about 53 s, and `freeport_app` 43 in 12. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 123 tests in about 23 s, and `freeport_app` 43 in 12. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -2206,6 +2327,24 @@ Numbers in the commit message. What is measured so far:
   picture moved), and the sea's wants a noise that takes a cell and a
   fraction. On a five kilometre planet the same step is half a millimetre,
   which is why every earlier picture looked right.
+- The traffic on the harness planet: the 8 BUILT towns turn out 1,222
+  people and 310 cars, of which the nearest 32 and 14 are ever entities.
+  The other 696 settlements on the body turn out nobody at all, because
+  nothing asks: an agent is a function and a function nobody calls costs
+  nothing, which is the whole argument for rails.
+- The traffic, on the core's own test town of 31 lots and 200 pieces of
+  street: 50 edges between crossings and 20 circuits off them, 23 people
+  and 6 cars at 0.98 to 9.11 m/s. Nobody strays further than 1.82 m from
+  a street's middle against a half street of 2.00, and the furthest
+  anybody steps off the PAVING is 1.62 m, which is one lane offset and is
+  the far corner of an L bend. Over 2 cm of travel the place is out by
+  6.8e-7 m and the heading turns by at most 1.6 degrees, which is what
+  the corner fillets are for.
+- What a crowd costs: a person is 3 parts and 144 triangles and a car is
+  1 and 132, so the 32 people and 14 cars the eye ever holds at once are
+  6,456 triangles and 124 entities, against the 400,000 triangles of the
+  town they are walking in. Thirty two meshes are built at startup, eight
+  tints by four parts, and not one is made or dropped afterwards.
 - The walker, headless in the core, on a 2 km ball: 8 to 10 m in two
   seconds walking and over 14 running, a jump to between 1.0 and 1.6 m
   landing inside 1.3 s, a 0.4 m kerb climbed, a 1.2 m wall stopping the

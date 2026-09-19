@@ -44,6 +44,7 @@ mod render_probe;
 mod sky;
 mod stream;
 mod terrain;
+mod traffic;
 mod tuning;
 mod walk;
 mod water;
@@ -301,34 +302,54 @@ fn main() {
         flight_bench::clear_input.after(bevy::input::InputSystems),
     )
     .add_systems(Startup, lod_debug::spawn_legend)
-    .add_systems(Last, flight_bench::after_update)
-    .add_systems(
-        Update,
-        (
-            grab_mouse,
-            lod_debug::controls,
-            toggle_walk,
-            walk,
-            fly,
-            flight_bench::drive,
-            planets::activate,
-            rebase_origin,
-            planet_view::recentre,
-            city::update_lod,
-            stream,
-            flight_bench::after_stream,
-            light_lamps,
-            place_eye,
-            sky::drift_sky,
-            show_status,
-            lod_debug::apply,
-            take_shot,
-            flight_bench::finish,
-            hold_frame,
-        )
-            .chain(),
-    )
-    .run();
+    .add_systems(Last, flight_bench::after_update);
+    tick(&mut app);
+    app.run();
+}
+
+/// Everything a frame DOES, in the order it does it. Its own function
+/// rather than another link on the builder, because `main` is the
+/// arguments, the `App` and the schedule, and the schedule is the long
+/// one of the three.
+fn tick(app: &mut App) {
+    app // Bevy takes at most twenty systems in one tuple and this schedule is
+        // past it, so it is two tuples each chained, chained to each other.
+        // TWO `add_systems` calls would NOT have done: Bevy gives no order
+        // between two registrations, and `place_eye` before `stream` is a
+        // frame drawn from where the eye was going to be.
+        .add_systems(
+            Update,
+            (
+                (
+                    grab_mouse,
+                    lod_debug::controls,
+                    toggle_walk,
+                    walk,
+                    fly,
+                    flight_bench::drive,
+                    planets::activate,
+                    rebase_origin,
+                    planet_view::recentre,
+                    city::update_lod,
+                    stream,
+                    flight_bench::after_stream,
+                    light_lamps,
+                    traffic::drive_traffic,
+                )
+                    .chain(),
+                (
+                    place_eye,
+                    sky::drift_sky,
+                    show_status,
+                    lod_debug::apply,
+                    take_shot,
+                    flight_bench::finish,
+                    hold_frame,
+                )
+                    .chain(),
+            )
+                .chain(),
+        );
 }
 
 /// What a frame of input is read from: the clock, the keys, the mouse's
@@ -434,6 +455,16 @@ fn spawn_world(
     let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
     let sheet = water_material(&mut waters, SEA);
     say_world(&world, start_eye, &lat, args.levels);
+    // The people and the cars on their streets. Built from the same
+    // towns, so a crowd exists exactly where the buildings do.
+    traffic::turn_out(
+        &mut commands,
+        0,
+        &world.built,
+        SEED,
+        &mut meshes,
+        &mut standard,
+    );
     // The towns are drawn once and never again: models, not chunks.
     city::spawn_towns(
         &mut commands,
@@ -458,17 +489,7 @@ fn spawn_world(
     );
     planets.active = planets.nearest(eye);
     let body = &planets.bodies[planets.active];
-    let mut streamer = Streamer::new(
-        lat,
-        eye - body.centre,
-        args.levels,
-        body.material.clone(),
-        body.water.clone(),
-        compute.0.take(),
-        tuning.clone(),
-    );
-    streamer.centre = body.centre;
-    commands.insert_resource(streamer);
+    spawn_streamer(&mut commands, lat, eye, &args, body, &mut compute, &tuning);
     // The sun, and everything that reads it: the WORLD's own start decides
     // which way it points and never `--eye`, so two pictures taken from
     // two places are lit the same and only the camera moved. The light,
@@ -491,6 +512,31 @@ fn spawn_world(
     commands.insert_resource(Eye(WorldPos(eye)));
     commands.insert_resource(Ground(body.world.clone(), body.centre));
     commands.insert_resource(planets);
+}
+
+/// The chunk streamer, standing at whichever body the eye is nearest.
+/// Its own function because it is the one thing in `spawn_world` that
+/// reaches into three resources to make one.
+fn spawn_streamer(
+    commands: &mut Commands,
+    lat: Lattice,
+    eye: DVec3,
+    args: &Args,
+    body: &planets::Body,
+    compute: &mut compute::Compute,
+    tuning: &tuning::Tuning,
+) {
+    let mut streamer = Streamer::new(
+        lat,
+        eye - body.centre,
+        args.levels,
+        body.material.clone(),
+        body.water.clone(),
+        compute.0.take(),
+        tuning.clone(),
+    );
+    streamer.centre = body.centre;
+    commands.insert_resource(streamer);
 }
 
 fn say_world(world: &World, eye: DVec3, lat: &Lattice, levels: u8) {
