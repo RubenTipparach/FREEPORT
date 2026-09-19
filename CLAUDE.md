@@ -2202,7 +2202,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 123, the core, about 23 s
+cargo test -p freeport_core                       # 126, the core, about 27 s
 cargo test -p freeport_app                        # 43, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
@@ -2274,7 +2274,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 123 tests in about 23 s, and `freeport_app` 43 in 12. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 126 tests in about 27 s, and `freeport_app` 43 in 3. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -2419,9 +2419,7 @@ Numbers in the commit message. What is measured so far:
   predicts, which is what says nothing else moved. Neither of those box
   counts carries a kerb collider, because the pair was measured before
   one existed; with them the 18.5 world is 87,691, so a pavement a body
-  can stand on is 6,576 boxes and not one triangle. A street piece went
-  the other way: one quad of 2 triangles became 2 of carriageway, 24 of
-  pavement slab and 6 of marking.
+  can stand on is 6,576 boxes and not one triangle.
 - The traffic, on the core's own test town: 115 pieces of street are 93
   of run and 22 crossings over 31 edges, 11 circuits off them, and 17
   lots turn out 13 people and 3 cars at 0.98 to 9.15 m/s. Nobody strays
