@@ -351,3 +351,152 @@ fn a_car_steers_toward_where_it_is_going_and_straightens_when_it_is_aimed() {
     println!("closed from {start:.1} m to {end:.1} m in thirty seconds");
     assert!(end < 20.0, "closed {start:.1} m to {end:.1} m only");
 }
+
+/// A car that has met a wall can BACK OFF IT AGAIN.
+///
+/// The first scripted drive to the next town went twelve metres, met a
+/// corner of the port and then never moved again: 4 km/h, then 3, then
+/// 2, then 1, and nought metres of ground in the next thirteen minutes.
+/// Backing off did not free it either, so the picture at the end was
+/// byte for byte the picture at the start.
+#[test]
+fn a_car_that_has_met_a_wall_can_back_off_it_again() {
+    let b = bounds();
+    let frame = crate::town::Frame {
+        dir: DVec3::Y,
+        east: DVec3::X,
+        north: DVec3::Z,
+        base: R,
+    };
+    let slab = |centre: DVec3, half: DVec3| {
+        crate::model::Solid {
+            centre,
+            half,
+            yaw: 0.0,
+            material: CONCRETE,
+        }
+        .block(&frame)
+    };
+    // A CORNER, which is what the car in the game actually met: two
+    // walls at a right angle, so the outline is pushed out along both
+    // and a step that clears one is refused by the other.
+    let wall = [
+        slab(DVec3::new(8.0, 0.0, 1.6), DVec3::new(0.4, 6.0, 1.6)),
+        slab(DVec3::new(4.0, 4.0, 1.6), DVec3::new(6.0, 0.4, 1.6)),
+    ];
+    let w = world(&wall);
+    let mut d = car(&w, &b);
+    // Drive into it, hard, for long enough to be well and truly stopped.
+    let to_wall = drive(
+        &mut d,
+        &w,
+        &b,
+        Drive {
+            throttle: 1.0,
+            ..Default::default()
+        },
+        6.0,
+    );
+    let stopped = d.dir;
+    println!("drove {to_wall:.2} m into the wall, at {:.3} m/s", d.speed);
+    // Now reverse, which is what a driver does.
+    let back = drive(
+        &mut d,
+        &w,
+        &b,
+        Drive {
+            throttle: -1.0,
+            ..Default::default()
+        },
+        3.0,
+    );
+    let _ = stopped;
+    println!("backed {back:.2} m off it, at {:.3} m/s", d.speed);
+    assert!(
+        back > 2.0,
+        "a car against a wall backed {back:.2} m off it in three seconds"
+    );
+}
+
+/// A car drives AT PLANET SCALE, which is the radius the game actually
+/// runs at and five hundred times the one the rest of this suite uses.
+///
+/// The scripted drive to the next town went twelve metres and stopped,
+/// on open level ground with nothing blocking it: the probe read the
+/// ground under the car, two metres ahead of it and two metres behind
+/// it as the same 1105.65 m and `resolve_body` moving it nought. Every
+/// other test here is on a two kilometre ball.
+#[test]
+fn a_car_pulls_away_at_planet_scale() {
+    for radius in [2_000.0, 100_000.0, 1_000_000.0] {
+        let b = Bounds {
+            radius,
+            floor: radius - 50.0,
+            top: radius + 50.0,
+            sea: 0.0,
+        };
+        let ground = Sphere { radius };
+        let w = Built {
+            ground: &ground,
+            blocks: vec![],
+        };
+        let mut d = Driver::board(&w, &b, DVec3::Y, DVec3::X);
+        let from = d.dir;
+        for _ in 0..600 {
+            d.update(
+                &w,
+                &b,
+                &Drive {
+                    throttle: 1.0,
+                    ..Default::default()
+                },
+                1.0 / 60.0,
+            );
+        }
+        let gone = from.angle_between(d.dir) * radius;
+        println!(
+            "on a {radius:.0} m ball: {gone:.1} m in ten seconds at {:.1} m/s",
+            d.speed
+        );
+        assert!(
+            gone > 100.0,
+            "a car on a {radius:.0} m ball went {gone:.1} m in ten seconds"
+        );
+    }
+}
+
+/// A car that has been SLOWED by a crash can pull away again.
+///
+/// `roll` refuses a step that made under a twentieth of what it asked
+/// for, which is the right shape and the wrong SCALE: the threshold is
+/// a share of the asked step, and the asked step is the speed, so a car
+/// knocked down to a crawl asks for a step of a millimetre and any
+/// rounding in the push out fails it. The crash then knocks it down
+/// again. It is a LATCH: nothing the throttle does can ever get out of
+/// it, in either gear, and that is a car dead on open ground.
+#[test]
+fn a_car_slowed_to_a_crawl_can_pull_away_again() {
+    let b = bounds();
+    let w = world(&[]);
+    let mut d = car(&w, &b);
+    // Put it where a crash leaves it: a hair of speed on open ground.
+    d.speed = 0.01;
+    let gone = drive(
+        &mut d,
+        &w,
+        &b,
+        Drive {
+            throttle: 1.0,
+            ..Default::default()
+        },
+        5.0,
+    );
+    println!(
+        "pulled away {gone:.1} m in five seconds, reaching {:.1} m/s",
+        d.speed
+    );
+    assert!(
+        gone > 30.0,
+        "a car at a crawl on open ground went {gone:.1} m in five seconds"
+    );
+}

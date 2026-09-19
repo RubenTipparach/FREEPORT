@@ -1959,6 +1959,36 @@ air is holding it down, and prints anything over a kilometre a second in
 km/s, because two million metres a second is a number nobody can hold
 and is the same speed as 2,000 km/s.
 
+**And a car with no ROUTE cannot get out of a town, which is measured
+rather than guessed.** The scripted drive aims straight at the next
+settlement, which from a street between two buildings is straight at a
+wall. It drove twelve metres out of the port and then oscillated in
+place for the rest of the run: forward into the building, back off,
+forward into the same building. `driven 12 m in 30 s`, and 12 m at 60,
+90 and 120.
+
+Two things came out of measuring it, and both are worth keeping
+whatever drives next:
+
+- **A car is stuck when it makes no GROUND, not when the dial says so.**
+  The wedged car read 4 km/h on its own `speed` while covering nought
+  metres a second: a crash scales the speed down rather than stopping
+  the car, so the dial says what the engine is asking for and not what
+  the wheels are doing. `Auto` measures the arc the car actually turned
+  through, and the recovery fires now where reading the dial never did.
+- **And the car itself is sound at every scale and against anything a
+  test can build.** `a_car_pulls_away_at_planet_scale` drives 136.9 m in
+  ten seconds on a 2 km, a 100 km and a 1,000 km ball, identically;
+  `a_car_that_has_met_a_wall_can_back_off_it_again` drives 5.53 m into a
+  CORNER of two walls and reverses 12.60 m off it;
+  `a_car_slowed_to_a_crawl_can_pull_away_again` starts at 1 cm a second
+  and reaches 16 m/s in five seconds. So what stops the car in the port
+  is not its physics, it is that a building stands between it and where
+  it is going and it has nothing to follow round one.
+
+What makes a drive between two towns a journey is the ROAD, and the
+section on the roads below is why there is not one on the ground yet.
+
 **What is MISSING, named rather than hidden.** A stolen car does not
 collide with anything that MOVES, so it drives through townsmen and
 through the traffic, for the same reason nothing else in a town does:
@@ -2549,7 +2579,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 136, the core, about 38 s
+cargo test -p freeport_core                       # 139, the core, about 27 s
 cargo test -p freeport_app                        # 45, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
@@ -2633,7 +2663,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 136 tests in about 38 s, and `freeport_app` 45 in 4. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 139 tests in about 27 s, and `freeport_app` 45 in 3. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -2791,6 +2821,13 @@ Numbers in the commit message. What is measured so far:
 - **A car steering toward a place**, on the test ball: 199.3 m closed to
   10.2 m in thirty seconds, with the wheel full over past a quarter turn
   off the nose and nought dead ahead.
+- **The car itself, at every scale and against anything a test can
+  build**: 136.9 m in ten seconds on a 2 km, a 100 km and a 1,000 km
+  ball, identically; 5.53 m driven into a CORNER of two walls and 12.60
+  m reversed off it in three seconds; and 1 cm a second to 16 m/s in
+  five seconds from a crawl. And the scripted drive out of the port:
+  12 m, then 12 at 60 s, 90 s and 120 s, oscillating against a building
+  with nothing to follow round it.
 - The traffic on the harness planet: the 8 BUILT towns turn out 300
   people and 76 cars, of which the nearest 32 and 14 are ever entities.
   The other 765 settlements on the body turn out nobody at all, because

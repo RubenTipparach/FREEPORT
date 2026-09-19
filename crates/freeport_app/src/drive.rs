@@ -254,6 +254,7 @@ pub fn drive_car(
         steps = SUB_STEPS;
         *run -= 1;
     }
+    let was = car.dir;
     let field = here.underfoot(car.dir * car.foot, 12.0);
     // A car floats on nothing: the sea is where a stolen car stops, so
     // the bounds it drives against carry no water to be held up by.
@@ -266,11 +267,14 @@ pub fn drive_car(
         // holds one bearing for a whole second and weaves round its own
         // line at sixteen metres a second.
         let input = if steps > 1 {
-            auto.drive(car, script.goal.0, dt)
+            auto.drive(car, script.goal.0, dt, here.world().planet.radius)
         } else {
             input
         };
         car.update(&field, &bounds, &input, dt);
+    }
+    if steps > 1 {
+        auto.say(car, was, script.goal.0, here.world().planet.radius);
     }
     eye.0 = WorldPos(here.centre() + chase(car));
     status.walker = format!(
@@ -290,9 +294,15 @@ pub fn drive_car(
 /// STUCK, seconds, and how long it then backs off for.
 const WEDGED: f64 = 1.5;
 const BACK_OFF: f64 = 2.5;
-/// How slowly it has to be going to count as making no ground, metres a
-/// second. Well under the 2.4 m/s a second `DRAG` alone takes off, so a
-/// car merely easing round a corner is never called stuck.
+/// How little GROUND it has to have made to count as stuck, metres a
+/// second.
+///
+/// Ground made and not the speedometer. The car that wedged itself out
+/// of the port read 4 km/h on its own `speed` while making nought
+/// metres a second over the ground for two minutes: a crash scales the
+/// speed down rather than stopping the car, so the number on the dial
+/// is what the engine is asking for and not what the wheels are doing.
+/// A rule that reads the dial never fires.
 const CRAWL: f64 = 1.0;
 
 /// What a SCRIPTED drive is doing: how much of it is left to run, and
@@ -317,12 +327,47 @@ pub struct Auto {
     wedged: f64,
     /// How much of the backing off is left, seconds.
     backing: f64,
+    /// Where the car was on the previous sub step, so how far it has
+    /// actually come over the ground can be measured.
+    was: Option<DVec3>,
+    /// How far it has come over the ground, metres, and for how many
+    /// scripted seconds, so a drive says whether it is a JOURNEY.
+    gone: f64,
+    ticks: u32,
 }
 
 impl Auto {
+    /// How far a scripted drive has come, every half minute of it.
+    ///
+    /// A drive between two towns is a JOURNEY or it is not, and the one
+    /// number that says which is the GROUND made. The speedometer is not
+    /// that number: the car that wedged itself out of the port read
+    /// 4 km/h while making nought metres for two minutes.
+    fn say(&mut self, car: &Driver, was: DVec3, goal: Option<DVec3>, radius: f64) {
+        self.gone += was.angle_between(car.dir) * radius;
+        self.ticks += 1;
+        if !self.ticks.is_multiple_of(30) {
+            return;
+        }
+        info!(
+            "driven {:.0} m in {} s at {:.0} km/h, {:.2} km to go{}",
+            self.gone,
+            self.ticks,
+            car.speed.abs() * 3.6,
+            goal.map_or(0.0, |g| car.dir.angle_between(g) * radius / 1000.0),
+            if self.backing > 0.0 {
+                ", backing off"
+            } else {
+                ""
+            },
+        );
+    }
+
     /// The pedals and the wheel for one sub step.
-    fn drive(&mut self, car: &Driver, goal: Option<DVec3>, dt: f64) -> Drive {
+    fn drive(&mut self, car: &Driver, goal: Option<DVec3>, dt: f64, radius: f64) -> Drive {
         let want = goal.map_or(0.0, |g| car.toward(g));
+        let made = self.was.map_or(0.0, |w| w.angle_between(car.dir) * radius);
+        self.was = Some(car.dir);
         if self.backing > 0.0 {
             self.backing -= dt;
             // Backing out with the wheel the OTHER way, so the nose
@@ -335,7 +380,7 @@ impl Auto {
                 brake: false,
             };
         }
-        if car.speed.abs() < CRAWL {
+        if made < CRAWL * dt {
             self.wedged += dt;
         } else {
             self.wedged = 0.0;
