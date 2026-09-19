@@ -30,7 +30,7 @@ pub struct Scripted {
 /// One frame on foot.
 pub fn walk(
     mut controls: Controls,
-    ground: Res<Ground>,
+    here: crate::world::Surface,
     args: Res<Args>,
     walker: Option<ResMut<OnFoot>>,
     mut eye: ResMut<Eye>,
@@ -69,31 +69,31 @@ pub fn walk(
         script.left -= 1;
         script.done += 1;
     }
-    let field = ground.0.underfoot(walker.0.eye(), 8.0);
+    let field = here.underfoot(walker.0.eye(), 8.0);
     // The sea holds the feet only where there is water: a dry pit under
     // the level is walked into.
-    let water = ground.0.water(&field);
+    let water = here.ground.0.water(&field);
     let wet = water.has_water(walker.0.dir * (walker.0.foot + 0.3));
     let bounds = Bounds {
         sea: if wet { water.sea.radius } else { 0.0 },
-        ..ground.0.bounds
+        ..here.ground.0.bounds
     };
     // A clock and never the frame's own delta, which is the thing this is
     // measuring against in the first place.
     let clock = std::time::Instant::now();
     walker.0.update(&field, &bounds, &input, dt);
-    eye.0 = WorldPos(ground.1 + walker.0.eye());
+    eye.0 = WorldPos(here.ground.1 + walker.0.eye());
     say_walk(
         &mut script,
         &walker.0,
-        &ground,
+        &here.ground,
         clock.elapsed().as_secs_f64(),
     );
     let w = &walker.0;
     let under = field.material(w.dir * (w.foot - 0.05));
     status.walker = format!(
         "{:.1} m over the mean radius, {:.1} m/s{}, {}",
-        w.foot - ground.0.planet.radius,
+        w.foot - here.ground.0.planet.radius,
         w.vel[0].hypot(w.vel[1]),
         if w.on_ground { "" } else { ", airborne" },
         if wet && w.foot < water.sea.radius - 0.3 {
@@ -134,7 +134,7 @@ fn say_walk(script: &mut Scripted, w: &Walker, ground: &Ground, cost: f64) {
 pub fn toggle_walk(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    ground: Res<Ground>,
+    here: crate::world::Surface,
     walker: Option<Res<OnFoot>>,
     mut cam: Query<&mut Fly, With<Camera3d>>,
     mut status: ResMut<Status>,
@@ -148,15 +148,15 @@ pub fn toggle_walk(
     match walker {
         Some(w) => {
             fly.face(w.0.look(), w.0.dir);
-            fly.at = ground.1 + w.0.eye();
+            fly.at = here.ground.1 + w.0.eye();
             commands.remove_resource::<OnFoot>();
             status.walker = "flying".to_string();
         }
         None => {
-            let local = fly.at - ground.1;
-            let field = ground.0.underfoot(local, 8.0);
+            let local = fly.at - here.ground.1;
+            let field = here.underfoot(local, 8.0);
             let heading = fly.forward().as_dvec3();
-            let mut walker = Walker::enter(&field, &ground.0.bounds, local, heading);
+            let mut walker = Walker::enter(&field, &here.ground.0.bounds, local, heading);
             let right = (fly.rotation * Vec3::X).as_dvec3();
             walker.fwd = (heading - walker.dir * heading.dot(walker.dir))
                 .try_normalize()

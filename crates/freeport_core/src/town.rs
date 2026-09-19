@@ -223,12 +223,20 @@ pub fn lot_frame(planet_radius: f64, town: &Town, x: f64, z: f64) -> Frame {
     }
 }
 
-/// The site a town levels.
+/// The site a town levels: the ground it stands on, right across its own
+/// OUTLINE and an apron past that.
+///
+/// `OUTLINE` and not one radius. A town reaches 2.06 of its nominal
+/// radius (the lobes times the stretch) and `lay` emits lots all the way
+/// out there, so a site written against the radius alone levelled about
+/// the middle half of the town and left the suburbs on bare relief. The
+/// apron covers the half block and half street a lot's own corner stands
+/// past its centre.
 pub fn site_of(town: &Town) -> Site {
     Site {
         dir: town.dir,
         h: town.h,
-        r: town.radius * 2.0 + APRON,
+        r: town.radius * OUTLINE + APRON,
     }
 }
 
@@ -317,7 +325,12 @@ struct Ground {
 /// level across its middle and falls off a cliff at its rim is a site
 /// whose town stands on a pedestal.
 const BEARINGS: usize = 12;
-const RINGS: [f64; 4] = [0.3, 0.6, 0.85, 1.05];
+/// The rings the survey walks, as shares of the town's own OUTLINE, so
+/// the level it settles on is the lowest of the ground the town ACTUALLY
+/// covers. They were shares of the nominal radius out to 1.05, which is
+/// half a town: the level was the lowest of the middle and the ground
+/// the suburbs stood on had never been looked at.
+const RINGS: [f64; 4] = [0.25 * OUTLINE, 0.5 * OUTLINE, 0.75 * OUTLINE, OUTLINE];
 
 /// What the ground does across a site, in `BEARINGS` times `RINGS`
 /// samples plus the middle: forty nine marches.
@@ -420,7 +433,7 @@ pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) ->
         // neighbour as a city stands off its own.
         if placed
             .iter()
-            .any(|p| p.dir.dot(dir) > ((p.radius + radius + BETWEEN) / big_r).cos())
+            .any(|p| p.dir.dot(dir) > (((p.radius + radius) * OUTLINE + BETWEEN) / big_r).cos())
         {
             continue;
         }
@@ -465,7 +478,11 @@ pub(crate) fn settle(
     radius: f64,
 ) -> Option<Placement> {
     let ground = site_ground(planet, sea, dir, h, radius);
-    if ground.fall > radius * LEVEL {
+    // The bound is a SLOPE across whatever the survey walked, so
+    // widening the rings to the town's own outline asks for the same
+    // steepness over more ground rather than silently asking for a
+    // flatter world. `LEVEL` was a fall over the old 1.05 radii.
+    if ground.fall > radius * OUTLINE * (LEVEL / 1.05) {
         return None;
     }
     // And the level it will actually STAND at has to be inside the
@@ -663,11 +680,18 @@ fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> (Vec<Lot>, Vec<u8>) {
             } else {
                 BLOCK - 8.0
             };
-            built[(i + n) as usize * wide + (j + n) as usize] = if zone == Zone::Suburb {
+            built[(i + n) as usize * wide + (j + n) as usize] |= if zone == Zone::Suburb {
                 faces(i, j)
             } else {
                 fronts::ALL
             };
+            // And the road to it is paved all the way IN. A frontage on
+            // its own is a driveway: it paves the one street beside the
+            // block and stops, so a lone suburban house stood at an
+            // isolated rectangle of tarmac that joined nothing.
+            home_run(i, j, |k, m, side| {
+                built[(k + n) as usize * wide + (m + n) as usize] |= side;
+            });
             lots.push(Lot {
                 x: cx + (hash(i, j, 4) - 0.5) * jitter,
                 z: cz + (hash(i, j, 5) - 0.5) * jitter,
@@ -723,7 +747,7 @@ pub fn ground_at(planet: &dyn Density, dir: DVec3, near: f64, far: f64) -> f64 {
 
 mod street;
 pub use street::*;
-use street::{faces, streets_of};
+use street::{faces, home_run, streets_of};
 
 #[cfg(test)]
 mod tests;

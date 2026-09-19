@@ -17,9 +17,11 @@ have actual openings and transparent glazing. The parametric source is
 `docs/buildings-and-streaming.md` describes this workflow and supersedes the older
 runtime building-generation and streamer timeout descriptions below.
 
-The playable system now contains Freeport, Ember, Pelagos and Rime, configured in
-`assets/config/planets.json`. Flight uses a wheel-selected cruise speed, a smooth
-atmospheric limit, and continuous collision against each body's density field.
+The playable system is FREEPORT and nothing else. `assets/config/planets.json`
+still exists and ships EMPTY: it carried Ember, Pelagos and Rime, and they were
+copies, for a reason that is a field nothing reads (the section on the planets
+below). Flight uses a wheel-selected cruise speed, a smooth atmospheric limit,
+and continuous collision against each body's density field.
 `docs/flight-and-planets.md` documents controls, body-local terrain streaming,
 stale-job rejection and the current coarse distant-body rendering limitation.
 
@@ -604,6 +606,35 @@ different one in its own night, and a fourth used a shore read off an
 which moves the towns, which moves where the sun stands, so the log's own
 numbers only mean anything for the settings that printed them.
 
+## The other planets were COPIES, and the reason is a field nothing reads
+
+`assets/config/planets.json` carried Ember, Pelagos and Rime, each with
+its own centre, radius, relief, sea offset, seed and `colour`, and the
+owner's picture of the system showed four bodies that were plainly one
+body at four sizes: green continents on a blue ocean, every one of them.
+
+**They are copies.** Every body is the same `biome::Shape` with a
+different seed and radius, so what differs between two of them is which
+noise they happened to roll and nothing about what KIND of world they
+are. And the one field in that file that was supposed to tell them
+apart does nothing at all: `colour` is written into `DistantMaterial`'s
+`palette` uniform by `planet_view::spawn` and `distant.wgsl` never
+reads it. A body from orbit is painted from its CHART, and a chart is
+baked off `Kind::colour`, which is one table for every world, so a rust
+red planet and an ice planet drew the same greens.
+
+So the file ships EMPTY, which is the owner's own word for what to do
+with them, and it stays the extension point it always was. A body goes
+back into it the day a body can DIFFER, and what that wants is named
+rather than guessed: a per body palette the chart is baked THROUGH, in
+`chart.rs` beside `Kind::colour`, not a uniform beside a shader that
+ignores it. A uniform nothing reads is worse than no uniform, because
+it reads as a knob somebody has already turned.
+
+It also takes the body out of the city's own sky, which is the other
+half of the same picture: a planet hanging over the end of a street,
+drawn from that same chart at a size nothing had measured.
+
 ## A town is where a mesher is judged, and the walker is the judge
 
 This is the MOCKUPS' record, and it is what decided the terrain: the game
@@ -968,6 +999,21 @@ architectural materials retain the normal crease rule.
   picture once the streamer is idle and N frames have run and quits. The
   log says where the port is and what its first lot is, so a picture can be
   aimed at it.
+- **The rings follow the eye's own GROUND at altitude, not the eye.**
+  A box is `2 * HALF` chunks a side centred on what it follows, which is
+  16 km either way at the coarsest on this planet. Followed on the EYE,
+  the ground drops out of the box entirely the moment the eye is higher
+  than that: the owner's picture from 49.4 km up read `0 chunks, 0
+  triangles` over a blurred smear, and the smear was the CHART at six
+  kilometres a texel because there was nothing else left to draw the
+  world with. Measured, the ground was 32,192 m outside a 16,384 m box.
+  `Rings::focus` pulls the centre down toward the eye's own ground past
+  half the coarsest box's width, so what streams is the patch you are
+  looking DOWN at, and
+  `the_ground_is_inside_the_coarsest_box_at_every_altitude` holds 0, 50,
+  1,200, 12,000, 49,400 and 400,000 m up. Nothing about the nesting
+  moved: every level follows the same point, so a finer box is inside
+  its coarser one exactly as it was.
 - **The coarsest box no longer holds the planet, and the CHART is what is
   behind it.** At 5,000 m of radius the 32 km box held the whole world; at
   1,000,000 m it is a patch 16 km either side of the eye. On foot that is
@@ -1167,6 +1213,36 @@ The survey is forty nine marches, twelve bearings on four rings, so the
 level is the lowest of them; a dip between two neighbouring samples is
 the only ground a site can still fill, and how deep that can be is
 bounded by the `LEVEL` fall the site had to pass to be accepted.
+
+**A town is `OUTLINE` (2.06) radii across and THREE numbers said one.**
+The owner's picture was a suburb buried to its eaves with only the roofs
+and the driveways showing, and it is one mistake made three times:
+
+- `site_of` built a site whose band `site_band` then HALVED, so the
+  ground was levelled right across to about one nominal radius.
+- `site_ground` surveyed out to 1.05 of one, so the LEVEL was the lowest
+  of the middle of the town and the ground the suburbs stood on had
+  never been looked at.
+- `lay` emits lots all the way out to 2.06 of one, which is right.
+
+So every lot past about half a town stood on BARE RELIEF with its base
+at the town's level, and the level is the lowest of the survey, so the
+relief out there is HIGHER and the building is under it. Measured on the
+fixture planet: **1.13 m into the ground, and 0.00 m after**, which
+`a_lot_stands_on_its_own_ground_and_is_not_buried` holds. `site.r` is a
+full-level RADIUS now (it was a diameter and one caller thought it was a
+radius), the survey's rings are shares of `OUTLINE`, the levelness bound
+is a SLOPE rather than a fall so widening the survey asks the same
+steepness of more ground, and two towns stand apart by their OUTLINES
+rather than their radii, because two sites that overlap cut into one
+another.
+
+**And the ATLAS had to be re-baked for any of that to reach the game**,
+because what it stores is each town's own LEVEL. A fix to how a level is
+computed that leaves the baked levels alone is a fix nobody sees: the
+six things the atlas is refused on (the name, the seed, the radius, the
+town size, the sea and the octaves) do not include how a site settles,
+and the PROBE only samples bare ground, which this did not move.
 
 **It cost the mesher's own fast path, and that is where the hole was.**
 `local_solid` answered a box wholly inside a site's level region straight
@@ -1450,10 +1526,28 @@ fronted all four at first, which downtown is right about, because its
 neighbours front the same street from the other side and the four merge
 into a grid. A lone suburban house has no neighbours, so it stood in a
 square ring of its own tarmac: a moat, which the picture showed at once
-and the counts did not. `faces` gives a suburb block the ONE side facing
-the middle of town, so a run of them shares a road in and the road leads
-somewhere. The port went from 2,564 pieces of street to 1,540 for the
-same 249 lots.
+and the counts did not. The port went from 2,564 pieces of street to
+1,540 for the same 249 lots.
+
+**Then it fronted the side FACING the middle of town, and the street on
+that side RUNS ACROSS THE WAY HOME.** A house far out along east fronts
+west, which paves a NORTH SOUTH street beside it, and nothing on that
+street leads west: every suburban house came out at an isolated
+rectangle of tarmac joining nothing, which is the owner's second
+picture of the same suburb. `faces` fronts the side whose street runs
+ALONG the axis the middle of town is down, and `home_run` then paves
+that street all the way IN, as an L: out along the axis the block stands
+furthest down, then in along the other. The union of those over every
+built block is the collector network a suburb hangs off, with the two
+axes through the middle as its trunks, and in the dense core it merges
+into the grid that was there anyway.
+
+**A road that serves one house and joins nothing is not a road**, and
+that is a test rather than a picture.
+`every_house_is_on_one_connected_road_network` floods the paving from
+the middle of town on a grid half a street wide and holds every lot
+within half a block of reachable tarmac: **0 stranded**, against 1 on
+the same fixture with `home_run` neutered.
 
 **A road grows VILLAGES along it.** `road::waysides` walks each road's
 own line and drops a settlement wherever it has run `EVERY` (25 km, about
@@ -1506,10 +1600,47 @@ nowhere near a town. It is what makes a planet with cities all over it
 cost a chunk what a planet with eight does, and `flight.rs` was already
 doing it by hand for its own sweep.
 
-**What is MISSING, named rather than hidden:** a town that comes into
-range as you fly is not built, so a far city is its own levelled plateau
-with no buildings on it until town streaming lands. The chunk streamer
-already does exactly this for ground and the shape of it is the same.
+**A town is BUILT when the EYE comes near it**, which is `city::stream`,
+and it was picked once at startup. Every town on the body is planned
+from the first frame: it levels its own ground in the planet's field and
+the chart paints it. What streams is the BUILDINGS, one town built a
+frame and one dropped a frame, which is the rule `stream.rs` keeps for
+the ground and `lamps.rs` for the lights. The owner read the gap off
+two pictures side by side: a chart with a hundred and sixty cities on it
+and ground with nothing standing on it, and driving to the next town
+arriving at an empty field.
+
+It cost a split that was owed anyway. `World` is behind an `Arc` the
+mesher's workers hold and it carried the collision boxes, the lamps and
+the built list, all of which change now. `Fabric` is those three, PER
+BUILT TOWN rather than one flat vector with ranges into it: a range
+cannot be taken out of the middle without moving every range after it,
+and a town going out of range does exactly that. The PLANET never
+changes, so not one chunk is remeshed when a town arrives, which is the
+whole reason sites are planned for every town from the start.
+
+**Every index that names a town is the PLANNED one.** A lamp is its town
+and its place in that town's own list; a crowd and a theft read the
+built set every frame and skip what is not in it. A slot in the built
+list would name a different thing the moment a town went out of range.
+
+**And a reach bounds the count, which the count cannot bound itself.**
+`TOWNS_REACH` is 200 km: without it the nearest eight are built however
+far off they are, which is eight cities' triangles held for a view of
+open ocean.
+
+**A distance to a town is along the GROUND**, the angle between two
+directions times the radius. Written as the straight line to a point on
+the MEAN radius it adds the eye's own altitude to every distance, and
+the town under the walker's feet read as 1,113 m away. That is the
+`cars_near` mistake of the commit before it, in a new place, which is
+what makes it a rule rather than a slip: a position multiplied by a
+radius it already carries is not a distance to anything but the centre.
+
+**What is MISSING, named rather than hidden:** a road is DATA and there
+is no ribbon on the ground, so driving between two towns is driving
+cross country on ground a road was routed over. The section on the roads
+below has the shape of what is left.
 
 Measured: 160 cities and 544 roadside villages planned and BAKED in
 23.8 s (20,000 candidates), 704 settlements from 180 m across down to 23,
@@ -1797,6 +1928,36 @@ flag that photographs nothing most of the time it is used.
 and the same rule as getting out of it: fly to another planet and the
 car stays parked where it was rather than being drawn against that
 planet's radius and centre, and it is still there when you come back.
+
+**A car STEERS TOWARD somewhere**, which is what a drive between two
+towns is made of. `Driver::toward` is the bearing off the car's own
+NOSE to a place, as a wheel position, and a bearing rather than a
+heading difference because a heading is a tangent vector and two of
+them at two points of a sphere are not in the same plane. It is full
+lock past `AIM` (a quarter turn) and eases in, so a car does not saw at
+the wheel about its own line. Measured on the test ball: 199.3 m closed
+to 10.2 m in thirty seconds.
+
+**And `--drive N` is N SECONDS aimed at the nearest settlement that is
+not the one it is standing in.** Driving straight ahead measures the
+CAR and says nothing about whether the world has anywhere to drive TO,
+which is what the owner actually asked for. It steps a second of
+driving per rendered FRAME, in sixtieths: a frame of this world on a
+software rasteriser is most of a second, so a scripted drive stepped one
+sixtieth a frame covers 480 m in half an hour of rendering and the
+nearest settlement is nine kilometres off. The step stays a sixtieth,
+which is what keeps the drive the same drive on any machine, and the
+wheel is re-read every sub step, or the car holds one bearing for a
+whole second and weaves round its own line at sixteen metres a second.
+
+**The HUD says the speed you are GOING.** It led with the WHEEL's own
+setting, which near the ground is a number the air never allows:
+`Planets::advance` tapers a cruise down to `surface_speed` and already
+RETURNED the speed it applied, and `fly` threw that away. The readout
+leads with the measured speed, names the wheel beside it, says when the
+air is holding it down, and prints anything over a kilometre a second in
+km/s, because two million metres a second is a number nobody can hold
+and is the same speed as 2,000 km/s.
 
 **What is MISSING, named rather than hidden.** A stolen car does not
 collide with anything that MOVES, so it drives through townsmen and
@@ -2388,8 +2549,8 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 132, the core, about 39 s
-cargo test -p freeport_app                        # 43, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 136, the core, about 38 s
+cargo test -p freeport_app                        # 45, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
@@ -2413,6 +2574,13 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 # the town going past. `--drive` is E and then W held, since a headless
 # run can press neither.
 ./target/release/freeport_app --octaves 14 --levels 9 --drive 300 --frames 320 --shot stolen.png
+# And DRIVE TO THE NEXT TOWN. `--drive N` is N SECONDS aimed at the
+# nearest settlement that is not the one it stands in, a second a
+# rendered frame. The OCTAVES are left alone, because the atlas is
+# refused at any other count and a body with no villages and no roads on
+# it is the one thing this picture is of: at 14 there are 160 towns
+# hundreds of kilometres apart and nowhere to drive to.
+./target/release/freeport_app --levels 7 --drive 800 --frames 810 --shot trip.png
 # The body from orbit, lit: `--sunward N` stands N radii off along the SUN
 # and looks at the centre, which is the only way to aim this that works.
 # The sun stands over wherever the world starts, so where it is depends on
@@ -2465,7 +2633,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 132 tests in about 39 s, and `freeport_app` 43 in 4. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 136 tests in about 38 s, and `freeport_app` 45 in 4. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -2596,6 +2764,33 @@ Numbers in the commit message. What is measured so far:
   picture moved), and the sea's wants a noise that takes a cell and a
   fraction. On a five kilometre planet the same step is half a millimetre,
   which is why every earlier picture looked right.
+- **A lot's own base against the ground under it**, on the fixture
+  planet: 1.13 m INTO the ground with the site levelling one radius and
+  the survey walking 1.05 of one, and 0.00 m with both at the town's
+  own `OUTLINE` of 2.06. The worst a lot now floats is 0.12 m, which is
+  a dip between two neighbouring survey samples and is the one thing
+  the design already said a site can still fill.
+- **Houses stranded off the road network**, flooding the paving from the
+  middle of town: 0, against 1 of the fixture's 11 lots with `home_run`
+  neutered. On the harness planet the port lays 1,821 pieces of street
+  for 224 buildings.
+- **The ground at altitude**: at 49.4 km up the surface stood 32,192 m
+  outside a 16,384 m box and NOTHING streamed, which is what the owner's
+  `0 chunks, 0 triangles` said. Followed on the eye's own ground it is
+  inside the box at 0, 50, 1,200, 12,000, 49,400 and 400,000 m up.
+- **The atlas re-baked on the corrected town rules**: 1084 settlements
+  (160 cities and 924 villages) and 310 roads over 63,840 km joining 153
+  of them, planned in 23.9 s and read back in 34 ms. The nearest
+  settlement to the port is 9.01 km off and the median nearest
+  neighbour over 400 of them is 19.1 km, which is ten and twenty minutes
+  at the car's own 58 km/h. It was 704 settlements and 297 roads.
+- **A town BUILT as the eye comes near it**, on the harness planet: town
+  0 is 224 buildings, 1,821 pieces of street, 51,539 collision boxes and
+  448 lamps, and the eight within the 200 km reach are built one a
+  frame. Town 160, the 9 km village, is 31 buildings and 5,739 boxes.
+- **A car steering toward a place**, on the test ball: 199.3 m closed to
+  10.2 m in thirty seconds, with the wheel full over past a quarter turn
+  off the nose and nought dead ahead.
 - The traffic on the harness planet: the 8 BUILT towns turn out 300
   people and 76 cars, of which the nearest 32 and 14 are ever entities.
   The other 765 settlements on the body turn out nobody at all, because

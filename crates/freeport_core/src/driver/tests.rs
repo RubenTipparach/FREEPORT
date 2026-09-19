@@ -300,3 +300,54 @@ fn the_seat_is_in_the_car_and_the_door_is_beside_it() {
         "a direction that is not a direction"
     );
 }
+
+/// A car STEERS TOWARD somewhere, which is what a drive between two
+/// towns is made of. The wheel goes hard over for a place behind, eases
+/// as the nose comes round, and reads nought dead ahead.
+#[test]
+fn a_car_steers_toward_where_it_is_going_and_straightens_when_it_is_aimed() {
+    let field = world(&[]);
+    let bounds = bounds();
+    let dir = DVec3::Y;
+    let mut car = car(&field, &bounds);
+    let ahead = (dir + car.fwd * 0.01).normalize();
+    assert!(
+        car.toward(ahead).abs() < 0.05,
+        "dead ahead asks for {:.3} of lock",
+        car.toward(ahead)
+    );
+    let left = (dir - car.right() * 0.01).normalize();
+    let right = (dir + car.right() * 0.01).normalize();
+    assert!(
+        car.toward(left) > 0.9,
+        "hard left is {:.2}",
+        car.toward(left)
+    );
+    assert!(
+        car.toward(right) < -0.9,
+        "hard right is {:.2}",
+        car.toward(right)
+    );
+    // And driving with the wheel on that bearing CLOSES on the place.
+    // Two hundred metres off, which is far enough that closing means
+    // something: a car turns inside 4.8 m, so a goal eight metres away
+    // is one it orbits rather than arrives at.
+    let goal = (dir + car.right() * 0.1).normalize();
+    let start = car.dir.angle_between(goal) * R;
+    for _ in 0..1800 {
+        let steer = car.toward(goal);
+        car.update(
+            &field,
+            &bounds,
+            &Drive {
+                throttle: 1.0,
+                steer,
+                brake: false,
+            },
+            1.0 / 60.0,
+        );
+    }
+    let end = car.dir.angle_between(goal) * R;
+    println!("closed from {start:.1} m to {end:.1} m in thirty seconds");
+    assert!(end < 20.0, "closed {start:.1} m to {end:.1} m only");
+}

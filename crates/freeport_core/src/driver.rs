@@ -52,6 +52,11 @@ const CLIMB: f64 = 0.3;
 /// What is left of the speed when the car hits something square on.
 const CRASH: f64 = 0.15;
 const GRAVITY: f64 = 9.81;
+/// How far off the nose a place has to be for FULL lock, radians. A
+/// quarter turn: anything further round and the wheel is hard over
+/// anyway, and anything nearer eases off, so a car does not saw at the
+/// wheel about its own line.
+const AIM: f64 = std::f64::consts::FRAC_PI_4;
 /// The driver's eye over the road, metres, and where a body gets out.
 pub const SEAT: f64 = 1.15;
 pub const DOOR: f64 = 1.5;
@@ -166,6 +171,24 @@ impl Driver {
     /// also the oncoming lane.
     pub fn kerbside(&self, radius: f64) -> DVec3 {
         (self.dir + self.right() * ((CAR_WIDE * 0.5 + DOOR) / radius)).normalize()
+    }
+
+    /// Which way the wheel has to go to point the car at `goal`, -1 to
+    /// 1, and nought once it is aimed there.
+    ///
+    /// A bearing error rather than a heading difference, because a
+    /// heading is a tangent vector and two of them at two places on a
+    /// sphere are not in the same plane: what a driver actually reads
+    /// is how far off his own nose the place he is going sits.
+    pub fn toward(&self, goal: DVec3) -> f64 {
+        let want = (goal - self.dir * goal.dot(self.dir)).normalize_or_zero();
+        if want.length_squared() < 0.5 {
+            return 0.0;
+        }
+        // Left is positive, which is what `steer` is: the angle off the
+        // nose, measured about the local up.
+        let off = want.dot(-self.right()).atan2(want.dot(self.fwd));
+        (off / AIM).clamp(-1.0, 1.0)
     }
 
     /// How tight a turn the wheels are asking for at this speed, radians

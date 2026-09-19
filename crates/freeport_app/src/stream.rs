@@ -215,10 +215,13 @@ impl Streamer {
         if self.building {
             return;
         }
-        let adapted = self
-            .rings
-            .adapt(&self.lat, (-world.planet.at(eye)).max(0.0));
-        if !self.rings.follow(&self.lat, eye) && !adapted && !self.fresh {
+        let height = (-world.planet.at(eye)).max(0.0);
+        let adapted = self.rings.adapt(&self.lat, height);
+        // The boxes follow the eye's own GROUND at altitude, not the
+        // eye: a box that is sixteen kilometres either way holds no
+        // terrain at all once the eye is higher than that.
+        let focus = self.rings.focus(&self.lat, eye, height);
+        if !self.rings.follow(&self.lat, focus) && !adapted && !self.fresh {
             return;
         }
         let sent = self.planner.request(Request {

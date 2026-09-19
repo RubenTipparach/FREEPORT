@@ -147,8 +147,9 @@ fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
     k * k * (3.0 - 2.0 * k)
 }
 
-/// A site's levelling blends out to the relief over a skirt this far
-/// inside and outside half its reach, metres.
+/// How wide a site's levelling takes to blend out to the relief, metres.
+/// Kept as two numbers because the slope bound below reads their sum and
+/// a skirt that narrowed would be a cliff the mesher could not close.
 const SKIRT_IN: f64 = 5.0;
 const SKIRT_OUT: f64 = 6.0;
 
@@ -156,9 +157,20 @@ const SKIRT_OUT: f64 = 6.0;
 /// across, and the arc past which it is the relief again, metres. The one
 /// place the skirt's two widths are read, so a shader handed this pair is
 /// applying the same rule `Planet::site_weight` does rather than a second
-/// copy of two constants (`field.wgsl`'s `site_weight` is that shader).
+/// copy of two constants.
+///
+/// **`site.r` is the radius the ground is FULLY level inside**, and it
+/// was half that. The first cut read `site.r * 0.5 - SKIRT_IN`, which is
+/// the right band for a `site.r` that means a DIAMETER, and `site_of`
+/// was handing it a radius: a town was levelled right across to about
+/// its own nominal radius while its lots reach `town::OUTLINE` (2.06) of
+/// one. Everything past that stood on bare relief with its base at the
+/// town's level, and the level is the LOWEST of the site's own survey,
+/// so the relief out there is HIGHER and the building is under it. The
+/// owner's picture was a suburb buried to its eaves with only the roofs
+/// and the driveways showing.
 pub fn site_band(site: &crate::town::Site) -> (f64, f64) {
-    (site.r * 0.5 - SKIRT_IN, site.r * 0.5 + SKIRT_OUT)
+    (site.r, site.r + SKIRT_IN + SKIRT_OUT)
 }
 
 impl Planet {
@@ -814,9 +826,15 @@ mod tests {
             r: 100.0,
         }];
         let bound = planet.slope();
+        // Walk the SKIRT itself, read off `site_band` rather than
+        // written out: a fixture that spells the band as two numbers is
+        // a fixture that samples level ground the day the band moves,
+        // and level ground has no slope to bound.
+        let (inner, outer) = site_band(&planet.sites[0]);
+        let (from, span) = (inner - 10.0, (outer - inner) + 20.0);
         let mut worst = 0.0f64;
         for i in 0..400 {
-            let dist = 35.0 + 35.0 * i as f64 / 400.0;
+            let dist = from + span * i as f64 / 400.0;
             let a = dist / planet.radius;
             let dir = DVec3::new(a.sin(), 0.0, a.cos());
             for k in 0..5 {

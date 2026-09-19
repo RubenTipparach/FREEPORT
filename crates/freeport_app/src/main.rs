@@ -62,7 +62,7 @@ use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use drive::{board, drive_car, show_cars, Thefts};
+use drive::{aim_drive, board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
@@ -143,12 +143,20 @@ const TOWN_RADIUS: f64 = 170.0;
 /// spacing is 280 km, so a reach of ninety thousand metres built exactly
 /// one of them.
 ///
-/// What is MISSING and named rather than hidden: a town that comes into
-/// range as you fly is not built, so a far city is its own levelled
-/// plateau with no buildings on it until town streaming lands. The chunk
-/// streamer already does exactly this for ground and the shape of it is
-/// the same.
+/// The set FOLLOWS THE EYE (`city::stream`), so a town that comes over
+/// the horizon as you drive is built and the one behind you is dropped.
+/// It was picked ONCE, nearest to where the world happened to begin, so
+/// every other city on the body was a levelled plateau with a mark on
+/// the chart and nothing standing on it, and driving to the next town
+/// arrived at an empty field.
 const TOWNS_BUILT: usize = 8;
+/// How far a town may be and still be BUILT, metres.
+///
+/// The count on its own would drag eight towns across an ocean to keep
+/// itself full, which is eight cities' triangles held for a view of
+/// water. Two hundred kilometres is about the horizon from the top of
+/// the atmosphere and a good deal past what a car can see.
+const TOWNS_REACH: f64 = 200_000.0;
 /// The world's seed.
 const SEED: u32 = 7;
 /// Ten levels at 0.5 m preserve the previous 32.8 km streaming box while
@@ -295,6 +303,7 @@ fn main() {
     .init_resource::<Frame>()
     .init_resource::<Status>()
     .init_resource::<Thefts>()
+    .init_resource::<drive::Goal>()
     .init_resource::<flight_bench::Benchmark>()
     .add_systems(
         Startup,
@@ -329,6 +338,7 @@ fn tick(app: &mut App) {
                     toggle_walk,
                     board,
                     walk,
+                    aim_drive,
                     drive_car,
                     fly,
                     flight_bench::drive,
@@ -336,6 +346,7 @@ fn tick(app: &mut App) {
                     rebase_origin,
                     planet_view::recentre,
                     city::update_lod,
+                    city::stream::stream_towns,
                     stream,
                     flight_bench::after_stream,
                     light_lamps,
@@ -436,7 +447,7 @@ fn spawn_world(
         mut skies,
         mut standard,
     } = assets;
-    let (world, towns) = world::build(&args);
+    let world = world::build(&args);
     let (start_eye, start_look) = aim(&world, &args);
     // The sun, worked out while the world is still here to ask: it is a
     // fact about where the WALKER starts, and `start_eye` is wherever the
@@ -461,26 +472,25 @@ fn spawn_world(
     let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
     let sheet = water_material(&mut waters, SEA);
     say_world(&world, start_eye, &lat, args.levels);
-    // The people and the cars on their streets. Built from the same
-    // towns, so a crowd exists exactly where the buildings do.
+    // The people and the cars on their streets. It is handed the PLANNED
+    // towns and turns a crowd out only on the ones standing, which the
+    // town streamer moves: a townsman walking a street nobody has laid
+    // the buildings of stands on a bare levelled plateau.
     traffic::turn_out(
         &mut commands,
         0,
-        &world.built,
+        &world.towns,
         SEED,
         &mut meshes,
         &mut standard,
     );
-    // The towns are drawn once and never again: models, not chunks.
-    city::spawn_towns(
-        &mut commands,
-        &mut meshes,
-        &material,
-        &Frame::default(),
-        SEA,
-        towns,
-        &mut standard,
-    );
+    // The towns are BUILT by `city::stream`, one at a time, following
+    // the eye. Nothing is raised here.
+    commands.insert_resource(city::stream::Library(buildings::Library::load()));
+    commands.insert_resource(city::Glazing::new(&mut standard));
+    commands.insert_resource(terrain::Ground3d(material.clone()));
+    commands.init_resource::<world::Fabric>();
+    commands.init_resource::<city::stream::Building>();
     let mut planets = planets::Planets::load(Arc::new(world));
     planets.bodies[0].material = material;
     planets.bodies[0].water = sheet;
@@ -654,7 +664,11 @@ fn spawn_camera(
     let world = &body.world;
     let fly = Fly::new(eye, d, local.normalize_or(DVec3::Y), flight.speed);
     if !args.fly {
-        let w = Walker::enter(&world.underfoot(local, 8.0), &world.bounds, local, d);
+        // The BARE ground: nothing is built yet on the frame the camera
+        // is spawned, because `city::stream` raises the first town on
+        // the frame after. `world::start` puts the walker on a STREET,
+        // so the town arriving under him does not arrive inside him.
+        let w = Walker::enter(&world.ground(), &world.bounds, local, d);
         commands.insert_resource(OnFoot(w));
     }
     commands.spawn((

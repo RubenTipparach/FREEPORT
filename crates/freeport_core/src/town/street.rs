@@ -145,25 +145,55 @@ pub const LIFT: f64 = 0.05;
 /// A street's RUN between two crossings is laid in pieces about this
 /// long, each on its own patch of the sphere.
 pub const PIECE: f64 = 3.5;
-/// The one side a suburban block fronts: the one facing the middle of
-/// town, so a run of them shares a road in and the road leads somewhere.
+/// The one side a suburban block fronts: the side its road home is on.
 ///
 /// A suburb block used to front all four sides like a downtown one, and
 /// a lone house with nothing built beside it then stood in a square ring
-/// of its own tarmac. The owner would have read that off the picture as
-/// a moat, and the picture is where it showed: the numbers said the town
-/// had streets and it did.
+/// of its own tarmac: a moat.
+///
+/// What replaced that fronted the side FACING the middle of town, and
+/// that is the wrong side, because the street on it RUNS ACROSS the way
+/// home: a house far out along east fronted west, which paves a NORTH
+/// SOUTH street beside it, and nothing on that street leads west. Every
+/// suburban house came out with an isolated rectangle of tarmac at its
+/// door, which is what the owner's picture showed. The side to front is
+/// the one whose street runs ALONG the axis the middle of town is down,
+/// and `home_run` is then what carries that street all the way in.
 pub(super) fn faces(i: i64, j: i64) -> u8 {
     if i.abs() >= j.abs() {
-        if i > 0 {
-            fronts::WEST
-        } else {
-            fronts::EAST
-        }
-    } else if j > 0 {
+        // Far out along east: the road home runs east and west, which is
+        // the street on this block's own south side.
         fronts::SOUTH
     } else {
-        fronts::NORTH
+        fronts::WEST
+    }
+}
+
+/// Every block whose frontage has to be paved so that the block at
+/// `(i, j)` can be DRIVEN TO from the middle of town, as an L: out along
+/// the axis it stands furthest down, then in along the other.
+///
+/// A road that serves one house and joins nothing is not a road. The
+/// union of these over every built block is the collector network a
+/// suburb hangs off: the ribs are the rows and columns somebody built
+/// on and the two trunks are the axes through the middle, and in the
+/// dense core they merge into the grid that was there anyway.
+pub(super) fn home_run(i: i64, j: i64, mut mark: impl FnMut(i64, i64, u8)) {
+    let between = |a: i64, b: i64| a.min(b)..=a.max(b);
+    if i.abs() >= j.abs() {
+        for k in between(0, i) {
+            mark(k, j, fronts::SOUTH);
+        }
+        for m in between(0, j) {
+            mark(0, m, fronts::WEST);
+        }
+    } else {
+        for m in between(0, j) {
+            mark(i, m, fronts::WEST);
+        }
+        for k in between(0, i) {
+            mark(k, 0, fronts::SOUTH);
+        }
     }
 }
 

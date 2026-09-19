@@ -1,6 +1,8 @@
 //! Town meshes baked by Blender, batched per town and selected by distance.
 //! Collision always uses the full bake, independent of the visible LOD.
 
+pub mod stream;
+
 use crate::stream::{Anchored, Frame};
 use crate::terrain::{to_mesh_filtered, TerrainMaterial, Vertex};
 use crate::world::TownMesh;
@@ -21,27 +23,45 @@ pub struct Built {
     radius: f64,
 }
 
-pub fn spawn_towns(
+/// The glazing material, made once and kept, because a town is spawned
+/// whenever one comes into range and a material a spawn is a material a
+/// drive leaks.
+#[derive(Resource)]
+pub struct Glazing(pub Handle<StandardMaterial>);
+
+impl Glazing {
+    pub fn new(standard: &mut Assets<StandardMaterial>) -> Self {
+        Glazing(standard.add(StandardMaterial {
+            base_color: Color::srgba(0.55, 0.72, 0.78, 0.18),
+            perceptual_roughness: 0.12,
+            reflectance: 0.5,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        }))
+    }
+}
+
+/// Spawn ONE town's geometry, as a parent carrying its LOD meshes and
+/// its glazing, and answer the parent so the streamer can despawn it
+/// again when the town goes out of range.
+pub fn spawn_town(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     material: &Handle<TerrainMaterial>,
     frame: &Frame,
     sea: f64,
-    towns: Vec<TownMesh>,
-    standard: &mut Assets<StandardMaterial>,
-) {
-    let glass = standard.add(StandardMaterial {
-        base_color: Color::srgba(0.55, 0.72, 0.78, 0.18),
-        perceptual_roughness: 0.12,
-        reflectance: 0.5,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
-        double_sided: true,
-        ..default()
-    });
-    for town in towns {
+    town: TownMesh,
+    glass: &Glazing,
+) -> Entity {
+    let glass = &glass.0;
+    let parent = commands
+        .spawn((Transform::default(), Visibility::default()))
+        .id();
+    {
         let Some(bounds) = lod_bounds(&town.meshes) else {
-            continue;
+            return parent;
         };
         let at = WorldPos(town.frame.world(DVec3::ZERO));
         let basis = Mat3::from_cols(
@@ -104,8 +124,11 @@ pub fn spawn_towns(
             } else {
                 entity.insert(MeshMaterial3d(material.clone()));
             }
+            let child = entity.id();
+            commands.entity(parent).add_child(child);
         }
     }
+    parent
 }
 
 /// All three LODs share this local-space bound, independent of material updates.

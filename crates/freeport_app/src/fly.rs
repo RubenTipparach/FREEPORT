@@ -176,6 +176,17 @@ pub(crate) struct FlightScene<'w> {
     planets: Option<ResMut<'w, crate::planets::Planets>>,
 }
 
+/// A speed a player can read: metres a second on foot and at a landing,
+/// kilometres a second between planets. Two million metres a second is a
+/// number nobody can hold, and it is the same speed as 2,000 km/s.
+fn pace(v: f64) -> String {
+    if v.abs() >= 1000.0 {
+        format!("{:.1} km/s", v / 1000.0)
+    } else {
+        format!("{v:.1} m/s")
+    }
+}
+
 fn wheel_lines(wheel: &MouseWheel) -> f32 {
     match wheel.unit {
         MouseScrollUnit::Line => wheel.y,
@@ -215,6 +226,9 @@ pub(crate) fn fly(
 ) {
     let look = controls.look();
     let lines: f32 = wheel.read().map(wheel_lines).sum();
+    // What the air will actually ALLOW this frame, which is what the
+    // readout leads with.
+    let mut allowed = f64::INFINITY;
     // On foot OR at the wheel: either way the fly camera is not what
     // owns the eye, and it writes `Eye` every frame, so reading only the
     // walker here is what put the camera back in the air the moment a
@@ -262,7 +276,7 @@ pub(crate) fn fly(
             let direction = (fly.rotation * local.normalize_or_zero())
                 .as_dvec3()
                 .normalize_or_zero();
-            let (at, _) = planets.advance(
+            let (at, cap) = planets.advance(
                 fly.at,
                 direction,
                 speed,
@@ -275,6 +289,7 @@ pub(crate) fn fly(
             } else {
                 0.0
             };
+            allowed = cap;
             fly.at = at;
         } else {
             fly.travel(local, speed * dt);
@@ -282,16 +297,39 @@ pub(crate) fn fly(
         }
     }
     eye.0 = WorldPos(fly.at);
-    status.walker = format!(
-        "fly {actual:.1} m/s | cruise {:.1} m/s{} | wheel speed, Q/E roll, Space/Ctrl rise/sink, R level",
-        fly.speed, if boost { " + boost" } else { "" },
+    status.walker = readout(&fly, &scene, actual, allowed, boost);
+}
+
+/// What the HUD says about a frame of flight.
+///
+/// **The speed it leads with is the speed you are GOING.** It used to
+/// lead with the WHEEL's own setting, which is a number the air almost
+/// never lets you have: near the ground `Planets::advance` tapers a
+/// cruise down to `surface_speed`, so the readout said two million
+/// metres a second while the ship crawled, and nothing said which of
+/// the two was a lie. `advance` already returned the speed it applied
+/// and `fly` was throwing it away.
+fn readout(fly: &Fly, scene: &FlightScene, actual: f64, allowed: f64, boost: bool) -> String {
+    let wheel = fly.speed * if boost { scene.settings.boost } else { 1.0 };
+    let held = allowed.min(wheel);
+    let limited = held < wheel * 0.999 && held.is_finite();
+    let mut out = format!(
+        "fly {} | wheel {}{}{} | Q/E roll, Space/Ctrl rise/sink, R level",
+        pace(actual),
+        pace(fly.speed),
+        if boost { " + boost" } else { "" },
+        if limited {
+            format!(", air holds it to {}", pace(held))
+        } else {
+            String::new()
+        },
     );
     if let Some(planets) = &scene.planets {
         if let (Some(body), Some(target)) = (
             planets.bodies.get(planets.nearest(fly.at)),
             planets.bodies.get(planets.target),
         ) {
-            status.walker.push_str(&format!(
+            out.push_str(&format!(
                 "\n{}: {:.1} km altitude | target {}: {:.1} km | N next planet, G face target",
                 body.name,
                 body.altitude(fly.at) / 1000.0,
@@ -300,6 +338,7 @@ pub(crate) fn fly(
             ));
         }
     }
+    out
 }
 
 #[cfg(test)]
