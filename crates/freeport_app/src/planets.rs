@@ -13,6 +13,24 @@ use freeport_core::water::Sea;
 use serde::Deserialize;
 use std::sync::Arc;
 
+/// The OTHER bodies of the system, read off `assets/config/planets.json`.
+///
+/// **It ships EMPTY, and the reason is a field nothing reads.** It
+/// carried Ember, Pelagos and Rime, and the owner's picture of the
+/// system showed four bodies that were plainly copies of one another:
+/// green continents on a blue ocean at three sizes. They are copies.
+/// Every body is the same `biome::Shape` with a different seed and
+/// radius, and the one thing in the file that was supposed to tell them
+/// apart, `colour`, reaches `DistantMaterial`'s `palette` uniform and
+/// is read by NOTHING: `distant.wgsl` paints a body from its chart, and
+/// a chart is baked off `Kind::colour`, which is one table for every
+/// world. A rust red planet and an ice planet drew the same greens.
+///
+/// So the copies are gone rather than reskinned, which is the owner's
+/// own word for them. The file stays as the extension point it always
+/// was, and a body goes back in it the day a body can differ: what that
+/// wants is a per body palette the CHART is baked through, not a
+/// uniform beside it.
 #[derive(Deserialize)]
 struct Definition {
     name: String,

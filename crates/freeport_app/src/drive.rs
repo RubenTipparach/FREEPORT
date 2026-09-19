@@ -203,7 +203,7 @@ fn nearest_agent(
 /// then sits.
 pub fn drive_car(
     controls: Controls,
-    args: Res<Args>,
+    script: Script,
     here: crate::world::Surface,
     mut thefts: ResMut<Thefts>,
     mut eye: ResMut<Eye>,
@@ -227,16 +227,21 @@ pub fn drive_car(
     // which is `--walk`'s own rule and for the same reason: the frame's
     // own delta on a software rasteriser is most of a second and a car
     // that moves nine metres a frame measures nothing.
-    let run = left.get_or_insert(args.drive);
+    let run = left.get_or_insert(script.args.drive);
+    let car = &mut thefts.cars[k].car;
     if *run > 0 {
+        // A scripted drive goes SOMEWHERE: the nearest settlement that
+        // is not the one it is standing in. Driving straight ahead
+        // measures the car and says nothing about whether the world has
+        // anywhere to drive TO, which is what the owner asked for.
         input = Drive {
             throttle: 1.0,
+            steer: script.goal.0.map_or(0.0, |g| car.toward(g)),
             ..Default::default()
         };
         dt = 1.0 / 60.0;
         *run -= 1;
     }
-    let car = &mut thefts.cars[k].car;
     let field = here.underfoot(car.dir * car.foot, 12.0);
     // A car floats on nothing: the sea is where a stolen car stops, so
     // the bounds it drives against carry no water to be held up by.
@@ -247,10 +252,66 @@ pub fn drive_car(
     car.update(&field, &bounds, &input, dt);
     eye.0 = WorldPos(here.centre() + chase(car));
     status.walker = format!(
-        "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel",
+        "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel{}",
         car.foot - here.world().planet.radius,
         car.speed.abs() * 3.6,
         if car.on_ground { "" } else { ", airborne" },
+        script.goal.0.map_or(String::new(), |g| format!(
+            " | {} {:.2} km off",
+            script.goal.1,
+            car.dir.angle_between(g) * here.world().planet.radius / 1000.0
+        )),
+    );
+}
+
+/// What a SCRIPTED drive is: the flags it was given and where it is
+/// headed. One thing, because they are one question and asking it as
+/// two took `drive_car` over Bevy's own parameter limit.
+#[derive(SystemParam)]
+pub struct Script<'w> {
+    args: Res<'w, Args>,
+    goal: Res<'w, Goal>,
+}
+
+/// Where a scripted drive is HEADED: the nearest settlement that is not
+/// the one the car is standing in, and its own name.
+///
+/// It is worked out once and kept, because the nearest town changes the
+/// moment you arrive at it and a car that re-picked every frame would
+/// turn round in the street it had just reached.
+#[derive(Resource, Default)]
+pub struct Goal(pub Option<DVec3>, pub String);
+
+/// Pick that goal, once, when a scripted drive begins.
+pub fn aim_drive(
+    args: Res<Args>,
+    here: crate::world::Surface,
+    thefts: Res<Thefts>,
+    mut goal: ResMut<Goal>,
+) {
+    if args.drive == 0 || goal.0.is_some() {
+        return;
+    }
+    let Some(car) = thefts.driving() else { return };
+    let radius = here.world().planet.radius;
+    let at = car.car.dir;
+    let mut best: Option<(f64, usize)> = None;
+    for (k, town) in here.world().towns.iter().enumerate() {
+        let gone = town.dir.angle_between(at) * radius;
+        // Past the town it is standing IN, whose own streets are the
+        // ground under the wheels.
+        if gone < town.radius * freeport_core::town::OUTLINE + 200.0 {
+            continue;
+        }
+        if best.is_none_or(|(d, _)| gone < d) {
+            best = Some((gone, k));
+        }
+    }
+    let Some((gone, k)) = best else { return };
+    *goal = Goal(Some(here.world().towns[k].dir), format!("town {k}"));
+    info!(
+        "driving for town {k}, {:.2} km off over the ground",
+        gone / 1000.0
     );
 }
 

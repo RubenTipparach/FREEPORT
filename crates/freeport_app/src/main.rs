@@ -62,7 +62,7 @@ use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use drive::{board, drive_car, show_cars, Thefts};
+use drive::{aim_drive, board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
@@ -303,6 +303,7 @@ fn main() {
     .init_resource::<Frame>()
     .init_resource::<Status>()
     .init_resource::<Thefts>()
+    .init_resource::<drive::Goal>()
     .init_resource::<flight_bench::Benchmark>()
     .add_systems(
         Startup,
@@ -337,6 +338,7 @@ fn tick(app: &mut App) {
                     toggle_walk,
                     board,
                     walk,
+                    aim_drive,
                     drive_car,
                     fly,
                     flight_bench::drive,
