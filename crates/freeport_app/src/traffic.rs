@@ -137,6 +137,49 @@ pub struct Rider {
     ride: Ride,
 }
 
+/// A WHEEL of a car: its radius, so it can be turned by how far the car
+/// it hangs off has actually come.
+///
+/// A component and a system of its own rather than a `Ride`, because
+/// there are two things that move a car (the rails and a driver) and a
+/// wheel does not care which: what it reads is `Travelled` on its own
+/// parent. One rule and one code path, which is this project's own
+/// answer to two callers that would otherwise each pose their own.
+#[derive(Component, Clone, Copy)]
+pub struct Wheel {
+    pub radius: f32,
+    pub at: Vec3,
+}
+
+/// How far the thing this is on has come, metres. Written by whatever
+/// moves it and read by `spin_wheels`.
+#[derive(Component, Clone, Copy, Default)]
+pub struct Travelled(pub f64);
+
+/// Turn every wheel by the ground that has gone past it.
+///
+/// `figure::roll` is `along / radius`, which is what a wheel that is not
+/// sliding does by definition, and it is measured in METRES like the
+/// gait, so a car that has stopped has stopped its wheels and nothing
+/// here needs a clock of its own.
+pub fn spin_wheels(
+    cars: Query<(&Travelled, &Children)>,
+    mut wheels: Query<(&Wheel, &mut Transform)>,
+) {
+    for (gone, kids) in &cars {
+        for kid in kids.iter() {
+            let Ok((wheel, mut tf)) = wheels.get_mut(kid) else {
+                continue;
+            };
+            tf.translation = wheel.at;
+            tf.rotation = Quat::from_rotation_x(freeport_core::figure::roll(
+                gone.0,
+                wheel.radius as f64,
+            ) as f32);
+        }
+    }
+}
+
 /// What the gait does to this entity.
 enum Ride {
     /// The whole figure: it takes the world place and the heading.
@@ -158,6 +201,8 @@ pub struct Crowds {
     folk: Vec<[Handle<Mesh>; 3]>,
     /// Per tint: the car, less its lamps.
     cars: Vec<Handle<Mesh>>,
+    /// The four wheels, one mesh each with its pivot and its radius.
+    wheels: Vec<(Handle<Mesh>, Vec3, f32)>,
     /// The lamps of a car, a mesh and a material a KIND, which take no
     /// tint and are shared.
     lamps: [(Handle<Mesh>, Handle<StandardMaterial>); LAMPS.len()],
@@ -242,6 +287,17 @@ impl Crowds {
                 bevy::light::NotShadowCaster,
             ));
         }
+        for (mesh, at, radius) in &self.wheels {
+            car.with_child((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(self.paint.clone()),
+                Transform::from_translation(*at),
+                Wheel {
+                    radius: *radius,
+                    at: *at,
+                },
+            ));
+        }
     }
 
     /// Whether these crowds belong to the body that is active.
@@ -294,6 +350,16 @@ pub fn turn_out(
         cars: (0..TINTS)
             .map(|k| meshes.add(to_mesh(&car.parts[0].mesh, k, |m| !LAMPS.contains(&m))))
             .collect(),
+        wheels: car.parts[1..]
+            .iter()
+            .map(|p| {
+                let r = match p.swing {
+                    figure::Swing::Wheel { radius } => radius as f32,
+                    _ => 0.0,
+                };
+                (meshes.add(to_mesh(&p.mesh, 0, |_| true)), p.at.as_vec3(), r)
+            })
+            .collect(),
         // The emissive is the PALETTE's own row times the kind's glow, so
         // the COLOUR of a lamp is written once and its BRIGHTNESS once:
         // the first cut spelled the head lamp's warm white out a second
@@ -314,7 +380,7 @@ pub fn turn_out(
         }),
         legs: std::array::from_fn(|k| match person.parts[k + 1].swing {
             figure::Swing::Leg { phase } => (person.parts[k + 1].at.as_vec3(), phase),
-            figure::Swing::Still => (Vec3::ZERO, 0.0),
+            _ => (Vec3::ZERO, 0.0),
         }),
         paint: materials.add(StandardMaterial {
             base_color: Color::WHITE,
@@ -460,6 +526,8 @@ pub fn drive_traffic(
                 let (at, turn) = pose(town, radius, traffic, rider.agent, now);
                 tf.translation = frame.0.local(WorldPos(centre + at));
                 tf.rotation = turn;
+                let spot = traffic.at(&traffic.agents[rider.agent], now);
+                commands.entity(e).insert(Travelled(spot.along));
             }
             Ride::Limb { phase, at } => {
                 let spot = traffic.at(&traffic.agents[rider.agent], now);

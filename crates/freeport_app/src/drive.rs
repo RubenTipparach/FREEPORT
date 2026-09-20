@@ -656,7 +656,7 @@ pub fn show_cars(
         return;
     }
     let mut drawn = vec![false; thefts.cars.len()];
-    for (_, stolen, mut tf) in &mut cars {
+    for (e, stolen, mut tf) in &mut cars {
         let Some(theft) = thefts.cars.get(stolen.0) else {
             continue;
         };
@@ -664,6 +664,9 @@ pub fn show_cars(
         let (at, turn) = place(&theft.car);
         tf.translation = frame.0.local(WorldPos(ground.1 + at));
         tf.rotation = turn;
+        commands
+            .entity(e)
+            .insert(crate::traffic::Travelled(theft.car.gone));
     }
     for (k, done) in drawn.iter().enumerate() {
         if *done {

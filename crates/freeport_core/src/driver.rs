@@ -26,9 +26,23 @@ use crate::figure::{CAR_LONG, CAR_WIDE};
 use crate::walker::{self, Bounds};
 use glam::{DVec2, DVec3};
 
-/// How fast a town car goes, metres a second: about 58 km/h forward and a
-/// crawl backwards, because nobody reverses fast.
-pub const TOP: f64 = 16.0;
+/// How fast a car goes, metres a second: 160 km/h flat out and a crawl
+/// backwards, because nobody reverses fast.
+///
+/// It was 16 m/s, which is 58 km/h, and that is a town car's own speed
+/// rather than a car's: a road between two settlements here is tens of
+/// kilometres and at 58 km/h the nearest one to the port is ten minutes
+/// away. 44.4 m/s is 160 km/h, which is what the owner asked for and is
+/// what the country roads in this world are for.
+///
+/// `ACCEL` is unchanged at 5.5 m/s^2, so nought to a hundred km/h is
+/// about five seconds and the top is reached in eight, which is a car
+/// rather than a rocket. What it DOES change is the lock taper: `TAPER`
+/// is the speed the steering is given up over, so at nearly three times
+/// the top speed the wheel is a third of the lock far earlier in the
+/// range, which is the right way round, because a car cornering hard at
+/// 160 km/h would be pulling gravities it has no tyres for.
+pub const TOP: f64 = 44.4;
 pub const REVERSE: f64 = 5.0;
 /// How hard it pulls, brakes and coasts down, metres a second a second.
 const ACCEL: f64 = 5.5;
@@ -117,6 +131,15 @@ pub struct Driver {
     pub on_ground: bool,
     /// The radius of the wheels, metres.
     pub foot: f64,
+    /// How far this car has actually COME, metres: the ground that has
+    /// gone past its wheels, which is what a wheel turns on.
+    ///
+    /// The arc the car SWEPT and never its own `speed` integrated: a
+    /// crash scales the speed down rather than stopping the car, so the
+    /// dial says what the engine is asking for and the wheels of a
+    /// wedged car would spin on bare tarmac. It is the same distinction
+    /// `drive::Auto` already makes to tell a stuck car from a slow one.
+    pub gone: f64,
     /// Which way is UP for the BODYWORK: the ground's own normal under
     /// the four wheels, eased.
     ///
@@ -173,6 +196,7 @@ impl Driver {
             vy: 0.0,
             on_ground: true,
             foot: walker::ground(field, bounds, dir, None),
+            gone: 0.0,
             lean: dir,
         }
     }
@@ -312,6 +336,7 @@ impl Driver {
         // How much of the step survived being pushed out of the walls: a
         // car stopped dead made none of it.
         let made = (got - self.dir).dot(self.fwd) * bounds.radius;
+        self.gone += (got - self.dir).length() * bounds.radius;
         let g = walker::ground(field, bounds, got, Some(self.foot));
         // A kerb's worth of step, plus whatever the GROUND itself rose
         // over the distance the car actually covered.

@@ -288,7 +288,7 @@ fn tick(app: &mut App) {
                     stream,
                     flight_bench::after_stream,
                     light_lamps,
-                    traffic::drive_traffic,
+                    (traffic::drive_traffic, traffic::spin_wheels).chain(),
                     show_cars,
                 )
                     .chain(),

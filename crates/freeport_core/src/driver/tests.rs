@@ -72,12 +72,16 @@ fn a_car_pulls_away_and_tops_out() {
             brake: true,
             ..Default::default()
         },
-        3.0,
+        5.0,
     );
     println!("the brake takes {TOP} m/s off in {stopping:.1} m");
     assert_eq!(d.speed, 0.0, "the brake left it rolling");
+    // `v^2 / 2 BRAKE` is 82 m at 44.4 m/s against 10.5 at 16, which is
+    // the square law and the whole of what a faster car costs to stop.
+    // Five seconds of brake and not three, because 44.4 over `BRAKE` is
+    // 3.7 s and a three second test could not reach nought.
     assert!(
-        (8.0..14.0).contains(&stopping),
+        (70.0..95.0).contains(&stopping),
         "it stopped in {stopping:.1} m from {TOP} m/s"
     );
     // Coasting is slower than braking and still comes to rest.
@@ -560,8 +564,16 @@ fn a_car_drives_up_a_hill_and_is_stopped_by_a_cliff() {
             gone > 100.0,
             "a car on a {grade:.2} hill went {gone:.1} m in ten seconds: it is stuck"
         );
+        // Six per cent of the run and not five, and the reason is the
+        // SPHERE rather than the car. At 44.4 m/s ten seconds is 265 m
+        // of arc on this 2 km ball, which is 7.6 degrees: over that
+        // angle the hill's own horizontal and the arc travelled are no
+        // longer the same length, and the measured fall on a one in two
+        // DOWNhill is 118.1 m against the 132.6 a flat plane would give.
+        // At 16 m/s the same ten seconds was 137 m and 3.9 degrees,
+        // where the difference did not show.
         assert!(
-            (up - gone * grade).abs() < gone * 0.05 + 1.0,
+            (up - gone * grade).abs() < gone * 0.06 + 1.0,
             "it climbed {up:.1} m over {gone:.1} m of ground, which is not a {grade:.2} grade"
         );
     }

@@ -147,16 +147,36 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // seam where the ripple cell is a step.
     let foot = length(fwidth(in.world_position.xyz)) * water.wave.y;
     let detail = 1.0 / (1.0 + foot * DETAIL_FADE);
-    let h = fbm3_at(cell, frac, t) * detail;
     let e = 0.08;
     let at = fbm3_at(cell, frac, t);
-    var grad = vec3<f32>(
+    var raw = vec3<f32>(
         fbm3_at(cell, frac + vec3<f32>(e, 0.0, 0.0), t) - at,
         fbm3_at(cell, frac + vec3<f32>(0.0, e, 0.0), t) - at,
         fbm3_at(cell, frac + vec3<f32>(0.0, 0.0, e), t) - at,
-    ) * 12.5 * detail;
-    grad = grad - radial * dot(grad, radial);
+    ) * 12.5;
+    raw = raw - radial * dot(raw, radial);
+    // The NORMAL may be faded on the signal: a normal is a smooth
+    // function of the gradient, so a gradient worn toward nought is a
+    // sheet worn smoothly flat and there is nothing to alias.
+    let grad = raw * detail;
     let steep = length(grad);
+    // The FOAM may not, and that is what the speckle was. A threshold
+    // does not antialias by fading what goes into it: `h = fbm * detail`
+    // slides ACROSS `band.x` rather than leaving it, so a point sampled
+    // ripple crossing that edge flickers per pixel, and the foam colour
+    // is near white. It was worst in the MID field for the same reason,
+    // because that is where `detail` is about a half and `h` sits in the
+    // middle of the 0.35 to 0.60 band.
+    //
+    // So the foam is taken off the RAW ripple through a band WIDENED by
+    // the same footprint, which is what antialiasing a threshold
+    // actually is: as a texel covers more of the signal the edge blurs
+    // toward the signal's own average instead of flickering about it.
+    // The whole term is then worn out by `detail` as well, so the far
+    // sea has no foam at all rather than a grey average of some.
+    let blur = (1.0 - detail) * 0.5;
+    let crest = at;
+    let sharp = length(raw);
     var bent = grad;
     if (steep > water.zenith.w) {
         bent = grad * (water.zenith.w / steep);
@@ -257,9 +277,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Foam on the crests and on the steep, as the GLSL blends them, and
     // on the light the water's body gets rather than the sky's.
     let foam = max(
-        smoothstep(water.band.x, water.band.y, h) * 0.55,
-        smoothstep(water.band.z, water.band.w, steep) * 0.26,
-    ) * water.foam.w;
+        smoothstep(water.band.x - blur, water.band.y + blur, crest) * 0.55,
+        smoothstep(water.band.z - blur, water.band.w + blur, sharp) * 0.26,
+    ) * water.foam.w * detail;
     shaded = mix(shaded, water.foam.rgb * view.exposure * lit, foam);
     color = vec4<f32>(shaded, color.a);
 
