@@ -581,6 +581,29 @@ two is the thing the owner could see.
   east. That drew as horizontal streaks across both ice caps, which a
   picture found and no number had. Reaching `1 / cos(latitude)` texels
   holds the run at about one texel of ground at every latitude.
+- **A body from orbit is DIFFUSE, and the sun's own GLINT is a term of
+  its own.** The water was a smooth, reflective PBR material
+  (`perceptual_roughness` 0.12, `reflectance` 0.35) taken through Bevy's
+  whole lighting path, and that path includes the camera's ENVIRONMENT
+  MAP: at that roughness over an ocean the size of a hemisphere it is a
+  mirror the size of a hemisphere, and what it mirrors is the sky cubemap
+  `sky::bake_env` baked for wherever the eye last was. The owner read it
+  off a picture of a night side as a broad pale sheen swept across the
+  whole disk and named what is wrong with it: **a planet's water does not
+  carry a reflection map.** There is nothing out there for an ocean to
+  reflect except the sun.
+  So F0 is nought and the roughness is one, which takes every specular
+  term in `apply_pbr_lighting` to zero, the lights' and the
+  environment's alike, and the only shine left on the body is a Blinn
+  Phong lobe about the half vector between the eye and the sun, gated on
+  the chart's own water mask and on the day side. It is WIDE, a power of
+  90 rather than of thousands, because the sun's own half degree is
+  spread by the waves: a glint on an ocean from orbit is a soft patch
+  about seventeen degrees across and not a point. And it is added BEFORE
+  `main_pass_post_lighting_processing`, so it is in the same linear HDR
+  the lighting is in and the tone mapper sees it, and scaled by
+  `view.exposure` for the same reason the fog is: `distant.sea.x` is in
+  nits and the frame is not.
 - **The albedo is written sRGB.** `Kind::colour` is linear, because that
   is what a shader does arithmetic in, and the chart binds as an sRGB
   texture, because most of a planet is dark and that is where sRGB spends
@@ -3454,6 +3477,13 @@ done
 # And the HAND OVER itself, which is past the coarsest ring (262 km at
 # fourteen levels) and so only in frame from about 356 km up.
 ./target/release/freeport_app --fly --over 400000 --hour 11 --frames 20 --shot handover.png
+# The road ARRIVING at a city, which is the other end of the same
+# camera: `--approach N` stands N metres over the tarmac out in the
+# country and looks back down it at the town it runs into, so what is in
+# frame is the highway crossing terrain to reach a place rather than
+# leaving one. How far out it stands is solved off the camera's own
+# height, the same rule `--road` uses.
+./target/release/freeport_app --fly --levels 7 --frames 30 --approach 40 --hour 10 --shot approach.png
 # The ROAD between two towns, along itself. `--road N` stands N metres
 # over the tarmac a kilometre out of the port and looks down it: a
 # camera for a picture is solved and never hand aimed, and where a road

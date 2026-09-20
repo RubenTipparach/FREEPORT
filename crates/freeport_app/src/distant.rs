@@ -295,7 +295,15 @@ pub fn material(chart: Handle<Image>, slopes: Handle<Image>) -> DistantMaterial 
         extension: Distant {
             centre: Vec4::new(0.0, 0.0, 0.0, BEND),
             fog: Vec4::ZERO,
-            sea: Vec4::new(0.35, 0.0, 0.0, 0.0),
+            // The glint: how bright in NITS and how wide as a Blinn
+            // Phong power. It was 0.35 and nought, which were an F0 and
+            // an unused lane while the water was a reflective PBR
+            // material and the camera's environment map was doing the
+            // shining. A power of 90 is a patch about a dozen degrees
+            // across, which is the sun's own half degree spread by the
+            // waves, and 700 nits is a little over what the lit ground
+            // beside it comes back at.
+            sea: Vec4::new(700.0, 90.0, 0.0, 0.0),
             // Filled by `sky::drift_sky` every frame. Nought until then,
             // which reads as a sun along no axis at all and so as a body
             // wholly in its own day: a planet with no lights on rather

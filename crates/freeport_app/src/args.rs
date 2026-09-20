@@ -46,6 +46,11 @@ pub(crate) struct Args {
     /// aimed: where a road leaves a town depends on where the network
     /// came out, so a hand aimed camera at a road finds a field.
     pub(crate) road: Option<f64>,
+    /// Metres over the ROAD out of the port, standing out in the country
+    /// and looking BACK at the town it runs into: the other end of
+    /// `--road`'s own camera, and the one that shows a highway crossing
+    /// terrain to reach a city rather than leaving one.
+    pub(crate) approach: Option<f64>,
     /// Plan the home body's cities and roads, write its atlas and stop.
     /// It runs BEFORE any of Bevy is built, so a bake needs no window, no
     /// device and no Xvfb: it is arithmetic and a file.
@@ -94,6 +99,7 @@ impl Default for Args {
             over: None,
             hour: None,
             road: None,
+            approach: None,
             bake_atlas: false,
             levels: LEVELS,
             shot: None,
@@ -132,6 +138,7 @@ pub(crate) fn parse_args() -> Args {
             "--around" => args.around = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0),
             "--over" => args.over = it.next().and_then(|v| v.parse().ok()),
             "--road" => args.road = it.next().and_then(|v| v.parse().ok()),
+            "--approach" => args.approach = it.next().and_then(|v| v.parse().ok()),
             "--hour" => args.hour = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),

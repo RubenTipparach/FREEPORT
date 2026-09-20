@@ -89,6 +89,22 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
             None => bevy::log::warn!("no road out of the port to aim at"),
         }
     }
+    // And the OTHER end of it: out in the country, looking back down the
+    // tarmac at the town it runs into. `--road` shows what a highway
+    // between two towns looks like and this shows it ARRIVING, which is
+    // a different picture and the one the owner asked for.
+    if let Some(up) = args.approach {
+        match road_in(world, up) {
+            Some((from, to)) => {
+                bevy::log::info!(
+                    "the approach camera stands {up:.0} m over the tarmac {:.2} km out of the port, looking back at it",
+                    from.angle_between(to) * world.planet.radius / 1000.0
+                );
+                return (from + from.normalize_or(DVec3::Y) * up, to);
+            }
+            None => bevy::log::warn!("no road into the port to aim at"),
+        }
+    }
     match args.sunward {
         Some(radii) => (
             turned(sun_over(eye), args.around.to_radians()) * world.planet.radius * radii.max(1.05),
@@ -97,6 +113,20 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
         None => (eye, look),
     }
 }
+/// Where a road ARRIVES at the port, and what it arrives at: a point on
+/// its own tarmac out in the country, and the town itself.
+///
+/// It is `road_out`'s own two points with the camera at the FAR one and
+/// the town for a target, so the tarmac runs away from the eye and into
+/// the city rather than out of it. The town's own position and not the
+/// near end of the road, because what the picture is of is the road
+/// MEETING the place.
+pub(crate) fn road_in(world: &World, up: f64) -> Option<(DVec3, DVec3)> {
+    let (_, far) = road_out(world, up)?;
+    let town = world.towns.get(world.roads.first()?.from)?;
+    Some((far, town.dir * (world.planet.radius + town.h)))
+}
+
 /// A direction turned `angle` away from itself, about whichever axis is
 /// square to it. Which axis does not matter for a picture of a sphere:
 /// what is being asked for is how much of the body's night is in frame,

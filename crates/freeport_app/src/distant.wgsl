@@ -24,12 +24,17 @@ struct Distant {
     // The sky at the horizon in rgb, and how much of it is in the way per
     // metre in w, the same pair the ground is faded into.
     fog: vec4<f32>,
-    // x the water's specular strength, y its power, z spare, w spare.
+    // x how bright the sun's GLINT on the water burns, in nits, y the
+    // Blinn Phong power that says how wide it is, z spare, w spare.
     sea: vec4<f32>,
     // xyz the way the sun lies, a unit direction in the world; w how
     // bright a city burns on the night side.
     sun: vec4<f32>,
 }
+
+// The sun's own colour in a glint: warm white, because a glint is the
+// SUN and not the sky.
+const GLINT: vec3<f32> = vec3<f32>(1.0, 0.96, 0.88);
 
 // How dark the unlit half of a body goes, as a share of its own albedo.
 //
@@ -204,18 +209,50 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // 13.5 km glow over a 185 m village is the same lie by night.
     pbr_input.material.emissive =
         vec4<f32>(LAMP * (slope.b * honest * night * distant.sun.w), 1.0);
-    // Water is smooth and everything else is not, which is the whole of
-    // why the mask is worth carrying: an ocean has to catch the sun where
-    // the land beside it does not.
+    // A body from orbit is DIFFUSE, and the sun's own glint is a term of
+    // its OWN.
+    //
+    // It was a smooth, reflective water material taken through Bevy's
+    // whole PBR path, which means the camera's ENVIRONMENT MAP: at a
+    // roughness of 0.12 over an ocean the size of a hemisphere that is a
+    // mirror the size of a hemisphere, and what it mirrors is the sky
+    // cubemap `sky::bake_env` baked for wherever the eye last was. The
+    // owner read it off a picture of a night side as a broad pale sheen
+    // swept across the whole disk and said what it is: a planet's water
+    // does not carry a reflection MAP. There is nothing out there for an
+    // ocean to reflect except the sun.
+    //
+    // So F0 is nought and the roughness is one, which takes every
+    // specular term in `apply_pbr_lighting` (the lights' and the
+    // environment's alike) to zero, and the glint below is the only
+    // shine on the body.
     let water = albedo.a;
-    pbr_input.material.perceptual_roughness = mix(0.92, 0.12, water);
+    pbr_input.material.perceptual_roughness = 1.0;
     pbr_input.material.metallic = 0.0;
-    pbr_input.material.reflectance = vec3<f32>(mix(0.02, distant.sea.x, water));
+    pbr_input.material.reflectance = vec3<f32>(0.0);
     pbr_input.N = n;
     pbr_input.world_normal = n;
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
-    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    var lit = apply_pbr_lighting(pbr_input);
+    // The SUN GLINT: a Blinn Phong lobe about the half vector between
+    // the eye and the sun, gated on the chart's own water mask and on
+    // the day side, which is what an ocean seen from orbit actually
+    // does. It is WIDE (`distant.sea.y` is a power of tens and not of
+    // thousands) because the sun's own half degree is spread by the
+    // waves: the glint on an ocean from orbit is a soft patch a dozen
+    // degrees across and not a point.
+    //
+    // Added BEFORE `main_pass_post_lighting_processing`, so it is in the
+    // same linear HDR the lighting is in and the tone mapper sees it,
+    // and scaled by `view.exposure` for the same reason the fog below
+    // is: `distant.sea.x` is in nits and the frame is not.
+    let to_eye = normalize(view.world_position - in.world_position.xyz);
+    let lobe = pow(max(dot(n, normalize(to_eye + distant.sun.xyz)), 0.0), distant.sea.y);
+    lit = vec4<f32>(
+        lit.rgb + GLINT * (distant.sea.x * lobe * water * (1.0 - night) * view.exposure),
+        lit.a,
+    );
+    out.color = main_pass_post_lighting_processing(pbr_input, lit);
     // The same air the ground fades into, so a body seen through its own
     // atmosphere from inside it does not stand out of the haze.
     let away = length(in.world_position.xyz - view.world_position);
