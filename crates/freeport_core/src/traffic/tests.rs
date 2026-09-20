@@ -523,3 +523,61 @@ fn a_person_walks_the_kerb_and_steps_down_to_cross() {
     let mid = DVec2::new(node.x + FOOT_LANE, node.y + PITCH * 0.5);
     assert_eq!(traffic.lift(mid), crate::town::KERB);
 }
+
+/// A ROUTE OUT OF A TOWN runs on paving the town actually laid, and it
+/// gets from the middle to the edge.
+///
+/// A car stolen in the middle of the port is 700 m from the nearest
+/// country tarmac, which is further than the road follower's own reach,
+/// so the scripted drive aimed at a settlement nine kilometres off and
+/// spent the run oscillating against the building in front of it. The
+/// streets are the way out; what this holds is that the chain is
+/// continuous, that every step of it is an edge of the graph, and that
+/// it reaches the far side.
+#[test]
+fn a_route_out_of_a_town_runs_on_the_towns_own_paving() {
+    let town = town();
+    let streets = Streets::of(&town);
+    let far = DVec2::new(town.radius * crate::town::OUTLINE, 0.0);
+    let route = streets.route(DVec2::ZERO, far);
+    assert!(
+        route.len() > 3,
+        "a route across a town is {} crossings",
+        route.len()
+    );
+    for pair in route.windows(2) {
+        let step = pair[1] - pair[0];
+        assert!(
+            (step.length() - PITCH).abs() < 1e-9,
+            "a route steps {:.2} m and a block is {PITCH:.2}",
+            step.length()
+        );
+        // And the step is ON the graph, which is what says the car is
+        // being sent down a street somebody laid.
+        let n = (line_at(pair[0].x), line_at(pair[0].y));
+        let way = if step.x > 0.0 {
+            0
+        } else if step.y > 0.0 {
+            1
+        } else if step.x < 0.0 {
+            2
+        } else {
+            3
+        };
+        assert!(
+            streets.has(n, way),
+            "a route leaves {n:?} where nothing is paved"
+        );
+    }
+    // It ACTUALLY gets out: the last crossing is further from the middle
+    // than the first, by most of the town.
+    let (from, to) = (route[0].length(), route[route.len() - 1].length());
+    assert!(
+        to > from + town.radius * 0.5,
+        "a route out of a town ends {to:.1} m from its middle having started {from:.1}"
+    );
+    println!(
+        "a route out of this town is {} crossings, {from:.1} m to {to:.1} m from the middle",
+        route.len()
+    );
+}

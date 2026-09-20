@@ -25,7 +25,8 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::driver::{self, Drive, Driver};
 use freeport_core::pos::WorldPos;
-use freeport_core::town;
+use freeport_core::town::{self, lot_frame};
+use freeport_core::traffic::Streets;
 use freeport_core::walker::{Bounds, Walker};
 
 /// How far behind the car the camera sits and how far over it, metres.
@@ -240,7 +241,6 @@ pub fn drive_car(
         // anywhere to drive TO, which is what the owner asked for.
         input = Drive {
             throttle: 1.0,
-            steer: steer_for(&script, &here, car),
             ..Default::default()
         };
         dt = 1.0 / 60.0;
@@ -267,7 +267,15 @@ pub fn drive_car(
         // holds one bearing for a whole second and weaves round its own
         // line at sixteen metres a second.
         let input = if steps > 1 {
-            auto.drive(car, script.goal.0, dt, here.world().planet.radius)
+            // The AIM and not the goal, and that is the whole of what a
+            // road bought a scripted drive. `steer_for` computed the
+            // point on the tarmac and handed it to the wheel of the
+            // OUTER input, which a sub stepped drive then threw away and
+            // replaced with `car.toward(goal)`: the road following was
+            // written, tested and never once driven on, and the car went
+            // on wedging itself against the same building it always had.
+            let aim = auto.aim(&script, &here, car);
+            auto.drive(car, aim, dt, here.world().planet.radius)
         } else {
             input
         };
@@ -334,6 +342,16 @@ pub struct Auto {
     /// scripted seconds, so a drive says whether it is a JOURNEY.
     gone: f64,
     ticks: u32,
+    /// The streets of the town it is getting OUT of, and which town that
+    /// is. Kept because the graph is a sort of a thousand edges and the
+    /// answer only changes when the car leaves the town; dropped by
+    /// being replaced when it does.
+    streets: Option<(usize, Streets)>,
+    /// WHICH of the three things is steering, and how far off its aim
+    /// is. A stuck car is a car aiming at something, and a report that
+    /// says only how far it has come cannot tell a car following a road
+    /// into a hill from a car turning circles on its own bearing.
+    why: (&'static str, f64),
 }
 
 impl Auto {
@@ -361,6 +379,84 @@ impl Auto {
                 ""
             },
         );
+        info!("  steering for {} {:.0} m off", self.why.0, self.why.1);
+    }
+
+    /// Where a scripted drive STEERS FOR: the road when it is on one,
+    /// the way out of the town along that town's own streets when it is
+    /// in one, and the town it is driving to when it is neither.
+    ///
+    /// Three answers and not two, because a car stolen in the middle of
+    /// the port is 700 m from the nearest tarmac, which is further than
+    /// `OFF_ROAD`: `Network::follow` gives up there and the drive aimed
+    /// at a settlement nine kilometres off, which from a street between
+    /// two buildings is aiming at a wall. The streets are the way out and
+    /// `Streets::route` walks them.
+    fn aim(
+        &mut self,
+        script: &Script,
+        here: &crate::world::Surface,
+        car: &Driver,
+    ) -> Option<DVec3> {
+        let world = here.world();
+        let (goal, radius) = (script.goal.0?, world.planet.radius);
+        // Off the road: get TO it, and along the paving while there is
+        // paving to follow.
+        let (what, at) = match script.roads.follow(world, car.dir, goal, AHEAD, radius) {
+            Some(p) => ("the road", p),
+            None => match script.roads.mouth(world, car.dir) {
+                None => ("its town", goal),
+                Some(mouth) => match self.through_town(world, car.dir * car.foot, mouth) {
+                    Some(p) => ("the streets", p),
+                    None => ("the tarmac", mouth),
+                },
+            },
+        };
+        let aim = at.normalize();
+        self.why = (what, car.dir.angle_between(aim) * radius);
+        Some(aim)
+    }
+
+    /// The next crossing but one along the streets of whatever town the
+    /// car is standing in, toward the tarmac. Nothing when it is in no
+    /// town, or when the paving never joined the two.
+    fn through_town(
+        &mut self,
+        world: &crate::world::World,
+        at: DVec3,
+        mouth: DVec3,
+    ) -> Option<DVec3> {
+        let radius = world.planet.radius;
+        let dir = at.normalize_or(DVec3::Y);
+        let (k, town) = world.towns.iter().enumerate().find(|(_, t)| {
+            t.dir.angle_between(dir) * radius < t.radius * freeport_core::town::OUTLINE
+        })?;
+        if self.streets.as_ref().is_none_or(|(i, _)| *i != k) {
+            self.streets = Some((k, Streets::of(town)));
+        }
+        let streets = &self.streets.as_ref()?.1;
+        let frame = lot_frame(radius, town, 0.0, 0.0);
+        let flat = |p: DVec3| {
+            let l = frame.local(p);
+            bevy::math::DVec2::new(l.x, l.y)
+        };
+        let (from, to) = (flat(at), flat(mouth));
+        let route = streets.route(from, to);
+        // The NEXT crossing, and never one beyond it. A route is a chain
+        // of crossings joined by streets the town laid, so the straight
+        // line to the next one is on the paving and the straight line to
+        // the one after it is through whatever stands on the corner: at
+        // a look ahead of thirty metres on a pitch of eighteen and a
+        // half, every route skipped at least one node, and the drive out
+        // of the port made 230 m and then held the throttle against a
+        // building with its aim 33 m away for the rest of the run. There
+        // is nothing to tune here, which is why the constant went: a
+        // town's look ahead IS its pitch.
+        //
+        // None when there is no next one, which means the car is at the
+        // town's own exit; what it wants then is the tarmac.
+        let next = route.get(1)?;
+        Some(frame.world(DVec3::new(next.x, next.y, 0.0)))
     }
 
     /// The pedals and the wheel for one sub step.
@@ -407,30 +503,6 @@ pub struct Script<'w> {
     /// The tarmac, so a scripted drive FOLLOWS the road to its town
     /// rather than aiming through whatever stands between.
     roads: Res<'w, crate::roads::Network>,
-}
-
-/// Which way a SCRIPTED drive turns the wheel: toward the road's own
-/// tarmac `AHEAD` metres along, and toward the town itself where there
-/// is no road under the wheels.
-///
-/// Aimed straight at the town, a car leaving the port drove twelve
-/// metres and then oscillated against a building for the rest of the
-/// run: forward into it, back off, forward into the same building. What
-/// stopped it was never its physics (it pulls away at planet scale,
-/// backs out of a corner of two walls and climbs out of a crawl, all
-/// measured) but that a building stood between it and where it was going
-/// and it had nothing to follow round one. Following the road is what a
-/// road is FOR.
-fn steer_for(script: &Script, here: &crate::world::Surface, car: &Driver) -> f64 {
-    let Some(goal) = script.goal.0 else {
-        return 0.0;
-    };
-    let world = here.world();
-    let aim = script
-        .roads
-        .follow(world, car.dir, goal, AHEAD, world.planet.radius)
-        .map_or(goal, |p| p.normalize());
-    car.toward(aim)
 }
 
 /// How far down the road a scripted drive looks, metres: far enough that

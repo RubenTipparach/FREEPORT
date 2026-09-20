@@ -121,35 +121,90 @@ pub fn at_oclock(noon: DVec3, dir: DVec3, oclock: f64, day: f64) -> f64 {
 /// second. A BAND rather than a line because a planet has air, so the sun
 /// sets over a few degrees of longitude and a hard edge round a body
 /// reads as a seam somebody drew on it.
+///
+/// It is the band the SCATTERED light fades over and never the direct
+/// beam's: see `twilight` and `daylight` below, which is the whole of the
+/// distinction this file exists to keep.
 pub const DUSK_FROM: f64 = 0.14;
 pub const DUSK_TO: f64 = -0.10;
 
-/// How much DAYLIGHT a place has: one under a sun well up, nought well
-/// after it has set, and the band between.
+/// The HORIZON, as the same sine: nought, because a horizon is where the
+/// sun's own centre crosses a place's tangent plane and there is nothing
+/// to tune about it.
+pub const HORIZON: f64 = 0.0;
+
+/// How much light the SKY still has at a place: one under a sun well up,
+/// nought well after it has set, and the twilight band between.
 ///
-/// This is the reference and there are THREE transcriptions of it, each
-/// naming this function in its own comment: `distant.wgsl` fades a body's
-/// albedo to its night floor by it and burns the cities on the dark half,
-/// `water.wgsl` decides by it whether a sheet mirrors the day sky or the
-/// one the dome is painting at night, and `terrain.wgsl` lights the
-/// street lamps and the windows of a town by it. `lamps.rs` calls this
-/// one directly, so the light a lamp CASTS and the glow the pane is drawn
-/// with are one answer rather than two that have to agree. They are
-/// transcriptions and not copies because a fragment shader cannot call
-/// into this crate; the constants and the shape are here.
-pub fn daylight(sun: DVec3, dir: DVec3) -> f64 {
-    let up = sun
-        .normalize_or_zero()
+/// This is SCATTERED light, which is what is left once the sun is down:
+/// the air above an observer is still lit long after the observer is not,
+/// which is why dusk is a thing at all and why civil twilight runs six
+/// degrees past sunset. It is the right term for anything standing in for
+/// the sky, and the wrong one for anything standing in for the sun.
+///
+/// TWO transcriptions name it: `distant.wgsl` fades a body's albedo to
+/// its night floor by it and burns the cities through the twilight arc,
+/// and `water.wgsl` decides by it whether a sheet mirrors the day sky or
+/// the one the dome is painting at night. Both are about the SKY, which
+/// is why both keep the band.
+pub fn twilight(sun: DVec3, dir: DVec3) -> f64 {
+    smoothstep(DUSK_TO, DUSK_FROM, sine(sun, dir))
+}
+
+/// The SINE of the sun's elevation over a place, which is what the two
+/// terminator constants are measured in and what every transcription of
+/// these functions writes as a `dot`. `elevation` is the ANGLE and is a
+/// different number: at the band's own edge they differ by a per cent,
+/// which is small enough that using one for the other is a bug nothing
+/// would point at.
+fn sine(sun: DVec3, dir: DVec3) -> f64 {
+    sun.normalize_or_zero()
         .dot(dir.normalize_or(AXIS))
-        .clamp(-1.0, 1.0);
-    smoothstep(DUSK_TO, DUSK_FROM, up)
+        .clamp(-1.0, 1.0)
+}
+
+/// How much DIRECT SUN a place has: one under a sun well up and **NOUGHT
+/// THE MOMENT THE SUN IS DOWN**.
+///
+/// The owner's own words: it is impossible for a directional light to
+/// cast a shadow below nought degrees of the horizon. That is a fact
+/// about the BODY rather than about a renderer, and it is the one thing
+/// this function exists to say: a place's horizon is where the sun's own
+/// centre crosses its tangent plane, and past that the planet itself
+/// stands between the two. There is no beam to attenuate and nothing for
+/// it to cast.
+///
+/// What was here faded over `DUSK_TO` to `DUSK_FROM`, so the harness's
+/// directional light was still burning at a fifth of its strength with
+/// the sun five degrees UNDER the horizon, casting shadows through the
+/// world. The fade above the horizon is kept and is a real thing: a sun
+/// at one degree of elevation is shining through forty airmasses and
+/// delivers a tenth of what it does overhead, so the beam comes up over
+/// the first `DUSK_FROM` (about eight degrees) rather than switching on.
+/// What is NOT kept is any of it below nought.
+///
+/// What survives a sunset is `twilight`, and it is a different term
+/// because it is a different thing: the sky over an observer is lit by
+/// air the sun can still see. A directional light is not that.
+///
+/// `sky.rs` scales the harness's own `DirectionalLight` by this, so the
+/// beam and its shadows go together, and `terrain.wgsl` transcribes it.
+pub fn daylight(sun: DVec3, dir: DVec3) -> f64 {
+    smoothstep(HORIZON, DUSK_FROM, sine(sun, dir))
 }
 
 /// How hard a place's own lamps are burning: the other side of the
-/// daylight, so a lamp comes on as the sun goes down and nothing decides
+/// TWILIGHT, so a lamp comes on as the sun goes down and nothing decides
 /// it twice.
+///
+/// The twilight and not the direct beam, because what a street lamp is
+/// for is the light there is rather than the light the sun is sending:
+/// at sunset the sky is still bright and a lamp is not yet doing much,
+/// and it is full once the band has gone. On the direct beam a lamp
+/// would be at FULL the instant the sun's centre crossed the horizon,
+/// which is a town that switches on all at once.
 pub fn lamplight(sun: DVec3, dir: DVec3) -> f64 {
-    1.0 - daylight(sun, dir)
+    1.0 - twilight(sun, dir)
 }
 
 #[cfg(test)]

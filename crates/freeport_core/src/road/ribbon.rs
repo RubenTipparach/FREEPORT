@@ -15,7 +15,7 @@
 //! time, because it is hundreds of kilometres long and a town is eighty
 //! metres across.
 
-use crate::field::{PAINT, PLATE, STREET};
+use crate::field::{CONCRETE, PAINT, STREET};
 use crate::model::Model;
 use crate::town::{Frame, LANE};
 use glam::DVec3;
@@ -57,23 +57,35 @@ pub const HALF: f64 = LANE;
 
 /// How wide a painted line is, metres, and how far in from the tarmac's
 /// own edge the two edge lines are set.
-const PAINT_W: f64 = 0.12;
+pub const PAINT_W: f64 = 0.12;
 const EDGE_IN: f64 = 0.25;
 
 /// How long one dash of the centreline is and how long the gap after it.
-const DASH: f64 = 3.0;
-const GAP: f64 = 6.0;
+pub const DASH: f64 = 3.0;
+pub const GAP: f64 = 6.0;
 
-/// How far apart the lamps along a lit stretch stand, in PIECES of
-/// corridor, and how tall and how far off the carriageway they are.
+/// How far apart the lamps along a lit stretch stand, METRES, and how
+/// tall and how far off the carriageway they are.
 ///
-/// A piece is 341 m, so one lamp every third piece is about a kilometre
-/// between them: far sparser than a street's, which is what the run in
-/// to a town looks like from the road, and sparse enough that a lit
-/// approach is a handful of lights rather than a wall of them.
-pub const LAMP_EVERY: usize = 3;
+/// In metres and not in PIECES, which is what it was and is the same
+/// mistake the centreline's dashes made: a piece is 341 m, so one lamp
+/// every third piece is one lamp a kilometre, and the whole lit approach
+/// to the port came out as a single light. The lamps ALTERNATE sides, so
+/// forty five metres apart along the road is ninety on each side, which
+/// is what a staggered pair on a two lane road is.
+pub const LAMP_EVERY: f64 = 45.0;
 const LAMP_H: f64 = 7.0;
 const LAMP_OUT: f64 = 0.5;
+
+/// How many lamps a stretch is allowed for INDEXING, which is what makes
+/// a lamp's place along the whole road a number.
+///
+/// A stretch is 5.5 km and a lamp stands every 45 m, so 128 is well over
+/// what any stretch can hold and the `k * LAMPS + i` a stretch's lamps
+/// are numbered by cannot reach into the next stretch's range. A road's
+/// stretches STREAM, so a lamp's identity has to be a fact about the
+/// road rather than a slot in what happens to be standing.
+pub const LAMPS: usize = 128;
 /// How far a road lamp throws, metres: a good deal further than a
 /// building's, because it stands three times as high and there is
 /// nothing out here for it to light but the road.
@@ -156,33 +168,13 @@ pub fn stretch(
                 PAINT,
             );
         }
-        if (along / (DASH + GAP)).fract() * (DASH + GAP) < DASH {
-            band(
-                &mut m,
-                (a, u),
-                (b, v),
-                (-PAINT_W * 0.5, PAINT_W * 0.5),
-                PAINT_LIFT,
-                PAINT,
-            );
-        }
-        // A LAMP on the approach to a town, and none out in the
+        dashes(&mut m, (a, u), (b, v), along, run_m);
+        // The LAMPS on the approach to a town, and none out in the
         // country: `road::lit` is the one place that is decided, and it
         // is the town's own site it is measured from, so a road is lit
         // where a town is near it and dark where nothing is.
-        if lit.get(k).copied().unwrap_or(false) && k % LAMP_EVERY == 0 {
-            let foot = a + u * (HALF + LAMP_OUT);
-            let head = foot + DVec3::Z * LAMP_H;
-            // The post only DRAWS, which is this file's own rule that
-            // anything a body should pass through is trim: a lamp post
-            // is not what stops a car.
-            m.trim(
-                (foot + head) * 0.5,
-                DVec3::new(0.09, 0.09, LAMP_H * 0.5),
-                0.0,
-                PLATE,
-            );
-            m.lamp(head);
+        if lit.get(k).copied().unwrap_or(false) {
+            posts(&mut m, (a, u), (b, v), along, run_m);
         }
         along += run_m;
     }
@@ -193,6 +185,61 @@ pub fn stretch(
 /// four millimetres, which is what stops a painted line flickering
 /// against the road it is painted on.
 const PAINT_LIFT: f64 = 0.004;
+
+/// The centreline's DASHES along one piece of corridor.
+///
+/// A dash is three metres and a PIECE is three hundred and forty one, so
+/// the dashes cannot be a property of the piece. Asked once a piece
+/// (`(along / (DASH + GAP)).fract() < ...`) the line came out as 341 m of
+/// solid paint and then 682 m of nothing, which is not a dashed line, it
+/// is a broken one, and the first picture of a road showed two edge lines
+/// and no middle at all because the piece under the camera fell in a gap.
+/// The piece is walked in `DASH + GAP` steps instead and the painted part
+/// of each step is its own quad, with the station and the across
+/// interpolated to where it falls.
+///
+/// `along` is measured from the start of the STRETCH rather than of the
+/// road, so the pattern restarts every 5.5 km and one dash at a stretch
+/// seam is short. A stretch is what a road is built and streamed in and
+/// it knows nothing of the pieces before it; a global phase would mean
+/// walking the whole road to lay any of it, for one short dash in five
+/// thousand.
+fn dashes(m: &mut Model, a: (DVec3, DVec3), b: (DVec3, DVec3), along: f64, run_m: f64) {
+    if !(run_m.is_finite() && along.is_finite() && run_m > 0.0) {
+        return;
+    }
+    let cycle = DASH + GAP;
+    let at = |t: f64| (a.0.lerp(b.0, t), a.1.lerp(b.1, t).normalize_or(a.1));
+    // The cycle boundary at or before this piece starts, so a dash that
+    // straddles the join is drawn by both pieces and meets itself.
+    let first = along - along.rem_euclid(cycle);
+    for i in 0..stations(run_m, cycle) {
+        let s = first + i as f64 * cycle;
+        let (lo, hi) = (
+            (s.max(along) - along) / run_m,
+            ((s + DASH).min(along + run_m) - along) / run_m,
+        );
+        if hi > lo {
+            let (p, q) = (at(lo), at(hi));
+            band(m, p, q, (-PAINT_W * 0.5, PAINT_W * 0.5), PAINT_LIFT, PAINT);
+        }
+    }
+}
+
+/// How many stations of a given spacing a piece of road is walked at,
+/// and a CAP on it.
+///
+/// A piece is `road::PIECE` and the closest spacing anything here is
+/// laid at is a dash's nine metres, so forty is the real count. Four
+/// thousand is a piece a hundred times longer than one can be, and it is
+/// there because a loop stepping a fixed distance over a length it was
+/// handed is a loop a garbage line hangs the mesher with: a hang is
+/// worse than a wrong frame, which is this file's own rule about
+/// guarding an expression where it can leave its domain.
+fn stations(run_m: f64, every: f64) -> usize {
+    const MOST: f64 = 4096.0;
+    (run_m / every).clamp(0.0, MOST) as usize + 2
+}
 
 /// One band of the cross section between two stations: a quad from
 /// `lo` to `hi` across, `up` over the surface.
@@ -244,6 +291,53 @@ pub fn frame(line: &[DVec3], run: &[f64], radius: f64) -> Frame {
         east,
         north,
         base,
+    }
+}
+
+/// The LAMP POSTS along one piece of a lit stretch, staggered.
+///
+/// Walked in metres for the reason the dashes are: a lamp every third
+/// PIECE is a lamp every kilometre, and the port's whole lit approach,
+/// which is about a kilometre of open road between the town's own band
+/// and `road::LIT_NEAR`, came out as one light standing where the camera
+/// was. Which SIDE a lamp stands on is its own station's parity, so the
+/// stagger is continuous across a piece boundary and across a stretch's.
+fn posts(m: &mut Model, a: (DVec3, DVec3), b: (DVec3, DVec3), along: f64, run_m: f64) {
+    if !(run_m.is_finite() && along.is_finite() && run_m > 0.0) {
+        return;
+    }
+    let first = (along / LAMP_EVERY).ceil();
+    for i in 0..stations(run_m, LAMP_EVERY) {
+        let n = first + i as f64;
+        if n * LAMP_EVERY >= along + run_m {
+            break;
+        }
+        let t = (n * LAMP_EVERY - along) / run_m;
+        let (p, w) = (a.0.lerp(b.0, t), a.1.lerp(b.1, t).normalize_or(a.1));
+        let side = if (n as i64).rem_euclid(2) == 0 {
+            1.0
+        } else {
+            -1.0
+        };
+        let foot = p + w * (side * (HALF + LAMP_OUT));
+        let head = foot + DVec3::Z * LAMP_H;
+        // The post only DRAWS, which is this file's own rule that
+        // anything a body should pass through is trim: a lamp post is
+        // not what stops a car.
+        //
+        // CONCRETE and not PLATE, which is a texture scale rather than a
+        // taste: hull plate's panel lines are centimetres apart on a
+        // column 0.18 m across, so the first picture of a lit road had a
+        // candy striped post in the foreground. Concrete's panels are
+        // three metres, so a seven metre standard carries two seams and
+        // is otherwise the flat grey a lamp standard is.
+        m.trim(
+            (foot + head) * 0.5,
+            DVec3::new(0.09, 0.09, LAMP_H * 0.5),
+            0.0,
+            CONCRETE,
+        );
+        m.lamp(head);
     }
 }
 

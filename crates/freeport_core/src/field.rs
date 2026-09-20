@@ -396,8 +396,27 @@ impl Planet {
     /// It is the same loop rather than a second one, because the two
     /// answers come off the same weights and a caller that asked twice
     /// would walk every site twice.
+    ///
+    /// **A point several sites cover outright takes the NEAREST one's
+    /// level**, and that is not a tie break, it is a road's own profile.
+    /// A corridor is a chain of arcs whose ends MEET, and an arc's band
+    /// is a capsule: its round end reaches `CORRIDOR` metres past its own
+    /// last station into its neighbour. Returning on the first site the
+    /// index reached gave a point seven metres past a station the level
+    /// AT that station rather than the ramp, so every station on a road
+    /// carried a fourteen metre landing and a one in ten grade stepped
+    /// 0.66 m at each of them. Which of the two arcs won was the latitude
+    /// sort's business, so the landings were not even consistent. The
+    /// point seven metres along the next arc stands ON that arc's axis
+    /// and seven metres off the last one's, so the nearest is the one
+    /// whose ramp it is, and the profile is continuous by construction.
     pub fn levelling(&self, dir: DVec3) -> (f64, f64, f64) {
         let (mut bias, mut keep, mut fill) = (0.0f64, 1.0f64, 0.0f64);
+        // The site that covers this point OUTRIGHT, and how far its own
+        // axis is: several can cover one point, so which one's level is
+        // the ground here has to be decided rather than taken from
+        // whichever the index happened to reach first.
+        let (mut covered, mut nearest) = (None, f64::MAX);
         for site in self.sites_near(dir, 0.0) {
             let w = self.site_weight(site, dir);
             if w <= 0.0 {
@@ -405,17 +424,24 @@ impl Planet {
             }
             // The level where the ARC is nearest, which ramps along a
             // road's corridor and is constant across a town.
-            let level = site.nearest(dir).1;
+            let (at, level) = site.nearest(dir);
             if site.fills {
                 fill = fill.max(w);
             }
             if w >= 1.0 {
-                return (level, 0.0, fill);
+                let away = (dir - at).length_squared();
+                if away < nearest {
+                    (nearest, covered) = (away, Some(level));
+                }
+                continue;
             }
             bias += (level - bias) * w;
             keep *= 1.0 - w;
         }
-        (bias, keep, fill)
+        match covered {
+            Some(level) => (level, 0.0, fill),
+            None => (bias, keep, fill),
+        }
     }
 
     /// The relief at a direction, metres over the mean radius, sites

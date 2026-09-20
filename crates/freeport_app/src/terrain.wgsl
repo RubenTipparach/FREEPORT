@@ -111,9 +111,15 @@ const BIOME_TINT: f32 = 0.72;
 const DUSK_FROM: f32 = 0.14;
 const DUSK_TO: f32 = -0.10;
 
-// `freeport_core::day::daylight`, transcribed: one under a sun well up,
-// nought well after it has set, and the band between.
-fn daylight(sun: vec3<f32>, up: vec3<f32>) -> f32 {
+// `freeport_core::day::twilight`, transcribed: how much light the SKY
+// still has, one under a sun well up, nought well after it has set, and
+// the band between. It is SCATTERED light, which is what is left once
+// the sun is down, so it runs past the horizon and the direct beam does
+// not: `day::daylight` is the other one and is nought the moment the sun
+// sets, because a body cannot light a place its own bulk stands in front
+// of. Nothing in this shader wants the beam, since Bevy's own
+// directional light carries it and `sky.rs` is what scales that.
+fn twilight(sun: vec3<f32>, up: vec3<f32>) -> f32 {
     return smoothstep(DUSK_TO, DUSK_FROM, dot(normalize(sun), up));
 }
 
@@ -434,10 +440,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr_input.material.metallic = orm.b;
     // A street lamp and a lit window burn at NIGHT and not at noon, on
     // the same terminator the sea and the body from orbit read, which is
-    // `day::daylight` in the core. It is a share of what they were drawn
-    // at before there was a night, so a midnight street is the picture
-    // this shader always drew and a midday one has its lights off.
-    let lamps = terrain.sun.w * (1.0 - daylight(terrain.sun.xyz, up));
+    // `day::lamplight` in the core and is the other side of the TWILIGHT
+    // rather than of the beam: what a lamp is for is the light there is,
+    // so it is still coming up while the sky is, and full once the band
+    // has gone. It is a share of what they were drawn at before there
+    // was a night, so a midnight street is the picture this shader
+    // always drew and a midday one has its lights off.
+    let lamps = terrain.sun.w * (1.0 - twilight(terrain.sun.xyz, up));
     pbr_input.material.emissive = vec4<f32>(
         (vec3<f32>(8.0, 7.4, 6.0) * lamp + vec3<f32>(3.0, 2.4, 1.5) * lit) * lamps,
         1.0,

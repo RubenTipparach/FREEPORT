@@ -135,9 +135,16 @@ pub(crate) fn road_out(world: &World, up: f64) -> Option<(DVec3, DVec3)> {
     // And OUT of the town first. The first open point is a couple of
     // hundred metres from the town's centre, which is its own edge: the
     // picture from there is a street with a field at the end of it, and
-    // what this camera is for is the country road. `CLEAR` pieces is
-    // about a kilometre.
-    const CLEAR: usize = 3;
+    // what this camera is for is the country road.
+    //
+    // ONE piece and not three, which is measured rather than chosen. At
+    // three the camera stood about 1.7 km from the port's middle looking
+    // further out, and `road::LIT_NEAR` is 1.5 km: every lamp on the
+    // road was BEHIND it, so the night picture of a lit approach came
+    // back with nothing on it at all. One piece is 341 m of country
+    // between the camera and the town's own edge, which is still a
+    // country road, and it is inside the lighting rather than past it.
+    const CLEAR: usize = 1;
     let (start, along) = if ahead {
         (
             (first + CLEAR).min(last),

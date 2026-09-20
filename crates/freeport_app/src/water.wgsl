@@ -171,6 +171,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // level already, and dimmed twice the sea went black at the horizon,
     // where a mirror should be closest to the sky it mirrors.
     let sun = normalize(water.sun.xyz);
+    // `freeport_core::day::twilight`: what a sheet MIRRORS is the sky,
+    // and the sky is still lit after the sun has set, which is the whole
+    // of why this keeps the band where the directional light does not.
     let daylight = smoothstep(DUSK_TO, DUSK_FROM, dot(radial, sun));
     let lit = mix(water.sun.w, 1.0, daylight);
     let absorb = max(water.absorb.rgb, vec3<f32>(0.0));

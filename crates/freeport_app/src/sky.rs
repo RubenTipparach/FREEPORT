@@ -311,6 +311,17 @@ pub fn turn_sun(
     // subtends; from the air near the terminator it is one answer for a
     // scene that spans several degrees of it, and from orbit the
     // impostor does the same rule per fragment off its own chart.
+    //
+    // And it goes out AT the horizon and not a few degrees under it,
+    // which is the owner's second correction and is the physics: a
+    // directional light cannot cast a shadow from below nought degrees,
+    // because past a place's own horizon the planet is between it and
+    // the sun. `day::daylight` is nought there by construction now; the
+    // band it still has is ABOVE the horizon, where a low sun really is
+    // shining through forty airmasses and delivering a tenth of what it
+    // does overhead. What is left after a sunset is `day::twilight`,
+    // which is scattered light and belongs to the sky, the sea's mirror
+    // and the body seen from orbit rather than to this beam.
     let lux = SUN_LUX * freeport_core::day::daylight(weather.sun, weather.here) as f32;
     for (mut tf, mut lamp) in &mut light {
         *tf = Transform::from_translation(Vec3::ZERO).looking_to(-sun, up);
@@ -521,81 +532,109 @@ mod tests {
     use super::*;
     use freeport_core::day;
 
-    /// THE SUN GOES OUT ON THE NIGHT SIDE, which is tenebris's own rule
-    /// (`hex.vs.glsl`: the terminator is measured on the RADIAL and it
-    /// scales the sun's diffuse) and what stops a wall at midnight being
-    /// lit from under the ground. Driven through the real system,
-    /// because the rule is the core's and the wiring is where an app
-    /// side bug would be.
+    /// THE SUN GOES OUT ON THE NIGHT SIDE, and it goes out AT the
+    /// horizon, which is the owner's own correction twice over.
+    ///
+    /// The first half is tenebris's rule (`hex.vs.glsl`: the terminator
+    /// is measured on the RADIAL and it scales the sun's diffuse) and is
+    /// what stops a wall at midnight being lit from under the ground.
+    /// The second is the physics the first cut of it still had wrong: a
+    /// directional light cannot cast a shadow from below nought degrees,
+    /// because past a place's own horizon the planet is in the way, and
+    /// the band `day::daylight` fades over ran five and a half degrees
+    /// UNDER the horizon. The harness's sun was still burning at a fifth
+    /// of its strength with the sun set.
+    ///
+    /// It is driven through the real system, because the rule is the
+    /// core's and the wiring is where an app side bug would be, and over
+    /// a WHOLE DAY rather than at named hours: six and eighteen are only
+    /// sunrise and sunset on a place whose own latitude the sun is over,
+    /// and reading them as the terminator is what put this assertion's
+    /// first cut 952 lux past its own claim.
     #[test]
     fn a_wall_at_midnight_takes_no_sun_through_the_ground() {
         let here = DVec3::new(0.2, 0.3, 0.93).normalize();
         let noon = DVec3::new(0.9, 0.1, 0.42).normalize();
-        // Six and eighteen are DUSK and not night: the sun is crossing
-        // the horizon there and `day::daylight` is a band eight degrees
-        // either side of it, which is the point of a band.
-        let mut dusk = 0.0f32;
-        for (hour, want) in [
-            (12.0, Some(SUN_LUX)),
-            (0.0, Some(0.0)),
-            (22.0, Some(0.0)),
-            (2.0, Some(0.0)),
-            (18.0, None),
-        ] {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .insert_resource(crate::Eye(freeport_core::pos::WorldPos(here * 1_000_000.0)))
+            .insert_resource(crate::Ground(
+                std::sync::Arc::new(crate::world::World {
+                    planet: freeport_core::field::Planet::default(),
+                    towns: Vec::new(),
+                    roads: Vec::new(),
+                    routes: Vec::new(),
+                    bounds: freeport_core::walker::Bounds {
+                        radius: 1_000_000.0,
+                        floor: 0.0,
+                        top: 1.0,
+                        sea: 0.0,
+                    },
+                    sea: freeport_core::water::Sea {
+                        radius: 1_000_000.0,
+                    },
+                }),
+                DVec3::ZERO,
+            ))
+            .insert_resource(Weather {
+                air: freeport_core::atmos::Air::round(1_000_000.0, 8_000.0),
+                sea: 1_000_000.0,
+                sun: noon,
+                noon,
+                start: 0.0,
+                now: 0.0,
+                day: day::DAY,
+                here,
+            })
+            .add_systems(Update, turn_sun);
+        let light = app
+            .world_mut()
+            .spawn((DirectionalLight::default(), Transform::default()))
+            .id();
+        let (mut band, mut full, mut dark) = (0, 0, 0);
+        for step in 0..240 {
+            let hour = step as f64 / 10.0;
             let start = day::at_oclock(noon, here, hour, day::DAY);
-            let mut app = App::new();
-            app.insert_resource(Time::<()>::default())
-                .insert_resource(crate::Eye(freeport_core::pos::WorldPos(here * 1_000_000.0)))
-                .insert_resource(crate::Ground(
-                    std::sync::Arc::new(crate::world::World {
-                        planet: freeport_core::field::Planet::default(),
-                        towns: Vec::new(),
-                        roads: Vec::new(),
-                        routes: Vec::new(),
-                        bounds: freeport_core::walker::Bounds {
-                            radius: 1_000_000.0,
-                            floor: 0.0,
-                            top: 1.0,
-                            sea: 0.0,
-                        },
-                        sea: freeport_core::water::Sea {
-                            radius: 1_000_000.0,
-                        },
-                    }),
-                    DVec3::ZERO,
-                ))
-                .insert_resource(Weather {
-                    air: freeport_core::atmos::Air::round(1_000_000.0, 8_000.0),
-                    sea: 1_000_000.0,
-                    sun: day::sun_at(noon, start, day::DAY),
-                    noon,
-                    start,
-                    now: start,
-                    day: day::DAY,
-                    here,
-                })
-                .add_systems(Update, turn_sun);
-            let light = app
-                .world_mut()
-                .spawn((DirectionalLight::default(), Transform::default()))
-                .id();
+            let sun = day::sun_at(noon, start, day::DAY);
+            {
+                // The CLOCK and not the sun: `turn_sun` works the sun
+                // out of the hour itself, so a test that wrote the sun
+                // straight in had it overwritten and read noon at
+                // midnight.
+                let mut weather = app.world_mut().resource_mut::<Weather>();
+                (weather.start, weather.now) = (start, start);
+            }
             app.update();
             let lux = app
                 .world()
                 .get::<DirectionalLight>(light)
                 .expect("the sun")
                 .illuminance;
-            match want {
-                Some(want) => assert!(
-                    (lux - want).abs() < SUN_LUX * 1e-3,
-                    "at {hour} o'clock the sun is worth {lux} lux and should be {want}"
-                ),
-                None => dusk = lux,
+            // Over the horizon, as the SINE the terminator is measured
+            // in rather than as an hour of anybody's clock.
+            let up = sun.dot(here);
+            if up <= 0.0 {
+                assert_eq!(
+                    lux, 0.0,
+                    "at {hour:.1} o'clock the sun is {:.2} degrees UNDER the horizon and worth {lux} lux",
+                    -up.asin().to_degrees()
+                );
+                dark += 1;
+            } else {
+                assert!(lux > 0.0, "at {hour:.1} o'clock the sun is up and out");
+                if lux >= SUN_LUX * 0.999 {
+                    full += 1;
+                } else {
+                    band += 1;
+                }
             }
         }
+        // A day, a night, and a dusk between them that is a BAND and not
+        // a switch: the fade is ABOVE the horizon, where a low sun is
+        // shining through forty airmasses.
         assert!(
-            dusk > 0.0 && dusk < SUN_LUX,
-            "dusk is worth {dusk} lux, which is not a band"
+            dark > 0 && full > 0 && band > 0,
+            "{dark} dark readings, {full} full and {band} in the band is not a day"
         );
     }
 }

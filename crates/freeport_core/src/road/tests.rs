@@ -396,3 +396,117 @@ fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
         "the shoulder's own edge reaches {under_most:.3} m, which is not buried"
     );
 }
+
+/// A straight run of lit road, for measuring what is PAINTED on it and
+/// what stands beside it. Everything open, everything lit, flat ground.
+fn lit_run(radius: f64, points: usize) -> (crate::model::Model, Vec<DVec3>) {
+    use crate::road::ribbon;
+    let line: Vec<DVec3> = (0..points)
+        .map(|i| {
+            let a = i as f64 * PIECE / radius;
+            DVec3::new(a.sin(), 0.0, a.cos())
+        })
+        .collect();
+    let (run, open, on) = (vec![0.0; points], vec![true; points], vec![true; points]);
+    let frame = ribbon::frame(&line, &run, radius);
+    let model = ribbon::stretch(&frame, &line, &run, &open, &on, radius);
+    let local = line
+        .iter()
+        .map(|d| frame.local(*d * (radius + ribbon::LIFT)))
+        .collect();
+    (model, local)
+}
+
+/// How far a point stands to the side of a road's local centreline, and
+/// how far along it: the road is straight here, so its own direction is
+/// end to end and the across is square to that in the tangent plane.
+fn off_road(local: &[DVec3], p: DVec3) -> (f64, f64) {
+    let along = (local[local.len() - 1] - local[0]).normalize_or(DVec3::Y);
+    let across = DVec3::new(along.y, -along.x, 0.0).normalize_or(DVec3::X);
+    ((p - local[0]).dot(along), (p - local[0]).dot(across))
+}
+
+/// THE CENTRELINE IS DASHED, in three metre dashes and not in three
+/// hundred and forty one metre ones.
+///
+/// A dash was asked once a PIECE, so it came out as a whole piece of
+/// solid paint and then two whole pieces of nothing: the first picture
+/// of a road showed two edge lines and no middle at all, because the
+/// piece the camera stood on had fallen in a gap. What this measures is
+/// that a third of the centreline is paint and that no single mark is
+/// longer than one dash.
+#[test]
+fn the_centreline_is_dashed_in_dashes_and_not_in_pieces() {
+    use crate::road::ribbon;
+    const RADIUS: f64 = 1_000_000.0;
+    let (m, local) = lit_run(RADIUS, ribbon::STRETCH + 1);
+    let (mut painted, mut longest) = (0.0, 0.0f64);
+    for (t, mat) in m.mesh.materials.iter().enumerate() {
+        if *mat != crate::field::PAINT {
+            continue;
+        }
+        let p: Vec<DVec3> = (0..3)
+            .map(|i| glam::Vec3::from(m.mesh.positions[t * 3 + i]).as_dvec3())
+            .collect();
+        let (at, off): (Vec<f64>, Vec<f64>) = p.iter().map(|q| off_road(&local, *q)).unzip();
+        // The EDGE lines stand a metre out; only the middle is dashed.
+        if off.iter().any(|o| o.abs() > 0.5) {
+            continue;
+        }
+        painted += (p[1] - p[0]).cross(p[2] - p[0]).length() * 0.5;
+        longest = longest.max(
+            at.iter().copied().fold(f64::MIN, f64::max)
+                - at.iter().copied().fold(f64::MAX, f64::min),
+        );
+    }
+    let length = (local[local.len() - 1] - local[0]).length();
+    let share = painted / ribbon::PAINT_W / length;
+    let want = ribbon::DASH / (ribbon::DASH + ribbon::GAP);
+    assert!(
+        (share - want).abs() < 0.02,
+        "{:.1}% of the centreline is paint and {:.1}% should be",
+        share * 100.0,
+        want * 100.0
+    );
+    assert!(
+        longest <= ribbon::DASH + 0.05,
+        "the longest mark on the centreline is {longest:.1} m against a dash of {:.1}",
+        ribbon::DASH
+    );
+}
+
+/// THE LAMPS ON A LIT APPROACH STAND A STRIDE APART AND ALTERNATE SIDES,
+/// rather than one a kilometre all down one side.
+///
+/// They were placed one every third PIECE, which is the dashes' own
+/// mistake: the port's lit approach is about a kilometre of open road
+/// and it carried exactly one light, standing where the camera was, so
+/// the night picture of a road had nothing on it at all.
+#[test]
+fn the_lamps_on_an_approach_are_staggered_a_stride_apart() {
+    use crate::road::ribbon;
+    const RADIUS: f64 = 1_000_000.0;
+    let (m, local) = lit_run(RADIUS, ribbon::STRETCH + 1);
+    let mut posts: Vec<(f64, f64)> = m.lamps.iter().map(|p| off_road(&local, *p)).collect();
+    posts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let length = (local[local.len() - 1] - local[0]).length();
+    assert!(
+        posts.len() as f64 > length / ribbon::LAMP_EVERY - 2.0,
+        "{} lamps over {length:.0} m is not an approach lit every {:.0} m",
+        posts.len(),
+        ribbon::LAMP_EVERY
+    );
+    for pair in posts.windows(2) {
+        let gap = pair[1].0 - pair[0].0;
+        assert!(
+            (gap - ribbon::LAMP_EVERY).abs() < 1.0,
+            "two lamps stand {gap:.1} m apart"
+        );
+        assert!(
+            pair[0].1 * pair[1].1 < 0.0,
+            "two lamps in a row stand on the same side, at {:.2} and {:.2}",
+            pair[0].1,
+            pair[1].1
+        );
+    }
+}

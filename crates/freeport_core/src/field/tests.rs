@@ -421,3 +421,53 @@ fn the_slope_bound_holds_across_a_sites_skirt() {
         "a bound of {bound} is slack against {worst}"
     );
 }
+
+/// A ROAD'S CORRIDOR RAMPS THROUGH ITS OWN STATIONS, and does not carry
+/// a landing at each of them.
+///
+/// An arc's band is a capsule, so its round end reaches `CORRIDOR`
+/// metres past its last station into its neighbour's, and two arcs cover
+/// the ground either side of every station outright. Taking whichever
+/// the index reached first gave that ground the level AT the station
+/// rather than the ramp: on a one in ten grade every station carried a
+/// fourteen metre landing stepping 0.66 m, and the tarmac laid on the
+/// ramp floated over it. The nearest covering site is the one whose ramp
+/// this is, so the profile is the straight line the road was routed at.
+#[test]
+fn a_corridors_ground_ramps_through_a_station_without_a_landing() {
+    use crate::town::Site;
+    const RADIUS: f64 = 40_000.0;
+    const RUN: f64 = 240.0;
+    const RISE: f64 = 24.0;
+    // Three stations on one great circle, climbing at one in ten.
+    let dir = |k: f64| {
+        let a = k * RUN / RADIUS;
+        DVec3::new(a.sin(), 0.0, a.cos())
+    };
+    let planet = Planet {
+        radius: RADIUS,
+        relief: 0.0,
+        overhang: 0.0,
+        ledge: 0.0,
+        sites: vec![
+            Site::arc((dir(0.0), 0.0), (dir(1.0), RISE), crate::road::CORRIDOR),
+            Site::arc(
+                (dir(1.0), RISE),
+                (dir(2.0), RISE * 2.0),
+                crate::road::CORRIDOR,
+            ),
+        ]
+        .into(),
+        ..Default::default()
+    };
+    let mut worst = 0.0f64;
+    for i in 0..=800 {
+        let k = i as f64 / 400.0;
+        let want = RISE * k;
+        worst = worst.max((planet.surface(dir(k)).0 - want).abs());
+    }
+    assert!(
+        worst < 0.01,
+        "the corridor's ground strays {worst:.3} m from the ramp it was cut to"
+    );
+}

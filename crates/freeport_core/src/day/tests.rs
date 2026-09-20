@@ -162,3 +162,48 @@ fn the_lamps_come_on_as_the_sun_goes_down_and_not_before() {
         "dusk is a step rather than a band"
     );
 }
+
+/// THE SUN CASTS NOTHING FROM BELOW THE HORIZON, which is the owner's
+/// own correction and is a fact about the BODY rather than about a
+/// renderer: past a place's own horizon the planet stands between it and
+/// the sun, so there is no beam to attenuate and nothing for it to cast
+/// a shadow with.
+///
+/// It did. `daylight` faded from `DUSK_FROM` down to `DUSK_TO`, which is
+/// about five and a half degrees UNDER the horizon, so the harness's
+/// directional light was still burning at a fifth of its strength with
+/// the sun set and casting shadows through the world.
+///
+/// What survives a sunset is `twilight`, and this holds that the two
+/// differ exactly where they should: the same above the band, both
+/// nought well below it, and only the scattered one alive in between.
+#[test]
+fn the_sun_casts_nothing_from_below_a_places_own_horizon() {
+    let here = DVec3::new(0.2, 0.3, 0.93).normalize();
+    // Every elevation from a quarter turn under to a quarter turn over.
+    let east = here.cross(AXIS).normalize();
+    for i in -900..=900 {
+        let a = (i as f64 / 10.0).to_radians();
+        let sun = (here * a.sin() + east * a.cos()).normalize();
+        let (direct, sky) = (daylight(sun, here), twilight(sun, here));
+        assert!((0.0..=1.0).contains(&direct) && (0.0..=1.0).contains(&sky));
+        if a <= 0.0 {
+            assert_eq!(
+                direct,
+                0.0,
+                "the sun is {:.1} degrees UNDER the horizon and still casting {direct}",
+                -a.to_degrees()
+            );
+        }
+        // And the sky still has light where the sun has set but the
+        // band has not run out, which is what dusk IS.
+        if (-0.09f64..=-0.01).contains(&a.sin()) {
+            assert!(sky > 0.0, "no dusk at {:.1} degrees", a.to_degrees());
+        }
+        assert!(direct <= sky + 1e-12, "the beam outlasts the sky");
+    }
+    // Full day is full day on both.
+    let noon = (here * 0.5f64.sqrt() + east * 0.5f64.sqrt()).normalize();
+    assert_eq!(daylight(noon, here), 1.0);
+    assert_eq!(twilight(noon, here), 1.0);
+}

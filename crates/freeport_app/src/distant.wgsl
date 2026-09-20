@@ -126,6 +126,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // the bent normal: which half of a planet the sun is on is a fact
     // about the planet, and a normal leaned off a mountain would put a
     // patch of midnight on a slope at noon.
+    // `freeport_core::day::twilight` and not `daylight`: a body seen from
+    // off it carries a twilight ARC where the sun has set on the ground
+    // and not in the air above it, which is what softens a terminator on
+    // a planet with weather and leaves one on an airless moon sharp.
     let night = 1.0 - smoothstep(DUSK_TO, DUSK_FROM, dot(d, distant.sun.xyz));
     pbr_input.material.base_color =
         vec4<f32>(albedo.rgb * mix(1.0, NIGHT_FLOOR, night), 1.0);

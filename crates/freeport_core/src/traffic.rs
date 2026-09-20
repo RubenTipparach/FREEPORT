@@ -228,6 +228,86 @@ impl Streets {
         self.edges.binary_search(&key).is_ok()
     }
 
+    /// Every node the paving touches, sorted, so one can be looked up
+    /// by a binary search rather than by a `HashMap`.
+    fn nodes(&self) -> Vec<Node> {
+        let mut out = Vec::with_capacity(self.edges.len() * 2);
+        for &(n, w) in &self.edges {
+            out.push(n);
+            out.push(step(n, w));
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// The chain of crossings from the one nearest `from` to the one
+    /// nearest `to`, in the town's own metres: the way OUT of a town.
+    ///
+    /// A car stolen in the middle of a town cannot see the country road.
+    /// `roads::Network::follow` gives up past its own reach, so the
+    /// scripted drive aimed at a town nine kilometres off, which from a
+    /// street between two buildings is aiming at a wall: it drove twelve
+    /// metres and then oscillated against the same building for the rest
+    /// of the run. The streets ARE the way out and the graph is already
+    /// here, read off the paving that is drawn, so the route is a walk of
+    /// it and the car cannot be sent down a street nobody laid.
+    ///
+    /// BREADTH FIRST and not greedy. `town::streets_of` lays a piece only
+    /// where a block or its neighbour carries a lot, so a suburb's grid
+    /// has holes in it and a walk that only ever steps NEARER the goal
+    /// walks into one and stops. A town is a few hundred edges, so a full
+    /// sweep costs nothing and cannot get stuck.
+    ///
+    /// Empty when the two ends are not joined, which is an ANSWER: a lot
+    /// the paving never reached is a lot nothing can drive out of, and
+    /// the caller then does whatever it did before there was a route.
+    pub fn route(&self, from: DVec2, to: DVec2) -> Vec<DVec2> {
+        let nodes = self.nodes();
+        let nearest = |p: DVec2| {
+            (0..nodes.len()).min_by(|a, b| {
+                (place(nodes[*a]) - p)
+                    .length_squared()
+                    .total_cmp(&(place(nodes[*b]) - p).length_squared())
+            })
+        };
+        let (Some(start), Some(goal)) = (nearest(from), nearest(to)) else {
+            return Vec::new();
+        };
+        // The node each one was first reached FROM, so the chain can be
+        // walked back; `usize::MAX` is not yet seen.
+        let mut came = vec![usize::MAX; nodes.len()];
+        let mut queue = std::collections::VecDeque::new();
+        (came[start], _) = (start, queue.push_back(start));
+        while let Some(at) = queue.pop_front() {
+            if at == goal {
+                break;
+            }
+            for way in 0..4 {
+                if !self.has(nodes[at], way) {
+                    continue;
+                }
+                let Ok(next) = nodes.binary_search(&step(nodes[at], way)) else {
+                    continue;
+                };
+                if came[next] == usize::MAX {
+                    came[next] = at;
+                    queue.push_back(next);
+                }
+            }
+        }
+        if came[goal] == usize::MAX {
+            return Vec::new();
+        }
+        let mut chain = vec![goal];
+        while *chain.last().unwrap_or(&start) != start {
+            let last = chain[chain.len() - 1];
+            chain.push(came[last]);
+        }
+        chain.reverse();
+        chain.into_iter().map(|i| place(nodes[i])).collect()
+    }
+
     /// Every directed edge, sorted.
     fn directed(&self) -> Vec<(Node, usize)> {
         let mut out = Vec::with_capacity(self.edges.len() * 2);

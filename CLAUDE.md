@@ -2043,6 +2043,63 @@ air is holding it down, and prints anything over a kilometre a second in
 km/s, because two million metres a second is a number nobody can hold
 and is the same speed as 2,000 km/s.
 
+**A car gets out of a TOWN on the town's own streets, and that is the
+last thing between a stolen car and the country.** `roads::Network::
+follow` gives up past `OFF_ROAD` (400 m), and a car stolen in the middle
+of the port stands 700 m from the nearest tarmac: the scripted drive fell
+back to aiming at a settlement nine kilometres off, which from a street
+between two buildings is aiming at a wall. `traffic::Streets::route` is
+the answer and it needed no new data, because the graph of a town's
+paving is already there and is read off the pieces that are DRAWN. It is
+a breadth first walk of it: `town::streets_of` lays a piece only where a
+block or its neighbour carries a lot, so a suburb's grid has holes and a
+walk that only ever steps NEARER the goal walks into one and stops; a
+town is a few hundred edges, so a full sweep costs nothing.
+
+**Three defects on the way out, and each is the same shape: aiming at
+something that is not the next thing.**
+
+- **The road following was never once DRIVEN ON.** `steer_for` computed
+  the point on the tarmac and put it on the wheel of the outer input, and
+  a sub stepped drive then threw that away and replaced it with
+  `car.toward(goal)`. It was written, tested and dead, and the car went
+  on wedging itself against the building it always had. `Auto::aim` is
+  what the sub steps read now.
+- **A look ahead of thirty metres on a pitch of eighteen and a half skips
+  a corner.** A route is a chain of crossings joined by streets the town
+  laid, so the straight line to the NEXT one is on the paving and the
+  straight line to the one after it is through whatever stands on the
+  corner. The car made 230 m, reached a turn, and held the throttle
+  against a building with its aim 33 m away for the rest of the run.
+  There is nothing to tune, which is why the constant went: a town's look
+  ahead IS its pitch.
+- **And falling back to the route's LAST point was a car steering at the
+  crossing it was standing on.** The bearing off its own nose to a place
+  it is on top of is noise. No crossing left means the car is at the
+  town's exit, and what it wants then is the tarmac.
+
+**A road's DIRECTION is a fact about the road and not about the next
+point along it.** `follow` asked whether `line[near + 1]` was nearer the
+goal than `line[near]`, which is a local test on a thing that winds: the
+car turned round at every bend it met and covered 1,425 m of tarmac in
+seven minutes while closing 40 m of nine kilometres. It is the two ENDS
+now, so the answer cannot flip under a car that has not gone anywhere.
+
+Measured on the harness planet, the scripted drive out of the port: 12 m
+in 30 s wedged against a building, then 230 m and stuck at a corner, then
+1,425 m in 420 s oscillating on the road, and **9,297 m in 600 s at a
+steady 58 km/h**, which is the car flat out on a country road for ten
+minutes with nothing to back off from.
+
+**What is MISSING is the NETWORK.** The car follows ONE road, the one it
+joined, from the town's own streets: there is no route across the roads
+that join at a town, so a settlement that is not on the road it reached
+is a settlement it drives past rather than to. The scripted drive's goal
+is the nearest settlement whatever road it is on, so `--drive` measures
+the country driving honestly and the distance to its goal does not close.
+A route over the road graph is the same breadth first walk one level up
+and is named here rather than hidden.
+
 **And a car with no ROUTE cannot get out of a town, which is measured
 rather than guessed.** The scripted drive aimed straight at the next
 settlement, which from a street between two buildings is straight at a
@@ -2176,6 +2233,26 @@ first and the tarmac stood on the other. `road::open` is the one answer
 both the levelling and the tarmac are cut by, so they cover the same
 ground by construction.
 
+**A point SEVERAL sites cover outright takes the NEAREST one's level, and
+that is a road's own profile rather than a tie break.** A corridor is a
+chain of arcs whose ends MEET, and an arc's band is a CAPSULE: its round
+end reaches `CORRIDOR` (7 m) past its own last station into its
+neighbour's, so the ground either side of every station is covered twice.
+`Planet::levelling` returned on the first site its own latitude index
+reached, so a point seven metres along the next arc was given the level
+AT the station rather than the ramp: every station on every road carried
+a fourteen metre LANDING, a one in ten grade stepped 0.66 m at each of
+them, and which of the two arcs won was the sort's business rather than
+the geometry's. The tarmac is laid on the ramp, so it floated over those
+landings, and that is how this was found: the dashes above are the first
+geometry this world ever put at an INTERIOR point of a piece, and the
+tarmac test went from 0.103 m of float to 0.796 the moment they landed.
+The point seven metres along the next arc stands ON that arc's axis and
+seven metres off the last one's, so the nearest is the one whose ramp it
+is, and `a_corridors_ground_ramps_through_a_station_without_a_landing`
+holds the profile to within a centimetre of the straight line the road
+was routed at, against 0.66 m before.
+
 **The tarmac is the streets' own cross section at the country's scale.**
 `LANE` each way read off `town::street` rather than written again, a
 dashed centreline, a solid line down each edge, and a SHOULDER falling
@@ -2188,6 +2265,21 @@ waypoint bends. Fifteen centimetres clears that, and the shoulder is
 buried deeper than the error runs so there is no crack at the outside of a
 bend for the ground to show through.
 `the_tarmac_lands_on_the_ground_its_corridor_levelled` measures both.
+
+**A DASH IS THREE METRES AND A PIECE IS THREE HUNDRED AND FORTY ONE**,
+so the markings cannot be a property of the piece, and the first picture
+of a road is what said so: two edge lines running to the horizon with no
+middle at all. The centreline was asked once a piece, so it came out as
+341 m of solid paint and then 682 m of nothing, and the piece the camera
+stood on had fallen in a gap. The piece is walked in `DASH + GAP` steps
+now and the painted part of each step is its own quad, with the station
+and the across interpolated to where it falls, which is what
+`the_centreline_is_dashed_in_dashes_and_not_in_pieces` measures: 33.3% of
+the centreline is paint and the longest single mark on it is 3.00 m.
+The phase is measured from the start of the STRETCH rather than of the
+road, so one dash in 5.5 km is short at a seam; a stretch is what a road
+is built and streamed in and knows nothing of the pieces before it, and a
+global phase would mean walking a whole road to lay any of it.
 
 **It STREAMS, one stretch a frame, like a town.** 63,840 km of road is
 sixty million triangles and the eye is only ever in one place: a stretch
@@ -2202,10 +2294,22 @@ radius it already carries.
 **A road is LIT on the approach to a town and dark in the country**,
 which is the owner's own rule. `road::lit` is where that is decided and it
 is measured from a settlement's own site, so it cannot drift from where
-the towns are: `LIT_NEAR` is 1.5 km, and a lamp stands every third piece,
-about a kilometre apart, seven metres up and half a metre off the
-carriageway. The post only DRAWS, which is this file's rule that anything
-a body should pass through is trim: a lamp post is not what stops a car.
+the towns are: `LIT_NEAR` is 1.5 km, and a lamp stands every `LAMP_EVERY`
+(45 m) along it, seven metres up and half a metre off the carriageway,
+ALTERNATING sides, so it is ninety metres between two on the same side,
+which is what a staggered pair on a two lane road is. In METRES and not
+in PIECES, which is the dashes' own mistake in the same file: one lamp
+every third piece is one lamp a kilometre, and the port's whole lit
+approach, which is about a kilometre of open road between the town's own
+band and `LIT_NEAR`, carried exactly ONE light, standing where the camera
+was. The night picture had nothing on it at all.
+`the_lamps_on_an_approach_are_staggered_a_stride_apart` holds both the
+spacing and the stagger, and the harness says where the lighting actually
+STOPS rather than restating the constant: road 0 out of the port is lit
+from its first open piece to piece 5, **1,001 m of approach**. It is that
+line the road camera is aimed off now. The post only DRAWS, which is this file's rule
+that anything a body should pass through is trim: a lamp post is not what
+stops a car.
 The lights themselves are `lamps.rs`'s, unchanged but for knowing that a
 lamp can be a road's as well as a town's, and a road's is indexed along
 the whole ROAD because a stretch of it streams.
@@ -2214,10 +2318,12 @@ the whole ROAD because a stretch of it streams.
 where two roads cross, two corridors overlap and the field answers
 whichever it reaches first, and there is no give way, no slip road and no
 roundabout. Nothing drives on it on rails, so the country between two
-towns is empty of traffic. The car does not FOLLOW it yet, which is the
-next section's own gap. And a road is not drawn in a town, because the
-town's streets are there, so the join between the two is a change of
-surface rather than a junction.
+towns is empty of traffic. A car has no HEADLAMPS: its lamps are emissive
+and cast no light, so a night drive out past `LIT_NEAR` is a drive in the
+dark, which is what a day arriving on a world with unlit country roads
+costs and is named here rather than hidden. And a road is not drawn in a
+town, because the town's streets are there, so the join between the two
+is a change of surface rather than a junction.
 
 ## Cities are JOINED, and the plan of a body is BAKED
 
@@ -2785,6 +2891,68 @@ frames nobody asked for. It is a DEADLINE rather than a fixed sleep, so the
 cap does not drift, and a frame that has already overrun resyncs to now
 rather than running the next few flat out.
 
+## The sun goes out AT the horizon, and what is left is the SKY
+
+A directional light shines on every surface whose normal faces it, and
+nothing in a cascade a few hundred metres deep can put a PLANET in the
+way: at midnight the sun stood under the ground and every wall facing it
+was lit from below, which is sunlight shining up through the world. The
+owner saw it and named where the answer is, and it is tenebris's, one
+line there too (`hex.vs.glsl`): `smoothstep(term_lo, term_hi, dot(radial,
+sun))` scales the sun's own diffuse, so which half of a planet is in its
+own night is decided on the RADIAL and never on the surface normal.
+
+**Then the owner named the second half of it: it is impossible for a
+directional light to cast a shadow below nought degrees of the horizon.**
+That is right and it is a fact about the BODY: a place's horizon is where
+the sun's own centre crosses its tangent plane, and past it the planet
+itself stands between the two. There is no beam to attenuate and nothing
+for it to cast. The first cut faded over `DUSK_TO` to `DUSK_FROM`, and
+`DUSK_TO` is -0.10, about five and a half degrees UNDER the horizon, so
+the harness's sun was still burning at a fifth of its strength with the
+sun set and casting shadows through the world.
+
+**So there are TWO terms and they are different things**, which is the
+whole of `day.rs`'s own distinction:
+
+- **`day::daylight` is the DIRECT beam** and is nought at and below the
+  horizon, by construction (`smoothstep(HORIZON, DUSK_FROM, ...)` with
+  `HORIZON` nought, because a horizon is not a number anybody tunes). The
+  band it keeps is ABOVE the horizon and is not geometry, it is AIRMASS:
+  a sun at one degree of elevation is shining through forty atmospheres
+  and delivers about a tenth of what it does overhead, so the beam comes
+  up over the first eight degrees rather than switching on. `sky.rs`
+  scales the `DirectionalLight` by this, so the beam and its shadows go
+  together, and `terrain.wgsl` is its only other reader.
+- **`day::twilight` is the SCATTERED light** and keeps the band either
+  side, which is what dusk IS: the air above an observer is still lit
+  long after the observer is not, and civil twilight runs six degrees
+  past sunset. `distant.wgsl` fades a body's albedo by it, because a
+  planet seen from off it carries a twilight ARC where the sun has set on
+  the ground and not in the air above it; `water.wgsl` mirrors it,
+  because what a sheet reflects is the sky; and `lamplight` is its other
+  side, because what a street lamp is for is the light there IS. On the
+  beam a town would switch on all at once the instant the sun's centre
+  crossed the horizon.
+
+`the_sun_casts_nothing_from_below_a_places_own_horizon` sweeps a whole
+quarter turn either side and holds the beam at exactly nought below,
+the sky alive through the band, and the beam never outlasting the sky.
+`a_wall_at_midnight_takes_no_sun_through_the_ground` drives the real
+system over a WHOLE DAY in tenths of an hour rather than at named hours,
+which is its own lesson: six and eighteen are only sunrise and sunset on
+a place whose latitude the sun is over, and reading them as the
+terminator put the first cut of that assertion 952 lux past its own
+claim.
+
+**At the EYE's own radial**, because Bevy's light loop is inside
+`apply_pbr_lighting` and there is nowhere to scale one light per fragment
+without writing the loop again. On the ground that is exact to a tenth of
+a degree, which is what a 1.8 km horizon subtends; from the air near the
+terminator it is one answer for a scene that spans several degrees of it,
+and from orbit the impostor does the same rule per fragment off its own
+chart.
+
 ## Bodies orbit on rails, ships integrate, and a station is a frame
 
 Every planet, moon and station's position is a closed form function of the
@@ -2996,8 +3164,14 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 # it looked sixty pieces ahead, which is twenty kilometres and well
 # under the horizon of an eye 25 m up, and the picture came back as bare
 # hills.
-./target/release/freeport_app --fly --levels 6 --octaves 10 --frames 50 --road 3 --hour 10 --shot road.png
-./target/release/freeport_app --fly --levels 6 --octaves 10 --frames 50 --road 3 --hour 22 --shot roadnight.png
+# The OCTAVES are left alone, like the drive's, and these two recipes
+# carried `--octaves 10` for a commit: the atlas is refused at any count
+# but the one it was baked at, so all three renders came back with
+# `0 roads are 0 stretches of tarmac` and a town's own street in frame.
+# A flag that buys a picture down on a software rasteriser cannot be
+# used on the one picture that is OF the atlas.
+./target/release/freeport_app --fly --levels 5 --frames 40 --road 3 --hour 10 --shot road.png
+./target/release/freeport_app --fly --levels 5 --frames 40 --road 3 --hour 22 --shot roadnight.png
 # How far the ground strays from a straight ramp between two road
 # waypoints, which is the measurement that decided `road::PIECE`. It
 # reads the atlas's own segments off a file, because it is a measurement
@@ -3179,6 +3353,46 @@ Numbers in the commit message. What is measured so far:
   outside a 16,384 m box and NOTHING streamed, which is what the owner's
   `0 chunks, 0 triangles` said. Followed on the eye's own ground it is
   inside the box at 0, 50, 1,200, 12,000, 49,400 and 400,000 m up.
+- **What was on the ROAD, and what the first two pictures of one found.**
+  The centreline was a third of a PIECE of solid paint and two thirds of
+  nothing, so the day picture came back with two edge lines and no middle
+  at all; walked in `DASH + GAP` steps it is 33.3% paint with no mark on
+  it longer than 3.00 m. The lamps were one every third piece, which is
+  one a kilometre, so the night picture of a lit approach came back
+  black; every 45 m and staggered, the port's approach carries a line of
+  them. And the road CAMERA stood 1.7 km out against a `LIT_NEAR` of 1.5,
+  so every lamp was behind it: one piece clear of the town rather than
+  three. A lamp standard is `CONCRETE` and not `PLATE`, because hull
+  plate's panel lines are centimetres apart on a column 0.18 m across and
+  the post in the foreground came out candy striped.
+- **A corridor's LANDINGS, which the dashes are what found.** The tarmac
+  test went from 0.103 m of float to 0.796 the moment anything was drawn
+  at an interior point of a piece: an arc's band is a capsule whose round
+  end reaches 7 m into its neighbour's, so `Planet::levelling` returned
+  whichever of two covering arcs its latitude index reached first and
+  every station on every road carried a 14 m landing at its own level. On
+  a one in ten grade that is a 0.66 m step at each of them. Taking the
+  NEAREST covering site holds the profile within a centimetre of the ramp
+  the road was routed at, and the tarmac back to 0.240 m, which is the
+  mitre and the surfacing.
+- **What the sun was worth from UNDER the horizon**, which is the whole
+  of the owner's second correction, as arithmetic rather than a picture:
+  faded over `DUSK_TO` to `DUSK_FROM` the harness's 8,000 lux sun read
+  **3,009 lux at the horizon itself, 2,188 with the sun a degree under it
+  and 821 at three degrees under**, all of it casting shadows through the
+  planet. A day here is 240 minutes, so the 5.7 degrees the old band ran
+  past the horizon is 3.8 minutes of every dusk and every dawn. It is
+  0.0 at all four now. The A/B at midnight moved 0.082% of the picture
+  and that is honest rather than impressive: at midnight the old band had
+  already run out, and what this fixes is the hour either side of a
+  sunset.
+- **The scripted drive out of the port**, four measurements on one road:
+  12 m in 30 s wedged against a building; 230 m with a route out of town
+  that skipped a corner; 1,425 m in 420 s oscillating on the road,
+  turning round at every bend; and 9,297 m in 600 s at a steady 58 km/h.
+  The last is the car flat out on a country road for ten minutes, and
+  its distance to the goal does not close, because it is following the
+  road it reached rather than routing over the network.
 - **The atlas re-baked on the corrected town rules**: 1084 settlements
   (160 cities and 924 villages) and 310 roads over 63,840 km joining 153
   of them, planned in 23.9 s and read back in 34 ms. The nearest

@@ -461,11 +461,34 @@ fn spawn_world(
 /// a town.
 fn say_roads(commands: &mut Commands, world: &World) {
     let network = roads::Network::of(world);
+    // How far the LIGHTING reaches out of a town, measured on the road
+    // out of the port rather than restated from `road::LIT_NEAR`: what
+    // a picture of a lit approach has to be aimed at is where the lamps
+    // actually stop, and the first night render of one came back black
+    // because the camera stood a hundred metres past them.
+    let lit = world.routes.first().map(|r| {
+        let open = r.open.iter().position(|o| *o).unwrap_or(0);
+        // The first UNLIT piece past it, and not the last lit one
+        // anywhere: a road is lit at BOTH ends, so `rposition` measured
+        // the whole road and reported 121.6 km of approach.
+        let dark = r.lit[open..].iter().position(|l| !*l).unwrap_or(0) + open;
+        (
+            open,
+            dark,
+            r.line[open].angle_between(r.line[dark]) * world.planet.radius,
+        )
+    });
     info!(
-        "{} roads are {} stretches of tarmac; the ones within {:.0} km of the eye are laid",
+        "{} roads are {} stretches of tarmac; the ones within {:.0} km of the eye are laid{}",
         world.roads.len(),
         network.len(),
         roads::REACH / 1000.0,
+        match lit {
+            Some((open, dark, run)) => format!(
+                ", and road 0 is lit from its first open piece {open} to piece {dark}, {run:.0} m of approach"
+            ),
+            None => String::new(),
+        }
     );
     commands.insert_resource(network);
 }

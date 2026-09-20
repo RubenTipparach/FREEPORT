@@ -37,8 +37,9 @@ pub const REACH: f64 = 9_000.0;
 const RECHECK: f64 = 250.0;
 
 /// How far off a road a car may be and still be FOLLOWING it, metres. A
-/// car further out than this is not on the road and is steered at where
-/// it is going instead, which is what gets it out of a town and onto one.
+/// car further out than this is not on the road: it is steered AT the
+/// road instead (`Network::mouth`), because the thing a car in a town
+/// has to do first is reach the tarmac.
 const OFF_ROAD: f64 = 400.0;
 
 /// Where every stretch of road on the body is, worked out once.
@@ -100,27 +101,21 @@ impl Network {
         look: f64,
         radius: f64,
     ) -> Option<DVec3> {
-        let (r, k, _) = self
-            .stretches
-            .iter()
-            .min_by(|a, b| a.2.angle_between(at).total_cmp(&b.2.angle_between(at)))
-            .copied()?;
+        let (r, near) = self.nearest(world, at)?;
         let route = world.routes.get(r)?;
-        let span = ribbon::span(k, route.line.len());
-        // The nearest point of that stretch, and which WAY along it gets
-        // nearer the town being driven to.
-        let near = span.clone().filter(|i| route.open[*i]).min_by(|a, b| {
-            route.line[*a]
-                .angle_between(at)
-                .total_cmp(&route.line[*b].angle_between(at))
-        })?;
         if route.line[near].angle_between(at) * radius > OFF_ROAD {
             return None;
         }
-        let ahead = route
-            .line
-            .get(near + 1)
-            .is_none_or(|n| n.angle_between(goal) < route.line[near].angle_between(goal));
+        // Which WAY along it, decided off the road's two ENDS and never
+        // off the next point along. A road winds, so a step that goes
+        // away from the goal is not a road that goes away from it: the
+        // local test turned the car round at every bend it met, and a
+        // drive out of the port covered 1,425 m of tarmac in seven
+        // minutes while closing 40 m of nine kilometres. The ends are a
+        // fact about the whole road, so the answer cannot flip under a
+        // car that has not gone anywhere.
+        let ends = (route.line[0], route.line[route.line.len() - 1]);
+        let ahead = ends.1.angle_between(goal) < ends.0.angle_between(goal);
         let pieces = ((look / freeport_core::road::PIECE).ceil() as usize).max(1);
         let want = if ahead {
             (near + pieces).min(route.line.len() - 1)
@@ -128,6 +123,37 @@ impl Network {
             near.saturating_sub(pieces)
         };
         Some(route.line[want] * (radius + route.run[want]))
+    }
+
+    /// The nearest tarmac to a direction, WHATEVER the distance: where a
+    /// car standing in a town has to get to before `follow` can take it
+    /// anywhere. Planet local, standing on the level the corridor was
+    /// cut to, like everything else here.
+    pub fn mouth(&self, world: &World, at: DVec3) -> Option<DVec3> {
+        let (r, near) = self.nearest(world, at)?;
+        let route = world.routes.get(r)?;
+        Some(route.line[near] * (world.planet.radius + route.run[near]))
+    }
+
+    /// Which road and which of its OPEN centreline points is nearest a
+    /// direction. The nearest stretch is found off the stretch middles
+    /// and only that stretch's own seventeen points are looked at:
+    /// walking 190,168 points a frame would be the frame.
+    fn nearest(&self, world: &World, at: DVec3) -> Option<(usize, usize)> {
+        let (r, k, _) = self
+            .stretches
+            .iter()
+            .min_by(|a, b| a.2.angle_between(at).total_cmp(&b.2.angle_between(at)))
+            .copied()?;
+        let route = world.routes.get(r)?;
+        let near = ribbon::span(k, route.line.len())
+            .filter(|i| route.open[*i])
+            .min_by(|a, b| {
+                route.line[*a]
+                    .angle_between(at)
+                    .total_cmp(&route.line[*b].angle_between(at))
+            })?;
+        Some((r, near))
     }
 
     /// The stretches within `REACH` of a direction, nearest first: the
@@ -269,14 +295,17 @@ fn lay(
     }
     // The lamps in the BODY's own frame, each carrying its index along
     // the whole road: a stretch streams, so an index into one would name
-    // a different lamp the moment a neighbour arrived.
+    // a different lamp the moment a neighbour arrived. The stretch's own
+    // number times `ribbon::LAMPS`, which is more than a stretch can
+    // hold, is what makes a place in one a place along the road.
     let lamps = model
         .lamps
         .iter()
         .enumerate()
+        .take(ribbon::LAMPS)
         .map(|(i, p)| {
             (
-                at.start + i * ribbon::LAMP_EVERY,
+                which.1 * ribbon::LAMPS + i,
                 frame.world(*p),
                 ribbon::LAMP_REACH,
             )
