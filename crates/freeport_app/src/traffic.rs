@@ -272,7 +272,7 @@ impl Crowds {
         tint: usize,
         transform: Transform,
         marker: impl Component,
-    ) {
+    ) -> Entity {
         let mut car = commands.spawn((
             Mesh3d(self.cars[tint].clone()),
             MeshMaterial3d(self.paint.clone()),
@@ -298,6 +298,7 @@ impl Crowds {
                 },
             ));
         }
+        car.id()
     }
 
     /// Whether these crowds belong to the body that is active.
@@ -644,7 +645,9 @@ fn spawn(
         ride,
     };
     match agent.kind {
-        Kind::Car => crowds.spawn_car(commands, tint, transform, rider(Ride::Whole)),
+        Kind::Car => {
+            crowds.spawn_car(commands, tint, transform, rider(Ride::Whole));
+        }
         Kind::Foot => {
             let mut body = commands.spawn((
                 Mesh3d(crowds.folk[tint][0].clone()),

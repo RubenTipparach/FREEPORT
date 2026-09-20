@@ -674,7 +674,7 @@ pub fn show_cars(
         }
         let theft = &thefts.cars[k];
         let (at, turn) = place(&theft.car);
-        crowds.spawn_car(
+        let car = crowds.spawn_car(
             &mut commands,
             theft.tint,
             Transform {
@@ -684,6 +684,27 @@ pub fn show_cars(
             },
             Stolen(k),
         );
+        // The HEAD LAMPS, on the PLAYER's car and nowhere else, which is
+        // `light_lamps`'s own rule: a light near the eye and a number
+        // everywhere else. Aimed down the car's own forward, which in a
+        // figure's frame is +y while Bevy's spot shines along -z, so the
+        // child is turned a quarter onto it.
+        for side in [-1.0f32, 1.0] {
+            commands.entity(car).with_child((
+                SpotLight {
+                    intensity: 0.0,
+                    range: crate::lamps::HEAD_REACH,
+                    inner_angle: 0.16,
+                    outer_angle: 0.52,
+                    color: crate::lamps::TORCH_COLOUR,
+                    shadows_enabled: false,
+                    ..default()
+                },
+                Transform::from_translation(Vec3::new(side * 0.52, 2.0, 0.68))
+                    .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                crate::lamps::Headlamp,
+            ));
+        }
     }
 }
 

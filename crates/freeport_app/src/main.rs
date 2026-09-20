@@ -240,6 +240,7 @@ fn main() {
     .init_resource::<Frame>()
     .init_resource::<Status>()
     .init_resource::<Thefts>()
+    .init_resource::<lamps::TorchOn>()
     .init_resource::<drive::Goal>()
     .init_resource::<flight_bench::Benchmark>()
     .add_systems(
@@ -288,7 +289,13 @@ fn tick(app: &mut App) {
                     stream,
                     flight_bench::after_stream,
                     light_lamps,
-                    (traffic::drive_traffic, traffic::spin_wheels).chain(),
+                    (
+                        traffic::drive_traffic,
+                        traffic::spin_wheels,
+                        lamps::hold_torch,
+                        lamps::light_headlamps,
+                    )
+                        .chain(),
                     show_cars,
                 )
                     .chain(),
@@ -665,28 +672,46 @@ fn spawn_camera(
         let w = Walker::enter(&world.ground(), &world.bounds, local, d);
         commands.insert_resource(OnFoot(w));
     }
-    commands.spawn((
-        Camera3d {
-            screen_space_specular_transmission_steps: 1,
-            ..default()
-        },
-        DepthPrepass,
-        Projection::Perspective(PerspectiveProjection {
-            far: 100_000_000.0,
-            ..default()
-        }),
-        Exposure { ev100: 10.5 },
-        // The sky lights the world: what fills a shadow is the air over
-        // it, off the same march the dome is drawn by, which is why a
-        // face turned away from the sun is sky blue and not black.
-        bevy::light::GeneratedEnvironmentMapLight {
-            environment_map: env,
-            intensity: 1.0,
-            ..default()
-        },
-        sky::StaticEnvironment,
-        fly,
-    ));
+    commands
+        .spawn((
+            Camera3d {
+                screen_space_specular_transmission_steps: 1,
+                ..default()
+            },
+            DepthPrepass,
+            Projection::Perspective(PerspectiveProjection {
+                far: 100_000_000.0,
+                ..default()
+            }),
+            Exposure { ev100: 10.5 },
+            // The sky lights the world: what fills a shadow is the air over
+            // it, off the same march the dome is drawn by, which is why a
+            // face turned away from the sun is sky blue and not black.
+            bevy::light::GeneratedEnvironmentMapLight {
+                environment_map: env,
+                intensity: 1.0,
+                ..default()
+            },
+            sky::StaticEnvironment,
+            fly,
+        ))
+        // The TORCH, a child of the camera so it points wherever the eye
+        // does and needs nothing to move it: a light carried by a body is
+        // the body's frame, which is this project's own rule for anything
+        // standing on a thing that moves.
+        .with_child((
+            SpotLight {
+                intensity: 0.0,
+                range: lamps::TORCH_REACH,
+                inner_angle: lamps::TORCH_INNER,
+                outer_angle: lamps::TORCH_OUTER,
+                color: lamps::TORCH_COLOUR,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::IDENTITY,
+            lamps::Torch,
+        ));
 }
 
 /// Left click takes the mouse, Escape gives it back.

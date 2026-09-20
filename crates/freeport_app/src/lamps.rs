@@ -179,3 +179,81 @@ mod tests {
         }
     }
 }
+
+/// A TORCH the player carries, and a car's HEAD LAMPS: the two lights in
+/// this world that are carried rather than standing somewhere.
+///
+/// They are lights rather than the emissives they were beside, and that
+/// is the whole difference: a head lamp drawn as an emissive is a bright
+/// PIXEL that lights nothing, so a night drive past `road::LIT_NEAR` was
+/// a drive in the dark with two glowing patches on the bonnet. This file
+/// already names that gap.
+#[derive(Component)]
+pub struct Torch;
+
+/// A car's own head lamps, on the STOLEN car and never on the rails
+/// traffic. `light_lamps` keeps forty eight of a body's thousands of
+/// street lamps for the same reason: a light near the eye and a number
+/// everywhere else, and two shadowing spots on every town car is dozens
+/// of lights for cars nobody is looking at.
+#[derive(Component)]
+pub struct Headlamp;
+
+/// How far a torch throws, and how wide. A metre and a half of hot spot
+/// at ten metres is what a hand torch does, which is `TORCH_INNER`.
+pub const TORCH_REACH: f32 = 45.0;
+pub const TORCH_INNER: f32 = 0.10;
+pub const TORCH_OUTER: f32 = 0.38;
+pub const TORCH_COLOUR: Color = Color::srgb(1.0, 0.97, 0.90);
+const TORCH_LUMENS: f32 = 90_000.0;
+
+/// How far a head lamp throws. Further and narrower than a torch,
+/// because that is what a head lamp is for: seeing the road at 160 km/h
+/// rather than the ground at your feet. At 44.4 m/s this is under three
+/// seconds of stopping sight, which is the honest number and is why a
+/// night drive still wants the lit approaches.
+pub const HEAD_REACH: f32 = 120.0;
+const HEAD_LUMENS: f32 = 400_000.0;
+
+/// The torch is a TOGGLE and the head lamps are the CLOCK, and that is
+/// the difference the owner asked for: a torch is on when you want it,
+/// at noon or at midnight, and head lamps come on because the sun went
+/// down.
+#[derive(Resource, Default)]
+pub struct TorchOn(pub bool);
+
+/// T turns the torch on and off, and it only burns ON FOOT: a torch
+/// carried by a walker who is at the wheel or flying is a light with
+/// nobody holding it.
+pub fn hold_torch(
+    keys: Res<ButtonInput<KeyCode>>,
+    on_foot: Option<Res<crate::walk::OnFoot>>,
+    mut on: ResMut<TorchOn>,
+    mut lit: Query<&mut SpotLight, With<Torch>>,
+) {
+    if keys.just_pressed(KeyCode::KeyT) {
+        on.0 = !on.0;
+    }
+    let burn = if on.0 && on_foot.is_some() {
+        TORCH_LUMENS
+    } else {
+        0.0
+    };
+    for mut light in &mut lit {
+        light.intensity = burn;
+    }
+}
+
+/// A car's head lamps come on when the sun goes down, off the SAME
+/// `day::twilight` the street lamps read (`sky::Weather::lamplight`), so
+/// a town and the car driving through it light up together rather than
+/// on two clocks that have to agree.
+pub fn light_headlamps(
+    weather: Res<crate::sky::Weather>,
+    mut lit: Query<&mut SpotLight, With<Headlamp>>,
+) {
+    let burn = weather.lamplight() as f32 * HEAD_LUMENS;
+    for mut light in &mut lit {
+        light.intensity = burn;
+    }
+}

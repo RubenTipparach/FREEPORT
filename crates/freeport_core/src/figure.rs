@@ -284,7 +284,7 @@ pub fn car() -> Figure {
         for end in [-1.0, 1.0] {
             parts.push(Part {
                 mesh: wheel(TYRE_R, TYRE_W, TYRE),
-                at: DVec3::new(side * (wide + TYRE_W - PROUD), end * 1.32, TYRE_R),
+                at: DVec3::new(side * (wide + PROUD - TYRE_W), end * 1.32, TYRE_R),
                 swing: Swing::Wheel { radius: TYRE_R },
             });
         }
@@ -301,7 +301,12 @@ pub fn car() -> Figure {
 /// `TYRE_R` is the radius the car's own `foot` is measured at, so the
 /// axle stands one radius over the ground and the tread touches it.
 /// `PROUD` is small and its only job is that no face of a wheel is
-/// COPLANAR with a face of the body, which is what a depth fight is.
+/// COPLANAR with a face of the body, which is what a depth fight is: the
+/// pivot is `wide + PROUD - TYRE_W`, so the OUTER FACE stands `PROUD` of
+/// the body's side and the rest of the wheel is under the body, which is
+/// where a wheel goes. Written `wide + TYRE_W - PROUD` it is the whole
+/// wheel outboard of the body, and the first render of that is a car on
+/// four outriggers.
 pub const TYRE_R: f64 = 0.33;
 pub const TYRE_W: f64 = 0.11;
 const PROUD: f64 = 0.02;
