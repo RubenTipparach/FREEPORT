@@ -43,6 +43,11 @@ use std::time::Instant;
 mod planning;
 use planning::{Layout, Planner, Request};
 
+/// How long the eye's own pace is eased over, seconds. Short enough that
+/// pulling away or braking is felt inside a box's own life and long
+/// enough that one slow frame is not a speed.
+const PACE_EASE: f64 = 0.75;
+
 /// Anything DRAWN at a place in the world: a chunk, its sheet of sea, a
 /// lamp, a town's models. It carries where it is in the world frame,
 /// which is what the origin's move needs, and `rebase_origin` is the one
@@ -102,6 +107,11 @@ pub struct Streamer {
     material: Handle<TerrainMaterial>,
     water: Handle<WaterMaterial>,
     fresh: bool,
+    /// Where the eye was last frame and how fast it is going, eased:
+    /// which levels are worth streaming and how far ahead of itself the
+    /// rings stand are both facts about that (`pace`).
+    was: Option<DVec3>,
+    pace: DVec3,
     pub stats: Stats,
     started: Instant,
     settled: Option<f32>,
@@ -124,6 +134,22 @@ struct Timings {
 pub struct StreamAssets<'w> {
     meshes: ResMut<'w, Assets<Mesh>>,
     water: Res<'w, Assets<WaterMaterial>>,
+}
+
+/// What the streamer FOLLOWS: where the eye is, the frame it is drawn
+/// in, the ground under it and how long this frame was.
+///
+/// One thing, because they are one question asked four ways and a fifth
+/// would be the fifth argument on a system already at this project's own
+/// limit. The clock joined them when the rings started adapting to how
+/// fast the eye is going, which is a fact about the eye and not about
+/// the world.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Watching<'w> {
+    pub eye: Res<'w, Eye>,
+    pub frame: Res<'w, Frame>,
+    pub ground: Res<'w, Ground>,
+    pub time: Res<'w, Time>,
 }
 
 impl Streamer {
@@ -163,6 +189,8 @@ impl Streamer {
             material,
             water,
             fresh: true,
+            was: None,
+            pace: DVec3::ZERO,
             stats: Stats::default(),
             started: Instant::now(),
             settled: None,
@@ -202,6 +230,8 @@ impl Streamer {
         self.material = body.material.clone();
         self.water = body.water.clone();
         self.fresh = true;
+        self.was = None;
+        self.pace = DVec3::ZERO;
         self.building = false;
         self.has_layout = false;
         self.stats = Stats::default();
@@ -210,17 +240,43 @@ impl Streamer {
         self.timings = Timings::default();
     }
 
+    /// How fast the eye is going, eased, metres a second in the body's
+    /// own frame.
+    ///
+    /// EASED over `PACE_EASE` and not the raw frame difference, because
+    /// what it decides is which LEVELS are streamed, and a rule that
+    /// read one frame's own step would drop and re-raise the finest ring
+    /// every time a car touched the brake. A rebase never appears in it,
+    /// since the eye here is planet local and an origin's move does not
+    /// touch it; a body change resets it with everything else.
+    fn pace(&mut self, eye: DVec3, dt: f64) {
+        let raw = match (self.was.replace(eye), dt > 0.0) {
+            (Some(last), true) => (eye - last) / dt,
+            _ => DVec3::ZERO,
+        };
+        // A teleport is not a speed. Anything past what flight itself
+        // allows is a jump (`--eye`, a body change, the first frame),
+        // and the levels it would ask for are the coarsest there are
+        // anyway.
+        let raw = if raw.is_finite() { raw } else { DVec3::ZERO };
+        let t = 1.0 - (-dt / PACE_EASE).exp();
+        self.pace += (raw - self.pace) * t;
+    }
+
     /// Follow the eye, and recompute the wanted set when a box moved.
     fn want(&mut self, eye: DVec3, world: &Arc<World>) {
         if self.building {
             return;
         }
         let height = (-world.planet.at(eye)).max(0.0);
-        let adapted = self.rings.adapt(&self.lat, height);
+        let adapted = self.rings.adapt(&self.lat, height, self.pace.length());
         // The boxes follow the eye's own GROUND at altitude, not the
         // eye: a box that is sixteen kilometres either way holds no
-        // terrain at all once the eye is higher than that.
-        let focus = self.rings.focus(&self.lat, eye, height);
+        // terrain at all once the eye is higher than that. And they
+        // stand AHEAD of it by a second and a half of travel, so the
+        // ground a car is driving into is streamed before the bonnet
+        // reaches it rather than after.
+        let focus = self.rings.focus(&self.lat, eye, height, self.pace);
         if !self.rings.follow(&self.lat, focus) && !adapted && !self.fresh {
             return;
         }
@@ -522,16 +578,26 @@ pub fn stream(
     mut commands: Commands,
     mut assets: StreamAssets,
     mut streamer: ResMut<Streamer>,
-    ground: Res<Ground>,
-    eye: Res<Eye>,
-    frame: Res<Frame>,
+    watching: Watching,
     debug: Res<LodDebug>,
 ) {
+    let Watching {
+        eye,
+        frame,
+        ground,
+        time,
+    } = &watching;
     let t0 = Instant::now();
     streamer.retire(&mut commands);
     streamer.accept_plan();
+    // The pace EVERY frame, and the wanted set only when a box moved:
+    // `want` returns early while a layout is building, and a speed that
+    // was only measured when it did not would be the speed the eye had
+    // the last time the streamer looked.
+    let here = eye.0 .0 - ground.1;
+    streamer.pace(here, time.delta_secs_f64());
     if !debug.frozen || streamer.fresh {
-        streamer.want(eye.0 .0 - ground.1, &ground.0);
+        streamer.want(here, &ground.0);
     }
     let queue_start = Instant::now();
     streamer.queue(&ground.0);

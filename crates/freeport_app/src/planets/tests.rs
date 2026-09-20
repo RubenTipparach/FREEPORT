@@ -108,6 +108,7 @@ fn changing_planets_updates_ground_streamer_and_weather_together() {
         now: 0.0,
         day: freeport_core::day::DAY,
         here: DVec3::Y,
+        frozen: false,
     };
     let mut app = App::new();
     app.insert_resource(planets)

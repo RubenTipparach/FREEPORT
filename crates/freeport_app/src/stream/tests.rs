@@ -32,6 +32,8 @@ fn harness() -> (App, Sender<Done>) {
         material: default(),
         water: default(),
         fresh: false,
+        was: None,
+        pace: DVec3::ZERO,
         stats: default(),
         started: Instant::now(),
         settled: None,

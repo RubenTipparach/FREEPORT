@@ -169,6 +169,15 @@ Ported from swarm-demo's `CLAUDE.md`, which ported it from redux-tribes'
   approved, then built. swarm-demo's move order was rebuilt as a prototype
   after the first cut shipped four defects, and that is the rule here from
   the first commit rather than the second.
+- **A ROAD GENERATION QUESTION GOES TO `docs/civil-engineering.md`
+  FIRST.** How tight a bend may be, how steep a grade, how wide a lane
+  or a shoulder or a verge, how steep a batter, how high an embankment:
+  every one of those is a real discipline's number with a formula behind
+  it, and that file carries the formula, the table, what this world
+  picks and every place this world deliberately departs. A constant in
+  `road.rs` or `road/ribbon.rs` that is not traceable to a row in it is
+  a number somebody guessed. The owner's own instruction, and it holds
+  until the owner says otherwise.
 - **Measure, then decide.** Numbers in the commit message, a clock rather
   than the engine's delta, and never "faster" without a before and an after.
   A frame time is a `std::time::Instant` and never Bevy's `Time`, whose delta
@@ -1138,6 +1147,32 @@ architectural materials retain the normal crease rule.
   1,200, 12,000, 49,400 and 400,000 m up. Nothing about the nesting
   moved: every level follows the same point, so a finer box is inside
   its coarser one exactly as it was.
+- **A FAST EYE GETS A COARSER FINEST RING, and that is what a drive
+  down a highway needed.** `Rings::adapt` dropped the fine levels by
+  HEIGHT and by nothing else, and on the ground at 160 km/h the finest
+  box is 32 m either way: it is crossed in under a second, every
+  crossing is a whole layout re-planned, and the streamer publishes a
+  layout only once every chunk in it is ready, so a finest box gone
+  before it is built is a layout that never lands and a world stuck at
+  the last one that did. That is the owner's "it takes a long time for
+  it to load as I start driving down the highways". The rule is the same
+  one the height term keeps, through ONE demand:
+  `height.max(pace * DWELL)` with `DWELL` four seconds, so a box too
+  small for what the eye is DOING is a box not worth streaming.
+  Measured: standing, walking (5 m/s) and running (8.5) all keep the
+  half metre cell they always had, and the car's own 44.4 m/s drops the
+  finest ring to level 2, a 2 m cell reaching 128 m, with the hysteresis
+  bringing it back the moment the car stops.
+- **And the boxes stand AHEAD of a moving eye.** A box is centred on
+  what it follows, so half of the finest one is always behind, which is
+  ground already driven over. `Rings::focus` leads by `LEAD` (1.5
+  seconds of travel), capped at half the finest active box's own reach
+  so the eye can never be outside its own finest ring: at the car's top
+  speed that is 64 m of road arriving before the bonnet does, the cap
+  binding on a lead of 66.6. The pace
+  it reads is EASED over `PACE_EASE` (0.75 s), because a rule that read
+  one frame's own step would drop and re-raise the finest ring every
+  time a car touched the brake.
 - **The coarsest box no longer holds the planet, and the CHART is what is
   behind it.** At 5,000 m of radius the 32 km box held the whole world; at
   1,000,000 m it is a patch 16 km either side of the eye. On foot that is
@@ -2057,10 +2092,41 @@ and centre. And it is turned out on the BUILT towns only, because a
 person walking a street nobody has laid the buildings of stands on a bare
 levelled plateau, which is the gap a far city already has.
 
-**What is MISSING, named rather than hidden.** Nothing here COLLIDES: a
-wall is one oriented box that is drawn and collided and a figure is
+**AND THE ROADS BETWEEN TOWNS CARRY A FEW CARS**, which is the owner's
+ask and is the same rule one level up. `road::commute` is a car out in
+the country: `plan` puts one every `EVERY` (10 km) of a road, hashed off
+the road's own index, and `spot` says where it is at a moment. This body
+turns out about six thousand of them over 63,840 km of road and draws
+the nearest `MOST_ROAD_CARS` (twelve) within 450 m, so a road nobody is
+near costs exactly nothing.
+
+**Its place is counted in centreline POINTS and not in metres**, which
+is what makes it a constant time answer: the points are `road::PIECE`
+apart by construction, so turning a distance into an index would mean
+walking a road's two thousand of them every frame for every car. What it
+costs is that the one SHORT piece at the end of each ten kilometre
+waypoint span is crossed a little slower, which is one piece in a
+hundred and eighteen and is under the speed's own spread.
+
+**They ride the middle of their own LANE**, `traffic::CAR_LANE` read off
+the street's cross section rather than written again, so a car in the
+country and a car in a street sit the same distance off the paint and
+oncoming traffic passes on the left in both. Half of them come the other
+way, which is what makes a road a road rather than a queue, and they go
+at 27 m/s (97 km/h) against the player's 160, so they are something to
+come up behind. `a_car_on_a_road_runs_its_length_in_its_own_lane`
+measures the furthest one sits off the centreline at **1.38 m**, which
+is its lane and inside the tarmac.
+
+**And a commuter cannot be STOLEN**, which is named rather than hidden:
+a `Theft` names its car by the town and agent it was, and a car on a
+road is neither.
+
+**What is MISSING, named rather than hidden.** A figure is
 `Model::trim`, which only draws, so a walker passes through a townsman
-and two townsmen pass through each other. A body that stops another body
+and two townsmen pass through each other. A CAR is a box now
+(`driver::car_box`) and stops the player, but only the player: nothing
+on rails is stopped by anything. A body that stops another body
 wants the walker to know about boxes that MOVE, which is a larger change
 than a crowd on a street. Nor does anybody give way: a car crossing a
 junction does not know the other car is there, because knowing would mean
@@ -2405,13 +2471,63 @@ whatever drives next:
 What makes a drive between two towns a journey is the ROAD, and the
 section on the roads below is why there is not one on the ground yet.
 
-**What is MISSING, named rather than hidden.** A stolen car does not
-collide with anything that MOVES, so it drives through townsmen and
-through the traffic, for the same reason nothing else in a town does:
-the walker knows about the boxes a model was drawn from and those do not
-move. Nothing is saved, so a car is stolen afresh every run. And the sea
-does not stop it: the bounds it drives against carry no water, so a car
-driven off a beach keeps going down the sea bed.
+**A CAR IN A WALL COMES OUT OF IT, and for a long time it could not.**
+That is the owner's "my car gets stuck in the buildings", and it is one
+line: `roll` asked whether a step was allowed and, where it was not,
+RETURNED without taking the position the push had already worked out. A
+car nosed into a building kept whatever overlap it had arrived with for
+ever, and one standing still inside a wall never moved at all, because
+`roll` returns at once at nought speed. Nothing in the whole frame could
+take a body out of a solid it was already in, which is this project's
+own oldest collision rule (**resolve, never "may I"**) missing from the
+one body that most needed it. `Driver::free` is that push, FIRST, every
+frame, whatever the pedals say, and a car that is clear of everything is
+not moved by it.
+
+**And a fast car TUNNELLED, twice over.** A wall here is `model::WALL`,
+0.35 m, and a car at 44.4 m/s covers 2.2 m in a frame of a software
+rasteriser and 0.74 m in a sixtieth: a step longer than the wall walks
+the outline's own eight points clean through it, nothing overlaps at
+either end, and the car comes down on the far side. The roll is SUB
+STEPPED at `Driver::STEP` (0.25 m) now, capped at sixteen steps a frame.
+
+That was not enough on its own, and the reason is worth keeping: **a
+push out of a signed distance box goes out of its NEAREST face, and a
+point past the box's own mid plane is nearest the FAR one.** Measured on
+that 0.35 m wall, a bumper 0.03 m past the middle was pushed 0.15 m
+FORWARD, out the other side, and the car drove on at 160 km/h without
+so much as slowing. No sub step short of half the wall's thickness fixes
+that and nothing knows how thin the next wall is. `walker::swept` is the
+answer: a step whose OUTLINE crosses a wall between where it started and
+where it ended is refused rather than resolved, sampled every 0.1 m,
+with both ends left out so a body sliding along a wall it is touching is
+not glued to it. Measured, a wall 220 m off: **217.76 m at sixty frames
+a second, 217.76 at twenty and 217.77 at twelve**, which is the wall
+less the car's own 2.05 m of bonnet at every frame rate, and nothing
+gets through.
+
+**One function decides what a WALL is.** `walker::out_of` is the `STAND`
+test and the push in one place, and both `resolve_body` and `swept` ask
+it, so a step refused and a push applied cannot be looking at two
+different worlds. `walker::Shape` is the ring and the heights a body is,
+which is what kept those two signatures inside this file's own limit.
+
+**AND A CAR IS STOPPED BY ANOTHER CAR.** `driver::car_box` is the box a
+car is to another body, built from `figure`'s own three numbers so the
+box and the car that is drawn cannot drift, and `drive::around` gathers
+the ones within `CAR_REACH` (30 m) of the wheel: the town's traffic, the
+cars out on the ROADS, and any the player has parked. They go into the
+same `Built` the town's walls are in, so the collider does not know a
+car from a wall and there is no second resolution path.
+
+**What is MISSING, named rather than hidden.** A car on the rails does
+not know the player is there. It is a closed form function of its town
+or its road and the clock, and knowing would mean state, which is the
+one thing rails do not have: so the player is stopped by the traffic and
+the traffic drives on through the player. Nothing is saved, so a car is
+stolen afresh every run. And the sea does not stop it: the bounds it
+drives against carry no water, so a car driven off a beach keeps going
+down the sea bed.
 
 ## A road is ON THE GROUND now, and its corridor is levelled like a town's
 
@@ -2837,6 +2953,95 @@ it keeps the corridor out of the band the town's own site is winning:
 inside it a road's tarmac floats 0.10 m off its own 0.15 m lift, and
 past it 0.003.
 
+**A BEND IS A CURVE A CAR CAN HOLD, and it was a corner with no
+radius at all.** The router hands back waypoints ten kilometres apart
+and a vertex of that chain turns the whole deflection in one step:
+measured at the spacing the road is actually laid in, a 45 degree bend
+was a **111 m** radius and a right angle **60 m**, which at 160 km/h is
+twenty gravities. `road::centreline` fits a circular curve at every
+vertex now (`road/align.rs`), and the radius is the real discipline's
+own formula at this world's own design speed: `R = v^2 / (g (e + f))`
+with `e` 8% of superelevation and `f` 0.10 of side friction is
+**1,116 m**, which is AASHTO's `V^2 / (127 (e + f))` in SI.
+`docs/civil-engineering.md` is the long form of that and of every other
+road number here, and `CLAUDE.md`'s own rules now send a road generation
+question to it first.
+
+**The design speed is `driver::TOP` and not a number of its own**, which
+is the rule about one number said once: a road is aligned for the
+fastest thing that drives on it, and if the car gets faster the roads
+get straighter without anybody editing two files.
+
+**A curve is CAPPED twice and the caps are named where they bind.** The
+tangent `R tan(delta / 2)` may not eat more than `CURVE_SHARE` (0.45) of
+either leg, so two neighbouring curves cannot overlap; and the MID
+ORDINATE `R (sec(delta / 2) - 1)`, which is how far the built road
+leaves the line the router measured, is capped at `CURVE_OFFSET`
+(250 m), because a curve that cut a headland off a coast road would be a
+road in its own bay. Measured: 10, 30, 45 and 60 degree bends are all
+built at the full 1,116 m and a right angle at **604 m**, where the
+offset cap wins, which is 118 km/h and a bend a real road would sign.
+
+**And it is DERIVED rather than stored**, which is `pieces` and `step`'s
+own rule: the atlas keeps the waypoints and both the bake and the game
+fit the same arcs to them. `road::CURVE` is in the atlas's fingerprint
+for the reason `PIECE` is, and so is `EMBANK`, which claimed to be there
+for a commit while `Atlas::fits` never read it.
+
+**THE HIGHWAY SITS ON A MOUND, and the mound is part of the road.** The
+owner's own diagram, and the defect it fixes is one this file had
+already measured from the air: a corridor is 32 m of flat and the rings
+put a cell of about a sixty fourth of its own distance under the eye, so
+past a couple of kilometres the mesher has no sample inside the corridor
+at all and draws the hill that was there before the road, while the
+tarmac is laid to nine kilometres whatever the terrain does. Between
+those two ranges the road is a ribbon hanging over a hill that does not
+know about it, and the hill wins wherever it stands higher. Measured
+before: the coarse ground stood **0.83 m over road 0's tarmac** at its
+worst, and after, swept over THIRTY TWO roads rather than one, the
+worst is **-0.49 m** and the median **-3.15**: the drawn ground is
+under the tarmac everywhere on the body, which is the road being the
+highest thing on its own mound rather than a ribbon over a hill.
+
+**So the road CARRIES its own ground.** `ribbon::mound` draws the verge
+out to `road::CORRIDOR` and the batter down the corridor's own skirt,
+both sides, every point of it read off `Planet::surface` and sunk
+`ribbon::BURIED` (15 cm). That is the SAME function the mesher contours
+and the walker and the car collide against, so the mound that is DRAWN
+and the mound that is STOOD ON are one surface by construction rather
+than two that have to agree, which is this file's own rule about a wall
+being one box that is drawn and collided arriving at the one thing here
+that is not a box. `the_mound_is_the_ground_the_field_levels` holds
+every one of its 5,208 vertices to that surface: -0.150 m to -0.150 m,
+which is the sink and nothing else.
+
+**And it is SUNK rather than laid on**, which is the pavement slab's own
+trick: wherever the terrain really is drawn at this detail the terrain
+wins and the mound is inside the hill, and wherever it is not the mound
+IS the ground. What it cost is one more mesh a stretch, a CHILD of the
+tarmac entity in the same frame with an identity transform, so it is
+placed, rebased and dropped with it: one `Anchored` and one `Paved`.
+The two are filtered out of ONE model by material
+(`to_mesh_filtered`), because the two are mapped from different places:
+the tarmac is a BUILT thing and maps in the stretch's own frame, and the
+mound is TERRAIN and maps the way a chunk does, in the planet's frame
+modulo the ground's own tile and carrying this latitude's climate, so
+the grass on it tiles with the grass beside it.
+
+**`road::EMBANK` is two metres now and it was half a metre**, which is
+inside the LOD error it was supposed to clear. Two metres over the
+corridor's eleven metre skirt is a batter of about one in five and a
+half, which `docs/civil-engineering.md` puts between the 1:3 a car can
+drive back up and the 1:6 a mower can take. It is over the walker's
+0.60 m step, so the batter and not the shoulder is how a body gets up
+onto a road now, which is what a real embankment is too.
+
+**And `open` and `graded` are two flags where there was one.** A slip
+runs over a town's own plateau, which the TOWN levelled and the road did
+not, so it is open (tarmac is laid) and not graded (there is no
+embankment of this road's to draw). The app's own splice already named
+one flag doing two jobs as the thing to watch here.
+
 **What is MISSING, named rather than hidden.** A road has no junctions
 WITH ANOTHER ROAD: where two roads cross, two corridors overlap and the
 field answers whichever it reaches first, and there is no give way, no
@@ -2844,9 +3049,7 @@ roundabout and no fan of tarmac where three arms converge. Measured on
 this body, all **1,118 road confluences are at settlements and none is
 in open country**, and the worst of them are at wayside villages nobody
 has built, so what that wants is a HUB at a settlement rather than a
-crossroads primitive, and it is named here rather than hidden. Nothing
-drives on a road on rails, so the country between two towns is empty of
-traffic. A car has no HEADLAMPS: its lamps are emissive
+crossroads primitive, and it is named here rather than hidden. A car has no HEADLAMPS: its lamps are emissive
 and cast no light, so a night drive out past `LIT_NEAR` is a drive in the
 dark, which is what a day arriving on a world with unlit country roads
 costs and is named here rather than hidden. And a road is not drawn in a
@@ -3302,6 +3505,53 @@ change when you fly to another planet. And nothing else knows what time
 it is yet: the traffic runs at the same rate at midnight as at noon, and
 a shop is not shut.
 
+## The hour is a MENU now, and it writes the one offset there is
+
+`clock.rs` is a drawn panel the player opens with **H**: the hour, four
+buttons that step the clock (an hour and ten minutes either way), four
+that jump to dawn, noon, dusk and midnight, and a freeze that holds the
+sun where it is. The owner's ask, and on a world whose day is four hours
+long it is what lets "come back at dusk" be a thing a player asks for
+rather than waits forty minutes for.
+
+**It writes `Weather::start` and NOTHING else**, which is what keeps the
+flag and the menu meaning one time: `--hour 6` and pressing DAWN both
+end at `day::at_oclock` and the readout reads both back through
+`day::oclock`. A second way of saying what time it is is exactly the
+drift this file's own one clock rule exists to stop, and
+`the_hour_the_menu_sets_is_the_hour_the_readout_says` holds the round
+trip at nought, six, half past eleven, noon, six and eleven.
+
+**A STEP is a share of a DAY and not a number of seconds**, so a body
+with a longer day steps in its own hours: the buttons are `1/24` and
+`1/144` of `Weather::day`.
+
+**The freeze SLIDES the offset rather than stopping the clock.** The
+app's own clock runs on whatever the sun does, so holding `now` still
+means moving `start` under it by the same amount; letting go then
+carries on from the hour it was held at rather than jumping to wherever
+the app has got to. There is still one clock and one offset.
+
+**H for the HOUR, because T is the TORCH.** The first cut took T,
+which `lamps::hold_torch` has had since the day a walker could carry
+one, so opening the clock would have flicked the torch on and off every
+time: one press doing two things, which is this file's own divergent
+path rule said about INPUT. The status line is the one table every key
+in this harness is in, which is the only place a collision of two
+features neither of which knows about the other can be seen, and it
+names both now.
+
+**And it gives the MOUSE back.** A panel a player has to press is a
+panel the cursor has to be free for, so opening it releases the grab and
+`grab_mouse` does not take it again while the menu is open: a left click
+on a button must not also be the click that takes the mouse away from
+him. It is the one place in this harness where a click is a press rather
+than a look.
+
+**This is a DEBUG panel and not a screen**, which is why it did not go
+through this file's own mockup rule: it is nine buttons in a corner that
+say what time it is, and the thing that would want a mockup is a HUD.
+
 ## The air is one march, and the sky is what lights the world
 
 `atmos.rs` is tenebris's `atmosphere.fs.glsl` in `f64`, which is a GPU Gems
@@ -3622,8 +3872,8 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 166, the core, about 46 s
-cargo test -p freeport_app                        # 47, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 180, the core, about 39 s
+cargo test -p freeport_app                        # 49, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
@@ -3634,7 +3884,7 @@ python3 tools/make_asphalt_texture.py --check     # the asphalt set matches its 
 python3 tools/make_building_textures.py --check   # and the six a building is built of
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
-./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, Tab wires, Esc frees the mouse
+./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, H the time menu, T the torch, Tab wires, Esc frees the mouse
 ./run.sh --test                                   # the core suite and the shape check, then the build and the window; run.bat is the Windows twin, --shot out.png takes a picture with no display
 # Every headless run below is under xvfb-run with
 # VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json, and `--octaves` is
@@ -3760,7 +4010,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 166 tests in about 46 s, and `freeport_app` 47 in 5. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 180 tests in about 41 s, and `freeport_app` 49 in 3. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -4024,6 +4274,52 @@ Numbers in the commit message. What is measured so far:
   own 80 m sink, and the coarse terrain was riddled with chart at 150 km
   up. Displaced to the LOWEST ground a vertex can see it cannot, and the
   silhouette drops by at most the relief, 4 km of 1,000.
+- **The MOUND under a highway, swept over 32 roads**: the drawn ground
+  stands **-0.49 m over the tarmac at its worst and -3.15 m at its
+  median**, against **+0.83 m at its worst** on road 0 alone before it.
+  The worst is the number that decides it, and it is negative now over
+  thirty two times the sweep, which says the coarse ground is under the
+  road everywhere on the body rather than merely mostly. The mound's own
+  5,208 vertices sit -0.150 m to -0.150 m off `Planet::surface`, which is
+  `ribbon::BURIED` and nothing else. And the SLIP did not move with
+  `EMBANK` going half a metre to two: 15 pieces over 41 m from a mouth
+  168 m out to a crossing 129 m out, ending 0.00 m from the town's own
+  paving with the ground -0.05 m over its tarmac at the worst, against 16
+  pieces over 42 m and the same three numbers before, which is what
+  `road::SLIP_CLEAR` is for.
+- **A FAST EYE's own rings**, at the car's `driver::TOP` of 44.4 m/s:
+  standing, walking (5 m/s) and running (8.5) all keep the **0.50 m cell
+  reaching 32 m** they always had, and driving drops the finest ring to
+  **level 2, a 2.00 m cell reaching 128 m**, coming back the moment the
+  car stops. The boxes stand **64 m ahead** of the eye there, which is the
+  cap (half the finest ACTIVE box's own 128 m) binding on a lead of 66.6.
+  Measured on rings that were ADAPTED first, which is the order
+  `Streamer::want` asks them in: the same test run against an unadapted
+  level 0 prints a 16 m lead the game never takes.
+- **The CURVE at a bend**, at the spacing the road is laid in: a 45 degree
+  bend was a **111 m** radius and a right angle **60 m**, which at 160
+  km/h is twenty gravities. Fitted, 10, 30, 45 and 60 degree bends all
+  come out at the full `CURVE` of **1,116 m** and a right angle at
+  **604 m**, where `CURVE_OFFSET` wins, which is 118 km/h.
+- **The body re-baked on the aligned centrelines**: **1104 settlements and
+  310 roads over 63,840 km joining 153** of them, planned in **280.8 s**
+  and read back in **779 ms** into **748,015 levelled corridor pieces**,
+  against 1084 settlements, 310 roads, 767 ms and 749,431 before. More
+  villages off the same 310 roads is what a curve does to a route: a
+  fitted arc is a little shorter than the corner it replaces, so
+  `road::waysides` walks a different line and drops its 25 km settlements
+  in different places.
+- **The CARS on the highways**: this body turns out **6,354** of them over
+  its 310 roads, and draws the nearest **12 within 450 m**, beside the
+  21,491 on foot and 5,643 driving in the 1,104 towns of which the nearest
+  32 and 14 are entities. A road nobody is near costs nothing, which is
+  the rails rule: `commute::spot` is never asked.
+- **A car that TUNNELLED, at three frame rates**: a wall 220 m off stops
+  it at **217.76 m at sixty frames a second, 217.76 at twenty and 217.77
+  at twelve**, which is the wall less the car's own 2.05 m of bonnet at
+  every one. Before the sweep a bumper 0.03 m past a 0.35 m wall's own mid
+  plane was pushed **0.15 m FORWARD**, out the far side, and the car drove
+  on at 160 km/h without slowing.
 - **The atlas re-baked on the corrected town rules**: 1084 settlements
   (160 cities and 924 villages) and 310 roads over 63,840 km joining 153
   of them, planned in 23.9 s and read back in 34 ms. The nearest

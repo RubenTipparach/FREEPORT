@@ -181,6 +181,15 @@ use crate::noise::smoothstep;
 const SKIRT_IN: f64 = 5.0;
 const SKIRT_OUT: f64 = 6.0;
 
+/// How wide a road's corridor skirt is, metres: `site_skirt` of a site
+/// with no outline, which is what an arc is.
+///
+/// It is `pub` because the RIBBON draws its own batter down exactly this
+/// band (`road::ribbon::bands`), and a road whose drawn embankment and
+/// whose levelled one were two numbers would be a mound that ended
+/// somewhere the ground does not.
+pub const ARC_SKIRT: f64 = SKIRT_IN + SKIRT_OUT;
+
 /// How wide a site's own skirt is: the blend from its level to the
 /// relief, metres.
 ///
@@ -197,7 +206,7 @@ pub fn site_skirt(site: &crate::town::Site) -> f64 {
         Some(_) => crate::town::WOBBLE.hypot(1.0),
         None => 1.0,
     };
-    (SKIRT_IN + SKIRT_OUT) * widen
+    ARC_SKIRT * widen
 }
 
 /// The arc from a site's middle inside which the ground is level right

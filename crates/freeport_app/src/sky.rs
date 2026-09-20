@@ -140,6 +140,14 @@ pub struct Weather {
     /// Where the EYE is on this body, as a direction: which of its hours
     /// the lamps are lit by, and what `turn_sun` measures the clock at.
     pub here: DVec3,
+    /// Whether the sun is HELD where it is, which the time menu sets.
+    ///
+    /// `turn_sun` slides `start` to hold `now` still rather than
+    /// stopping the clock, so letting go again carries on from the hour
+    /// it was held at rather than jumping to wherever the app's own
+    /// clock has got to. There is still ONE clock and one offset, which
+    /// is the rule this whole file rests on.
+    pub frozen: bool,
 }
 
 impl Weather {
@@ -279,6 +287,11 @@ pub fn turn_sun(
     mut weather: ResMut<Weather>,
     mut light: Query<(&mut Transform, &mut DirectionalLight)>,
 ) {
+    if weather.frozen {
+        // HELD: the app's own clock runs on, so the offset slides under
+        // it to keep `now` where it was.
+        weather.start = weather.now - time.elapsed_secs_f64();
+    }
     weather.now = weather.start + time.elapsed_secs_f64();
     weather.sun = freeport_core::day::sun_at(weather.noon, weather.now, weather.day);
     weather.here = (eye.0 .0 - ground.1).normalize_or(DVec3::Y);
@@ -585,6 +598,7 @@ mod tests {
                 now: 0.0,
                 day: day::DAY,
                 here,
+                frozen: false,
             })
             .add_systems(Update, turn_sun);
         let light = app
