@@ -494,6 +494,11 @@ fn say_roads(commands: &mut Commands, world: &World) {
     });
     // Whether the highway JOINS the city it leaves, which is a number
     // and not a thing to squint at a picture for.
+    if let Some((worst, median)) = roads::ground_over_tarmac(world) {
+        info!(
+            "the ground a coarse chunk draws stands {worst:.2} m over road 0's tarmac at its worst and {median:.2} m at its median"
+        );
+    }
     if let Some((k, town, gap, out, paved)) = roads::gap_to_town(world) {
         info!(
             "road {k}'s first tarmac stands {out:.0} m out of town {town}, whose own paving reaches {paved:.0} m: a gap of {gap:.0} m"

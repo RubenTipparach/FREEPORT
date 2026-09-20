@@ -386,3 +386,50 @@ pub fn gap_to_town(world: &World) -> Option<(usize, usize, f64, f64, f64)> {
         .fold(0.0f64, f64::max);
     Some((k, road.from, nearest, out, paved))
 }
+
+/// How far the ground a COARSE chunk draws stands over a road's own
+/// tarmac: the worst and the median, in metres, along the first road.
+///
+/// The terrain's cell is about a sixty fourth of its own distance from
+/// the eye and a corridor is 14 m wide, so past a couple of hundred
+/// metres the mesher has no sample inside the corridor at all and draws
+/// the planet WITHOUT it. That is the planet carrying the towns' sites
+/// and none of the roads', which is what this measures against, and
+/// anything it stands over the tarmac by is road the country hides.
+pub fn ground_over_tarmac(world: &World) -> Option<(f64, f64)> {
+    let route = world.routes.first()?;
+    let bare = freeport_core::field::Planet {
+        sites: world
+            .towns
+            .iter()
+            .map(freeport_core::town::site_of)
+            .collect(),
+        ..world.planet.clone()
+    };
+    let radius = world.planet.radius;
+    // ALONG the chord and not at the stations alone, and through
+    // `town::surface_radius`, which is the function the survey itself
+    // asked: `Planet::surface` is the analytic height and the two part
+    // company wherever the volumetric term bites, so measuring against
+    // the other one reports a disagreement as a burial.
+    const STEPS: usize = 8;
+    let mut over: Vec<f64> = Vec::new();
+    for i in 0..route.line.len().saturating_sub(1) {
+        if !(route.open[i] && route.open[i + 1]) {
+            continue;
+        }
+        for k in 0..STEPS {
+            let dir = freeport_core::road::step(route.line[i], route.line[i + 1], k, STEPS);
+            let here = freeport_core::town::surface_radius(&bare.around(dir, 1e-9), dir) - radius;
+            let t = k as f64 / STEPS as f64;
+            let road = route.run[i] * (1.0 - t) + route.run[i + 1] * t + ribbon::LIFT;
+            over.push(here - road);
+        }
+    }
+    if over.is_empty() {
+        return None;
+    }
+    let worst = over.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    over.sort_by(f64::total_cmp);
+    Some((worst, over[over.len() / 2]))
+}
