@@ -10,6 +10,7 @@
 
 use crate::args::Args;
 use crate::planets;
+use crate::roads;
 use crate::sky;
 use crate::world::{start, World};
 use bevy::math::DVec3;
@@ -67,6 +68,27 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
         if let Some(port) = world.towns.first() {
             let ground = port.dir * (world.planet.radius + port.h);
             return (ground + port.dir * over, ground);
+        }
+    }
+    // Straight down on the JUNCTION, which is where the highway's own
+    // tarmac meets the port's paving. `--over` looks down at a town's
+    // MIDDLE, so the join is out at the edge of its frame and 25 px of
+    // it; solved off `roads::mouth_of`, the same point the harness
+    // measures the gap at, a camera here frames the join and nothing
+    // else. A camera aimed at a junction the harness measures somewhere
+    // else is a picture of the wrong place.
+    if let Some(up) = args.junction {
+        match roads::mouth_of(world) {
+            Some((road, town, at, h)) => {
+                let ground = at * (world.planet.radius + h);
+                bevy::log::info!(
+                    "the junction camera stands {up:.0} m over road {road}'s first tarmac, \
+                     {:.0} m out of town {town}, looking straight down",
+                    at.angle_between(world.towns[town].dir) * world.planet.radius
+                );
+                return (ground + at * up, ground);
+            }
+            None => bevy::log::warn!("no junction to aim at"),
         }
     }
     // ALONG the road out of the port, which is the one camera the

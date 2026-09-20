@@ -46,6 +46,11 @@ pub(crate) struct Args {
     /// aimed: where a road leaves a town depends on where the network
     /// came out, so a hand aimed camera at a road finds a field.
     pub(crate) road: Option<f64>,
+    /// Metres over the JUNCTION, looking straight down at it: the point
+    /// where the highway's first laid tarmac meets the port's own
+    /// paving. `--over` frames a town's PLAN and a junction is 25 px of
+    /// that; this is the one camera the join itself can be judged from.
+    pub(crate) junction: Option<f64>,
     /// Metres over the ROAD out of the port, standing out in the country
     /// and looking BACK at the town it runs into: the other end of
     /// `--road`'s own camera, and the one that shows a highway crossing
@@ -99,6 +104,7 @@ impl Default for Args {
             over: None,
             hour: None,
             road: None,
+            junction: None,
             approach: None,
             bake_atlas: false,
             levels: LEVELS,
@@ -138,6 +144,7 @@ pub(crate) fn parse_args() -> Args {
             "--around" => args.around = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0),
             "--over" => args.over = it.next().and_then(|v| v.parse().ok()),
             "--road" => args.road = it.next().and_then(|v| v.parse().ok()),
+            "--junction" => args.junction = it.next().and_then(|v| v.parse().ok()),
             "--approach" => args.approach = it.next().and_then(|v| v.parse().ok()),
             "--hour" => args.hour = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,

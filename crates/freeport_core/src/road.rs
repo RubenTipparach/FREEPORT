@@ -627,6 +627,33 @@ const PROBES: usize = 3;
 /// byte on a vertex.
 pub const CORRIDOR: f64 = 16.0;
 
+/// How high a road is BUILT over the ground it was routed on, metres.
+///
+/// The owner's own observation, and it is how a road is actually built:
+/// a carriageway stands on a formation raised out of the country, with
+/// the batter falling away either side, because water has to leave it
+/// and because the ground under it has to be something other than what
+/// was there. It is also the cure for the last of the terrain biting the
+/// tarmac, and the reason is one sentence: the ground beside an
+/// embankment is LOWER than the road, so no chord between two lattice
+/// columns can close over it, whatever the cell. A road in a CUTTING has
+/// the opposite property and that is what was being drawn.
+///
+/// It goes on LAST in `smooth`, after the raise only passes have already
+/// put the profile at or above the natural ground everywhere, so it is a
+/// margin over a profile that was never in a cutting rather than a
+/// number papering over one that was.
+///
+/// Half a metre, which is a low embankment on a country road and is
+/// under the walker's own 0.60 m step, so the shoulder is still
+/// something a body walks up rather than a wall it is stopped by.
+///
+/// It is in the BAKED profile, so it is in the atlas's fingerprint: a
+/// file baked without it describes a road half a metre into the ground
+/// with its tarmac drawn half a metre over that, and nothing else in the
+/// fingerprint would have said so.
+pub const EMBANK: f64 = 0.5;
+
 /// How many pieces a waypoint span is cut into.
 ///
 /// It is a FUNCTION and not a stored count because both the bake and the
@@ -799,6 +826,11 @@ fn smooth(mut run: Vec<f64>, gap: &[f64], dry: f64, mid: &[f64]) -> Vec<f64> {
         for h in &mut run {
             *h = h.max(dry);
         }
+    }
+    // And the EMBANKMENT, last, so it rides on top of a profile that
+    // already clears the ground everywhere.
+    for h in &mut run {
+        *h += EMBANK;
     }
     run
 }

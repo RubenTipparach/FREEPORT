@@ -67,6 +67,10 @@ const STEEPEST: f64 = 1.200_5;
 /// What is left of the speed when the car hits something square on.
 const CRASH: f64 = 0.15;
 const GRAVITY: f64 = 9.81;
+/// How long the bodywork takes to lay itself on a new slope, seconds.
+/// Short, because a car on its springs settles in about this, and a car
+/// that snapped would flick over every seam in the mesh.
+const LEAN: f64 = 0.12;
 /// How far off the nose a place has to be for FULL lock, radians. A
 /// quarter turn: anything further round and the wheel is hard over
 /// anyway, and anything nearer eases off, so a car does not saw at the
@@ -113,6 +117,20 @@ pub struct Driver {
     pub on_ground: bool,
     /// The radius of the wheels, metres.
     pub foot: f64,
+    /// Which way is UP for the BODYWORK: the ground's own normal under
+    /// the four wheels, eased.
+    ///
+    /// Not `dir`, which is up for the PLANET, and the difference is the
+    /// whole of it: on a hillside the radial is not the surface normal,
+    /// so a car drawn off `dir` sits dead level while the hill falls
+    /// away under it. The owner read that off a picture of a car parked
+    /// on a slope.
+    ///
+    /// It is a fact about the GROUND, so it is the core's and not a
+    /// thing the app works out to draw with: what a body is standing on
+    /// is the same question the walker and the collider already ask the
+    /// field, and an app that derived its own would be a second answer.
+    pub lean: DVec3,
 }
 
 /// The car's own OUTLINE in its tangent frame, right and forward in
@@ -155,6 +173,7 @@ impl Driver {
             vy: 0.0,
             on_ground: true,
             foot: walker::ground(field, bounds, dir, None),
+            lean: dir,
         }
     }
 
@@ -223,6 +242,43 @@ impl Driver {
         self.fwd = (self.fwd - self.dir * self.fwd.dot(self.dir)).normalize_or(DVec3::X);
         self.roll(field, bounds, dt);
         self.fall(field, bounds, dt);
+        self.settle(field, bounds, dt);
+    }
+
+    /// Lay the bodywork on the ground the WHEELS are standing on.
+    ///
+    /// The four wheels and not the field's gradient at one point: a
+    /// gradient is the slope of a hand's width of ground and a car is
+    /// 4.1 m by 1.6, so a gradient would pitch the whole car over every
+    /// pebble the mesher drew, and what a car actually rests on is the
+    /// plane through its own contact patches. The normal is the cross of
+    /// the two DIAGONALS, which is the symmetric answer for a quad whose
+    /// four corners are not coplanar, and every quad on ground like this
+    /// is one.
+    ///
+    /// Eased on `LEAN`, a time constant in SECONDS like the chase
+    /// camera's `SWING`, so the lean takes the same wall time at twenty
+    /// frames a second as at a hundred and twenty; a share of a frame
+    /// would be a different car on every machine.
+    fn settle(&mut self, field: &dyn Density, bounds: &Bounds, dt: f64) {
+        let (w, l) = (CAR_WIDE * 0.5, CAR_LONG * 0.5);
+        let right = self.right();
+        let corner = |x: f64, y: f64| {
+            let d = (self.dir + (right * x + self.fwd * y) / bounds.radius).normalize();
+            d * walker::ground(field, bounds, d, Some(self.foot))
+        };
+        let (fl, fr) = (corner(-w, l), corner(w, l));
+        let (rl, rr) = (corner(-w, -l), corner(w, -l));
+        let want = (fr - rl).cross(fl - rr).normalize_or(self.dir);
+        // Out of the ground and never into it, whichever way the corners
+        // happened to be ordered on this patch of sphere.
+        let want = if want.dot(self.dir) < 0.0 {
+            -want
+        } else {
+            want
+        };
+        let t = 1.0 - (-dt / LEAN).exp();
+        self.lean = (self.lean + (want - self.lean) * t).normalize_or(self.dir);
     }
 
     /// The throttle, the brake and what a car does with neither down.

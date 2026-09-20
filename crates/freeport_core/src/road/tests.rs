@@ -361,7 +361,7 @@ fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
         }
         let frame = ribbon::frame(l, r, planet.radius);
         let whole = vec![(0.0, 1.0); l.len().saturating_sub(1)];
-        let m = ribbon::stretch(&frame, l, r, o, &whole, t, planet.radius);
+        let m = ribbon::stretch(&frame, l, r, o, t, planet.radius);
         assert!(m.solids.is_empty(), "tarmac collides with nothing");
         // The road SURFACE alone: a lamp post stands seven metres up and
         // is not tarmac, which is what the material byte is for.
@@ -417,7 +417,7 @@ fn lit_run(radius: f64, points: usize) -> (crate::model::Model, Vec<DVec3>) {
     let (run, open, on) = (vec![0.0; points], vec![true; points], vec![true; points]);
     let frame = ribbon::frame(&line, &run, radius);
     let whole = vec![(0.0, 1.0); points.saturating_sub(1)];
-    let model = ribbon::stretch(&frame, &line, &run, &open, &whole, &on, radius);
+    let model = ribbon::stretch(&frame, &line, &run, &open, &on, radius);
     let local = line
         .iter()
         .map(|d| frame.local(*d * (radius + ribbon::LIFT)))
@@ -572,24 +572,23 @@ fn a_road_rides_over_the_ground_rather_than_cutting_into_it() {
     );
 }
 
-/// A highway's tarmac RUNS IN and meets the town's own paving.
+/// A highway JOINS a town: its slip reaches a crossing the town paved,
+/// and it lands on the ground the whole way.
 ///
-/// `road::open` stops at every town's levelling, because inside that the
-/// town's site answers the ground and a corridor there would lay its
-/// tarmac at the road's level over ground held at the town's. That is
-/// right for the FIELD and wrong for the geometry: measured on the port,
-/// it left the highway's first tarmac 169 m out with the town's own
-/// paving reaching 130 m on that bearing, a 39 m ribbon of bare levelled
-/// ground between the highway and the city.
+/// What this replaces measured the run in, which was a MASK: the tarmac
+/// carried on past `open` and stopped `MEET` from the nearest piece in
+/// whatever direction that happened to be. It passed at 0.51 m for as
+/// long as the pieces it described were never drawn, and it could not
+/// have failed, because `road::clear` stops the tarmac at `MEET` and the
+/// test then measured the distance to the nearest piece. The moment
+/// `ribbon::stretch` stopped throwing those pieces away, the tarmac they
+/// drew floated 1.790 m over the town's own plateau.
 ///
-/// `paved` runs the tarmac on in, because the ground inside a town's
-/// levelling is that town's flat LEVEL and the survey already took the
-/// road's heights off the planet with the sites in it. `mouths` then
-/// lays the last piece from where it leaves the paving rather than from
-/// its own station, which is what closes the last of it: the stations
-/// are 85 m apart and the paving ends where it ends.
+/// So a slip is GEOMETRY that reads the ground, and the two halves of
+/// that are what this holds: it ENDS on a crossing, and no point of it
+/// stands off the ground the field actually makes there.
 #[test]
-fn a_highway_runs_in_and_meets_the_towns_own_paving() {
+fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
     let (planet, sea, towns) = world();
     let levelled = crate::field::Planet {
         sites: towns.iter().map(crate::town::site_of).collect(),
@@ -597,38 +596,52 @@ fn a_highway_runs_in_and_meets_the_towns_own_paving() {
     };
     let roads = connect(&levelled, sea, &towns, SPACING);
     let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
-    let mut worst = 0.0f64;
+    let (mut worst_gap, mut worst_float) = (0.0f64, 0.0f64);
     let mut seen = 0;
     for road in roads.iter().take(6) {
         let line = centreline(road, planet.radius);
         let open = crate::road::open(&line, planet.radius, &discs);
-        let paved = crate::road::paved(&line, planet.radius, &towns, &open);
-        let mouth = crate::road::mouths(&line, planet.radius, &towns, &paved);
-        let Some(k) = mouth.iter().position(|(a, b)| b > a) else {
+        let Some(first) = open.iter().position(|o| *o) else {
             continue;
         };
-        if k + 1 >= line.len() {
+        let town = &towns[road.from];
+        let at = line[first];
+        let along = (at - line[(first + 1).min(line.len() - 1)]).normalize_or(at);
+        let slip = crate::road::slip(&levelled, town, at, along, planet.radius);
+        if slip.len() < 2 {
             continue;
         }
-        let at = line[k].lerp(line[k + 1], mouth[k].0).normalize_or(line[k]);
-        let town = &towns[road.from];
+        // It ENDS on a crossing the town actually paved.
+        let (end, _) = slip[slip.len() - 1];
         let gap = town
             .pieces
             .iter()
             .map(|p| {
                 let dir =
                     (town.dir * planet.radius + town.east * p.x + town.north * p.z).normalize();
-                dir.angle_between(at) * planet.radius - p.w.max(p.d) * 0.5
+                dir.angle_between(end) * planet.radius - p.w.max(p.d) * 0.5
             })
             .fold(f64::INFINITY, f64::min)
             .max(0.0);
-        worst = worst.max(gap);
+        worst_gap = worst_gap.max(gap);
+        // And it LANDS: the ground the field makes under every point of
+        // it, against the height the slip asks the tarmac to sit at.
+        for (dir, h) in &slip {
+            let ground = crate::town::surface_radius(&levelled, *dir) - planet.radius;
+            worst_float = worst_float.max((h + ribbon::LIFT - ground).abs());
+        }
         seen += 1;
     }
-    println!("{seen} highways end {worst:.2} m from their town's own paving at the worst");
-    assert!(seen > 0, "no road laid any tarmac at all");
+    println!(
+        "{seen} slips end {worst_gap:.2} m from a crossing and stand {worst_float:.3} m off the ground"
+    );
+    assert!(seen > 0, "no road laid a slip at all");
     assert!(
-        worst < 2.0,
-        "a highway ends {worst:.2} m short of the paving it is supposed to join"
+        worst_gap < 2.0,
+        "a slip ends {worst_gap:.2} m short of the crossing it is supposed to join"
+    );
+    assert!(
+        worst_float < 0.35,
+        "a slip stands {worst_float:.3} m off the ground it is laid on"
     );
 }

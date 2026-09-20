@@ -51,16 +51,6 @@ pub(crate) struct Route {
     pub line: Vec<DVec3>,
     pub run: Vec<f64>,
     pub open: Vec<bool>,
-    /// Which points carry TARMAC, which is `open` and the run on into a
-    /// town as far as the town's own paving (`road::paved`). The
-    /// corridor is cut on `open` and the ribbon is laid on this, because
-    /// a road may not CUT a town's ground and must still reach it.
-    pub paved: Vec<bool>,
-    /// How much of each PIECE carries tarmac, a pair of parameters along
-    /// it: all of it in the country, and the part clear of a town's own
-    /// paving where a road runs in. One per piece, so one shorter than
-    /// the line.
-    pub mouth: Vec<(f64, f64)>,
     /// Which points are near enough a settlement to carry a lamp.
     pub lit: Vec<bool>,
     /// The sea's radius, which is what a vertex's height is measured off
@@ -288,17 +278,22 @@ pub(crate) fn build(args: &Args) -> World {
         let line = road::centreline(road, planet.radius);
         let open = road::open(&line, planet.radius, &discs);
         let lit = road::lit(&line, planet.radius, &discs);
-        let paved = road::paved(&line, planet.radius, &towns, &open);
-        let mouth = road::mouths(&line, planet.radius, &towns, &paved);
-        routes.push(Route {
+        let mut route = Route {
             line,
             run: run.clone(),
             open,
-            paved,
-            mouth,
             lit,
             sea: SEA,
-        });
+        };
+        // And the SLIPS, one at each end, which is what turns a highway
+        // that STOPS near a town into one that joins its streets.
+        for town_of in [road.from, road.to] {
+            if let Some(town) = towns.get(town_of) {
+                splice_slip(&mut route, &planet, town, planet.radius);
+            }
+            route.flip();
+        }
+        routes.push(route);
     }
     let corridors = sites.len() - towns.len();
     planet.sites = sites.into();
@@ -426,4 +421,72 @@ pub(crate) fn shore(world: &World, eye: DVec3) -> Option<DVec3> {
         }
     }
     None
+}
+
+impl Route {
+    /// The same road walked the other way, so one head splice serves
+    /// both ends.
+    fn flip(&mut self) {
+        self.line.reverse();
+        self.run.reverse();
+        self.open.reverse();
+        self.lit.reverse();
+    }
+}
+
+/// Lay a SLIP from a road's own mouth into the town at its near end, and
+/// splice it onto the head of the route so the road RUNS to a crossing
+/// rather than stopping in a field short of one.
+///
+/// Spliced rather than drawn beside, because a route is what everything
+/// downstream reads: the stretches that stream, the lamps that light
+/// them and the `roads::Network` a car follows. A slip that was a mesh
+/// of its own would be tarmac a car could not drive onto, which is the
+/// same defect one level up.
+fn splice_slip(route: &mut Route, planet: &Planet, town: &freeport_core::town::Town, radius: f64) {
+    // The first point the corridor is actually CUT at, which is where
+    // the tarmac starts and where the town's own levelling gives out.
+    let Some(first) = route.open.iter().position(|o| *o) else {
+        return;
+    };
+    if first + 1 >= route.line.len() {
+        return;
+    }
+    let at = route.line[first];
+    // The road's own heading at the mouth, pointing IN toward the town,
+    // so the slip leaves the highway straight rather than kinking off it.
+    let along = (at - route.line[first + 1]).normalize_or(at);
+    let slip = road::slip(planet, town, at, along, radius);
+    if slip.len() < 2 {
+        return;
+    }
+    // The slip runs mouth to crossing, and a route runs town OUT, so it
+    // goes on the head the other way up.
+    let rest = first;
+    let head = slip.len();
+    let lit = route.lit.get(first).copied().unwrap_or(false);
+    route.line = slip
+        .iter()
+        .rev()
+        .map(|(d, _)| *d)
+        .chain(route.line[rest..].iter().copied())
+        .collect();
+    route.run = slip
+        .iter()
+        .rev()
+        .map(|(_, h)| *h)
+        .chain(route.run[rest..].iter().copied())
+        .collect();
+    // A slip is INSIDE the town's own levelling, so it cuts no corridor
+    // of its own; `open` is what `road::corridor` reads AND what the
+    // ribbon lays tarmac on, so the slip is marked open to be DRAWN
+    // while the corridor list was built before this splice and never
+    // sees it. One flag doing two jobs is the thing to watch here, and
+    // it is safe only because the sites are already fixed by now.
+    route.open = std::iter::repeat_n(true, head)
+        .chain(route.open[rest..].iter().copied())
+        .collect();
+    route.lit = std::iter::repeat_n(lit, head)
+        .chain(route.lit[rest..].iter().copied())
+        .collect();
 }

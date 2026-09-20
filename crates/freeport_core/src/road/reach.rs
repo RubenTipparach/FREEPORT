@@ -74,123 +74,27 @@ pub fn open(line: &[DVec3], radius: f64, towns: &crate::field::Sites) -> Vec<boo
         .collect()
 }
 
-/// Which points of a road's centreline carry TARMAC: one per point of
-/// `centreline`, and the other half of `open`.
-///
-/// `open` is where the road's own corridor may be CUT, which stops at
-/// every town's levelling, because inside that the town's site answers
-/// the ground and a corridor there would lay its tarmac at the road's
-/// level over ground held at the town's. That is right for the FIELD and
-/// wrong for the geometry: it left the highway ending 39 m short of the
-/// port's own paving, in a field, which is the owner's "the main city I
-/// spawn at doesn't appear to have a highway leaving out of it".
-///
-/// Inside a town's levelling the ground is the town's own LEVEL and it is
-/// flat, and `survey` took its heights off the planet with the towns'
-/// sites already in it, so the road's own profile there IS that level
-/// and tarmac laid on it lands exactly. So the tarmac runs on in, and
-/// what stops it is the town's OWN paving: a point is paved while it is
-/// further than half a street from every piece the town laid. No
-/// threshold to tune and no bearing to get right, and where the two meet
-/// is where the streets actually are.
-pub fn paved(line: &[DVec3], radius: f64, towns: &[crate::town::Town], open: &[bool]) -> Vec<bool> {
-    line.iter()
-        .enumerate()
-        .map(|(i, d)| open.get(i).copied().unwrap_or(false) || clear(*d, radius, towns))
-        .collect()
-}
-
-/// How close a road's tarmac may come to a town's own paving, metres.
-///
-/// Half a metre and not half a street: what this is for is keeping the
-/// two surfaces from OVERLAPPING, since a road is lifted 0.15 m and a
-/// street 0.05 and one laid over the other is a lip and a depth fight.
-/// At half a street it was a 4 m ribbon of bare ground at the junction,
-/// which is the gap the owner could see from the air.
-const MEET: f64 = 0.5;
-
-/// Whether a direction is somewhere a ROAD may lay tarmac inside a town:
-/// clear of every piece that town paved, and FURTHER OUT than the
-/// nearest of them.
-///
-/// Both halves, and the second is not obvious until the first is tried
-/// on its own: a town's middle is often a plaza, so "clear of the
-/// paving" is TRUE at the very centre of one and the highway was laid
-/// straight through the town to its middle. A road approaches from
-/// outside, so what it may pave is the ground outside the built up part
-/// and never a gap inside it.
-fn clear(d: DVec3, radius: f64, towns: &[crate::town::Town]) -> bool {
-    let half = MEET;
-    towns.iter().all(|t| {
-        let out = t.dir.angle_between(d) * radius;
-        // Only the town a point is actually inside can stop it.
-        if out > t.radius * crate::town::OUTLINE + crate::town::STREET {
-            return true;
-        }
-        let at = d * radius - t.dir * radius;
-        let (x, z) = (at.dot(t.east), at.dot(t.north));
-        let mut nearest = (f64::MAX, 0.0);
-        for p in &t.pieces {
-            let away = (p.x - x).hypot(p.z - z) - p.w.max(p.d) * 0.5;
-            if away < nearest.0 {
-                nearest = (away, p.x.hypot(p.z));
-            }
-        }
-        nearest.0 > half && out > nearest.1
-    })
-}
-
-/// How much of each PIECE carries tarmac, as a pair of parameters along
-/// it: one per piece of `centreline`, so one shorter than the line.
-///
-/// A mask per station is not enough on its own, and the measurement is
-/// why: the stations are `PIECE` (85 m) apart and the town's own paving
-/// ends wherever it ends, so the first station clear of it lands up to a
-/// piece further out. Measured on the port, the highway's first tarmac
-/// stood 169 m out and the town's paving reached 130 m on that bearing:
-/// a **39 m gap of bare levelled ground**, which is the whole of what
-/// was between the highway and the city.
-///
-/// So a piece is laid from where it LEAVES the town's paving rather than
-/// from its own station, found by bisecting `clear` along it. The rest
-/// of the ribbon needs nothing: every part of it is already built from a
-/// point and an across, so a piece that starts part way along is the
-/// same arithmetic with a lerped end.
-pub fn mouths(
-    line: &[DVec3],
-    radius: f64,
-    towns: &[crate::town::Town],
-    paved: &[bool],
-) -> Vec<(f64, f64)> {
-    const HALVINGS: usize = 12;
-    (0..line.len().saturating_sub(1))
-        .map(|k| {
-            let (a, b) = (line[k], line[k + 1]);
-            // Where along this piece the town's paving ends, bisected.
-            // `lo` is the end that is ON the paving and `hi` the one off
-            // it, so the answer is always between them.
-            let edge = |from_a: bool| {
-                let (mut lo, mut hi) = if from_a { (0.0, 1.0) } else { (1.0, 0.0) };
-                for _ in 0..HALVINGS {
-                    let mid = (lo + hi) * 0.5;
-                    let at = (a + (b - a) * mid).normalize_or(a);
-                    if clear(at, radius, towns) {
-                        hi = mid;
-                    } else {
-                        lo = mid;
-                    }
-                }
-                hi
-            };
-            match (paved[k], paved[k + 1]) {
-                (true, true) => (0.0, 1.0),
-                (true, false) => (0.0, edge(false)),
-                (false, true) => (edge(true), 1.0),
-                (false, false) => (0.0, 0.0),
-            }
-        })
-        .collect()
-}
+// **What was tried and taken OUT: running the tarmac in on a MASK.**
+// `paved` was `open` plus a `clear` test against the town's own pieces,
+// and `mouths` bisected that test along the one piece a town's paving
+// ends inside, so the highway could carry on past `open` and stop half
+// a metre from the nearest street. Three things were wrong with it and
+// only the third is fatal.
+//
+// It reported a gap that was its own constant, because `clear` STOPS
+// the tarmac `MEET` from the nearest piece and the harness then
+// measured the distance to the nearest piece. It stopped at whatever
+// piece happened to be nearest in ANY direction, which from the ground
+// is a square ended road beside a street it never joins. And it FLOATS:
+// inside a town's levelling the ground is the town's flat plateau while
+// the road's baked profile is `smooth`'s own raise only answer, which
+// stands above it, so the moment those pieces were actually drawn
+// `the_tarmac_lands_on_the_ground_its_corridor_levelled` measured
+// **1.790 m** of daylight under them.
+//
+// A mask cannot fix that, because the two heights are genuinely
+// different and neither is wrong. What joins them is GEOMETRY that
+// reads the ground between, which is `slip` below.
 
 /// How near a settlement a stretch of road has to pass to be LIT,
 /// metres.
@@ -211,6 +115,111 @@ pub fn lit(line: &[DVec3], radius: f64, towns: &crate::field::Sites) -> Vec<bool
             towns
                 .near(*d, window)
                 .any(|site| (*d - site.nearest(*d).0).length() * radius <= LIT_NEAR)
+        })
+        .collect()
+}
+
+/// How long one piece of a SLIP is, metres. Three, because a slip is a
+/// CURVE a few tens of metres long and a piece has to be short enough
+/// that its chord does not cut the bend: at 3 m a 15 m radius turn is
+/// out by 7 cm, which is under the tarmac's own lift.
+const SLIP_PIECE: f64 = 3.0;
+
+/// How far the two tangents reach, as a share of the gap they span. A
+/// little over a half is the plain Hermite that leaves both ends along
+/// their own direction without looping.
+const EASE: f64 = 0.55;
+
+/// The SLIP that joins a highway to a town's own streets: a curve from
+/// the last tarmac the road lays to the nearest CROSSING the town paved,
+/// with the ground under it read off the planet.
+///
+/// This is the thing the design file named as missing and the owner read
+/// off a picture: a road arrives on an arbitrary bearing and a town's
+/// streets run on its own grid, so there is nothing for the tarmac to
+/// meet until one of them is laid toward the other. What the highway did
+/// instead was STOP, `MEET` from the nearest piece of paving in whatever
+/// direction that happened to be, which from the ground is a square
+/// ended road in a field with the city beyond it.
+///
+/// **A CROSSING and never a run**, because a crossing is a node where
+/// streets already meet and it owns its whole square (`town::paved`), so
+/// a slip arriving at one merges into the grid; arriving at the middle
+/// of a run would T bone a street at whatever angle the road came in on
+/// and leave the corner bare.
+///
+/// **The height is the GROUND's and never a lerp.** The town's site has
+/// already levelled its plateau and the road's corridor has already been
+/// cut outside it, so the field's own surface between the two IS the
+/// ramp from the road's grade down to the town's, and a slip that reads
+/// it lands on it. That is the owner's "lower to meet the height of the
+/// city", and it needs no second opinion about what that height is.
+///
+/// **And the LIFT tapers**, `ribbon::LIFT` at the highway to `town::LIFT`
+/// at the street, which is the 10 cm lip this project's own design gave
+/// as the reason not to run tarmac into a town. `ribbon::stretch` adds
+/// its own `LIFT` to every height it is handed, so what comes back here
+/// is the ground plus the DIFFERENCE and the two sum to the taper.
+pub fn slip(
+    planet: &crate::field::Planet,
+    town: &crate::town::Town,
+    mouth: DVec3,
+    along: DVec3,
+    radius: f64,
+) -> Vec<(DVec3, f64)> {
+    let flat = |d: DVec3| {
+        let here = (d - town.dir) * radius;
+        glam::DVec2::new(here.dot(town.east), here.dot(town.north))
+    };
+    let p0 = flat(mouth);
+    // The nearest CROSSING, and any piece at all only if the town laid
+    // no crossing, which a one street hamlet can manage.
+    let near = |p: &&crate::town::Piece| (p.x - p0.x).hypot(p.z - p0.y);
+    let Some(target) = town
+        .pieces
+        .iter()
+        .filter(|p| !p.run())
+        .min_by(|a, b| near(a).total_cmp(&near(b)))
+        .or_else(|| {
+            town.pieces
+                .iter()
+                .min_by(|a, b| near(a).total_cmp(&near(b)))
+        })
+    else {
+        return Vec::new();
+    };
+    let p1 = glam::DVec2::new(target.x, target.z);
+    let gap = (p1 - p0).length();
+    if !gap.is_finite() || gap <= SLIP_PIECE {
+        return Vec::new();
+    }
+    // In along the ROAD's own heading, out along the town's own GRID,
+    // so the slip leaves the highway straight and arrives square to the
+    // street it is joining rather than across it.
+    let here = (along - mouth * along.dot(mouth)).normalize_or(town.east);
+    let t0 = glam::DVec2::new(here.dot(town.east), here.dot(town.north)).normalize_or(p1 - p0);
+    let axis = p1 - p0;
+    let t1 = if axis.x.abs() >= axis.y.abs() {
+        glam::DVec2::new(axis.x.signum(), 0.0)
+    } else {
+        glam::DVec2::new(0.0, axis.y.signum())
+    };
+    let (m0, m1) = (t0 * (gap * EASE), t1 * (gap * EASE));
+    let steps = ((gap / SLIP_PIECE).ceil() as usize).max(2);
+    (0..=steps)
+        .map(|k| {
+            let t = k as f64 / steps as f64;
+            let (t2, t3) = (t * t, t * t * t);
+            // The plain cubic Hermite, which is the curve that leaves
+            // and arrives along the two tangents it is given.
+            let q = p0 * (2.0 * t3 - 3.0 * t2 + 1.0)
+                + m0 * (t3 - 2.0 * t2 + t)
+                + p1 * (-2.0 * t3 + 3.0 * t2)
+                + m1 * (t3 - t2);
+            let dir = (town.dir * radius + town.east * q.x + town.north * q.y).normalize();
+            let ground = crate::town::surface_radius(planet, dir) - radius;
+            let lift = super::ribbon::LIFT + (crate::town::LIFT - super::ribbon::LIFT) * t;
+            (dir, ground + lift - super::ribbon::LIFT)
         })
         .collect()
 }

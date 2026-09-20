@@ -66,7 +66,7 @@ impl Network {
                 // which has laid its own streets there.
                 // PAVED and not open: a stretch whose only tarmac is
                 // the run into a town is still a stretch of tarmac.
-                if at.len() < 2 || !route.paved[at.clone()].windows(2).any(|o| o[0] && o[1]) {
+                if at.len() < 2 || !route.open[at.clone()].windows(2).any(|o| o[0] && o[1]) {
                     continue;
                 }
                 stretches.push((r, k, route.line[(at.start + at.end) / 2]));
@@ -262,14 +262,11 @@ fn lay(
     let (line, run, open, lit) = (
         &route.line[at.clone()],
         &route.run[at.clone()],
-        &route.paved[at.clone()],
+        &route.open[at.clone()],
         &route.lit[at.clone()],
     );
-    // One SHORTER than the points, because a mouth is a piece's.
-    let ends = at.start..at.end.saturating_sub(1).min(route.mouth.len());
-    let mouth = &route.mouth[ends];
     let frame = ribbon::frame(line, run, radius);
-    let model = ribbon::stretch(&frame, line, run, open, mouth, lit, radius);
+    let model = ribbon::stretch(&frame, line, run, open, lit, radius);
     if model.mesh.positions.is_empty() {
         return None;
     }
@@ -361,36 +358,77 @@ fn mesh_points(mesh: &freeport_core::dc::DcMesh) -> impl Iterator<Item = Vec3> +
 /// Running the tarmac on INTO the town instead would put a 10 cm lip
 /// across whatever suburb street it crossed, since a road is lifted
 /// 0.15 m and a street 0.05.
-pub fn gap_to_town(world: &World) -> Option<(usize, usize, f64, f64, f64)> {
-    let radius = world.planet.radius;
+/// How far a road's tarmac stops short of a town's paving, walking IN
+/// along the road's own line from the mouth toward the town's middle,
+/// metres. Nought once a piece of the town's paving covers the walk.
+///
+/// A metre a step, which is well under `town::STREET`, so no street can
+/// be stepped over; and it gives up at the town's own `OUTLINE`, because
+/// past that there is no paving to reach and the answer is the whole
+/// walk.
+fn bare_run(town: &freeport_core::town::Town, from: DVec3, radius: f64) -> f64 {
+    const STEP: f64 = 1.0;
+    let reach = town.radius * freeport_core::town::OUTLINE;
+    let out = from.angle_between(town.dir) * radius;
+    let mut walked = 0.0;
+    while walked < out && walked < reach * 2.0 {
+        let t = walked / out;
+        let d = from.lerp(town.dir, t).normalize_or(from);
+        let here = d * radius - town.dir * radius;
+        let (x, z) = (here.dot(town.east), here.dot(town.north));
+        let covered = town
+            .pieces
+            .iter()
+            .any(|p| (p.x - x).hypot(p.z - z) <= p.w.max(p.d) * 0.5);
+        if covered {
+            return walked;
+        }
+        walked += STEP;
+    }
+    walked
+}
+
+/// Where a road's tarmac actually STARTS, which is the junction: the
+/// road, the town it runs into, the direction the first laid piece
+/// begins at and the ground under it.
+///
+/// It is part way ALONG its own piece wherever a road meets a town's
+/// paving, which is `ribbon::stretch`'s own rule and not merely the
+/// first open station, so the point has to be lerped exactly the way the
+/// ribbon lerps it. One implementation, because `gap_to_town` measures
+/// this point and `aim::junction` photographs it, and a camera aimed at
+/// a junction the harness measures somewhere else is a picture of the
+/// wrong place.
+pub fn mouth_of(world: &World) -> Option<(usize, usize, DVec3, f64)> {
     let (k, road) = world.roads.iter().enumerate().next()?;
     let route = world.routes.get(k)?;
-    // The first point a piece of tarmac is actually LAID at, which is
-    // `ribbon::stretch`'s own rule and not merely the first open point.
-    let first = route
-        .mouth
-        .iter()
-        .position(|(t0, t1)| t1 > t0)
-        .filter(|k| *k + 1 < route.line.len())?;
-    // Where the tarmac actually STARTS, which is part way along its own
-    // piece wherever a road runs in to meet a town's paving.
-    let (t0, _) = route.mouth[first];
-    let at = route.line[first]
-        .lerp(route.line[first + 1], t0)
-        .normalize_or(route.line[first]);
-    let town = world.towns.get(road.from)?;
-    let nearest = town
-        .pieces
-        .iter()
-        .map(|p| {
-            let dir = (town.dir * radius + town.east * p.x + town.north * p.z).normalize();
-            // To the piece's own EDGE and not its middle: a street is
-            // `town::STREET` across, so a centre to centre distance
-            // reports half of one as a gap that is not there.
-            dir.angle_between(at) * radius - p.w.max(p.d) * 0.5
-        })
-        .fold(f64::INFINITY, f64::min)
-        .max(0.0);
+    // The route's own HEAD, because `world::splice_slip` put the slip
+    // there: after it, point nought is the crossing the road joins and
+    // there is nothing to search for. Before it, this looked for the
+    // first point a mask called paved, which is the thing that measured
+    // its own constant.
+    let at = route.line.first().copied()?;
+    let h = route.run.first().copied()?;
+    Some((k, road.from, at, h))
+}
+
+pub fn gap_to_town(world: &World) -> Option<(usize, usize, f64, f64, f64)> {
+    let radius = world.planet.radius;
+    let (k, town_of, at, _) = mouth_of(world)?;
+    let town = world.towns.get(town_of)?;
+    // How far the tarmac stops SHORT of the paving ALONG THE ROAD's own
+    // line, which is the bare ground a picture shows.
+    //
+    // It measured the nearest piece in ANY direction, which is close to
+    // a tautology and reported 1 m for as long as the run in was dead:
+    // `road::clear` stops the tarmac `MEET` from the nearest piece, so a
+    // gap measured that way can only ever come back as `MEET` however
+    // much bare ground the road actually ends in. Measured off the frame
+    // from 900 m the tarmac ended 174 m out of the port with the paving
+    // starting near 150, which is 20 to 25 m the harness was calling 1.
+    // A number that cannot be anything but its own constant is a number
+    // that cannot find a defect.
+    let nearest = bare_run(town, at, radius);
     // And where the two ends actually stand, out of the town's own
     // middle, because a gap says nothing about which end is short: the
     // tarmac starting late and the paving stopping early look alike.
@@ -403,7 +441,7 @@ pub fn gap_to_town(world: &World) -> Option<(usize, usize, f64, f64, f64)> {
             dir.angle_between(town.dir) * radius
         })
         .fold(0.0f64, f64::max);
-    Some((k, road.from, nearest, out, paved))
+    Some((k, town_of, nearest, out, paved))
 }
 
 /// How far the ground a COARSE chunk draws stands over a road's own

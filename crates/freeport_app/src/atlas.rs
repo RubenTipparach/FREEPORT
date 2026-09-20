@@ -62,6 +62,13 @@ pub(crate) struct Atlas {
     /// and is refused, which is the same answer.
     #[serde(default)]
     pub piece: f64,
+    /// How high the baked profile stands over the ground it was routed
+    /// on (`road::EMBANK`). It is IN the heights the file stores, so a
+    /// file baked at another value is every road on the body at the
+    /// wrong level with its tarmac drawn over that, and no other field
+    /// here would have said so.
+    #[serde(default)]
+    pub embank: f64,
     /// The sea this plan was made against. A town qualifies on how high
     /// it stands over the sea and a road is refused into it, so a plan
     /// made at one level is a set of cities underwater at another.
@@ -176,6 +183,7 @@ impl Atlas {
             octaves: planet.octaves,
             town_radius,
             piece: road::PIECE,
+            embank: road::EMBANK,
             sea,
             probe: probe(planet),
             towns: towns

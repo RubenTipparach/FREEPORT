@@ -119,7 +119,6 @@ pub fn stretch(
     line: &[DVec3],
     run: &[f64],
     open: &[bool],
-    mouth: &[(f64, f64)],
     lit: &[bool],
     radius: f64,
 ) -> Model {
@@ -140,20 +139,18 @@ pub fn stretch(
     let mut along = 0.0;
     for k in 0..line.len() - 1 {
         let run_m = (at(k + 1) - at(k)).length();
-        // A piece inside a town's own levelling is the town's to pave,
+        // A piece outside every town's levelling is the road's to pave,
         // and `road::open` is the same answer the CORRIDOR is cut by, so
-        // the tarmac and the ground under it end in the same place.
+        // the tarmac and the ground under it end in the same place. What
+        // carries it the rest of the way is `road::slip`, which is
+        // geometry that reads the ground and not a wider mask: a mask
+        // laid tarmac at the road's own baked profile over a town's flat
+        // plateau and floated 1.790 m above it.
         if !(open[k] && open[k + 1]) {
             along += run_m;
             continue;
         }
-        // How much of the piece is TARMAC: all of it in the country,
-        // and the part clear of a town's own paving where it runs in.
-        let (t0, t1) = mouth.get(k).copied().unwrap_or((0.0, 1.0));
-        if t1 <= t0 {
-            along += run_m;
-            continue;
-        }
+        let (t0, t1) = (0.0, 1.0);
         let part = |t: f64| {
             (
                 at(k).lerp(at(k + 1), t),

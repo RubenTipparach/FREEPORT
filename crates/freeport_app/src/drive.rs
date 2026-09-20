@@ -689,7 +689,20 @@ pub fn show_cars(
 /// z up, which is the same right handed basis the traffic places its
 /// cars in, so the mesh is the same mesh and is not wound inside out.
 fn place(car: &Driver) -> (DVec3, Quat) {
-    let up = car.dir;
-    let basis = Mat3::from_cols(car.right().as_vec3(), car.fwd.as_vec3(), up.as_vec3());
-    (up * car.foot, Quat::from_mat3(&basis))
+    // The GROUND's own up and not the planet's. `car.dir` is up for the
+    // planet, so a car drawn off it sits dead level while the hill falls
+    // away under it, which is what the owner read off a picture of one
+    // parked on a slope. `Driver::lean` is the plane through the four
+    // wheels, eased, and it is the core's answer rather than one the app
+    // works out for itself.
+    //
+    // The basis is re-squared to it, because `fwd` is in the PLANET's
+    // tangent plane by construction (that is what keeps a car's steering
+    // a two dimensional problem) and a basis built from one plane's
+    // forward and another's up is not orthogonal: the mesh would shear.
+    let up = car.lean;
+    let fwd = (car.fwd - up * car.fwd.dot(up)).normalize_or(car.fwd);
+    let right = fwd.cross(up).normalize_or(car.right());
+    let basis = Mat3::from_cols(right.as_vec3(), fwd.as_vec3(), up.as_vec3());
+    (car.dir * car.foot, Quat::from_mat3(&basis))
 }
