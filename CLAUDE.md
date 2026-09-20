@@ -2460,13 +2460,46 @@ compact.
 **A road RIDES the country, and never cuts into it.** The owner read it
 off the air: terrain on top of the road, and the road not moving up and
 down with the ground. A CUT is the one thing this terrain cannot draw.
-The corridor is `CORRIDOR` (7 m) either side of the centreline and the
+The corridor is `CORRIDOR` either side of the centreline and the
 rings put a cell of about a SIXTY FOURTH of its own distance under the
 eye (a box at level L is 32 * 2^L metres across and its cell is
-0.5 * 2^L), so past a couple of hundred metres the mesher has no sample
-inside the cutting at all: it draws the hill that was there before the
-road and the ground closes over the tarmac. That is this file's own
-"nothing thinner than a cell's DIAGONAL exists", arriving outdoors.
+0.5 * 2^L), so once the cell is wider than the cutting the mesher has no
+sample inside it at all: it draws the hill that was there before the road
+and the ground closes over the tarmac. That is this file's own "nothing
+thinner than a cell's DIAGONAL exists", arriving outdoors.
+
+**So the VERGE is what carries the road through the LOD, and that is
+what sets its width.** The flat part of a corridor is `2 * CORRIDOR`
+wide and a lattice column is only GUARANTEED to land on it while a cell
+fits inside it, so **a road survives to about 128 times `CORRIDOR`**. At
+7 m that is 896 m, and the owner's picture from 900 m up is the road
+DASHED, which is the relation arriving exactly where it said it would.
+Measured off that frame, the gaps are IRREGULAR, 22, 28, 56 and 39 m of
+tarmac against 4 to 26 m of nothing, which is what says it is the
+lattice phase beating against the relief and not the 85 m piece: a
+per piece defect would come out on an 85 m period and this does not.
+`CORRIDOR` is 16 m, so the flat is two cells of level 5 rather than
+under one, a column lands on it whatever the phase, and the road holds
+to 2,048 m.
+
+Three things about that number rather than a bigger one. It wants **no
+re-bake**, because the width is runtime only: what the atlas stores is
+the road's own heights and `survey` takes those off the BARE ground
+before any corridor exists. It does not touch the **grade**, because the
+skirt is still `SKIRT_IN + SKIRT_OUT` and the blend's gradient and the
+planet's slope bound are exactly what they were; only the flat grew. And
+32 m of graded ground for 11 m of tarmac is a verge either side, which
+is what a highway alignment occupies, and the whole 63,840 km network is
+0.016% of the body.
+
+**And geometry has a CEILING here, which is named rather than hidden.**
+Holding the road's own WIDTH rather than one column wants `5.5 + cell`,
+21.5 m at level 5 and 37 m at level 6, and no width at all carries a
+road past the altitude where it is under a pixel anyway: a pixel is
+about `h / 870` here, so 11 m of tarmac is sub pixel from 9.6 km up.
+What reaches past that is a DECAL, and never geometry and never a
+material byte on a vertex, which is what the paint below already
+learned.
 
 It is NOT the depth buffer, and that is worth saying because it is the
 first thing anybody reaches for. Bevy's perspective is infinite reverse
@@ -2610,7 +2643,7 @@ ground by construction.
 **A point SEVERAL sites cover outright takes the NEAREST one's level, and
 that is a road's own profile rather than a tie break.** A corridor is a
 chain of arcs whose ends MEET, and an arc's band is a CAPSULE: its round
-end reaches `CORRIDOR` (7 m) past its own last station into its
+end reaches `CORRIDOR` past its own last station into its
 neighbour's, so the ground either side of every station is covered twice.
 `Planet::levelling` returned on the first site its own latitude index
 reached, so a point seven metres along the next arc was given the level
@@ -3822,6 +3855,18 @@ Numbers in the commit message. What is measured so far:
   the pieces cost, which is what says the old cost was `Site::nearest`'s
   own trigonometry asked of every piece for every sample rather than the
   count of pieces.
+- **How far the road is DRAWN, which is a fact about the corridor's own
+  width and not about the tarmac.** A ring box at level L reaches
+  `32 * 2^L` m, so the cell under an eye `h` up is about `h / 64` and a
+  lattice column only surely lands on a corridor's flat while
+  `CORRIDOR >= cell / 2`: **a road survives to about 128 times
+  `CORRIDOR`**, 896 m at 7 m and 2,048 at 16. Measured on the frame from
+  900 m, which is where that relation says it breaks: the road comes out
+  DASHED in runs of 22, 28, 56 and 39 m with gaps of 4 to 26, irregular
+  rather than on the 85 m piece, which is what says it is the lattice
+  phase against the relief. Widening the flat to two cells of that level
+  costs no re-bake (the width is runtime only), no change of grade (the
+  skirt is untouched) and 0.016% of the body in graded ground.
 - **A corridor's LANDINGS, which the dashes are what found.** The tarmac
   test went from 0.103 m of float to 0.796 the moment anything was drawn
   at an interior point of a piece: an arc's band is a capsule whose round

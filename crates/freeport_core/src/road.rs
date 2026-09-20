@@ -598,7 +598,34 @@ const PROBES: usize = 3;
 /// How far either side of its centreline a road's ground is levelled,
 /// metres. The carriageway is `town::LANE` each way and the rest is the
 /// verge a road needs to sit in its own cutting rather than on a ledge.
-pub const CORRIDOR: f64 = 7.0;
+///
+/// **And the verge is what carries the road through the LOD**, which is
+/// what actually decides the number. A ring box at level L reaches
+/// `lattice::cell(L) * CH * HALF`, which is 64 cells, so the finest
+/// level whose box holds ground `h` under the eye has a cell of about
+/// `h / 64`; the flat part of a corridor is `2 * CORRIDOR` wide, and a
+/// lattice column is only GUARANTEED to land on it while a cell fits
+/// inside it. So **a road survives to about 128 times this number** and
+/// past that the mesher has no sample in the cutting, draws the hill
+/// that was there before the road, and the ground closes over the
+/// tarmac. That is this crate's own "nothing thinner than a cell's
+/// DIAGONAL exists" arriving outdoors.
+///
+/// At 7 m that was 896 m, and the owner's picture from 900 m up is the
+/// road DASHED: 22, 28, 56 and 39 m of tarmac with 4 to 26 m gaps, which
+/// is the lattice phase beating against the relief and not the 85 m
+/// piece. At 16 m it is 2,048 m, and the flat is two cells of level 5
+/// rather than under one, so a column lands on it whatever the phase.
+///
+/// 32 m of graded ground for 11 m of tarmac is a verge either side and
+/// what a highway alignment actually occupies; the whole network is
+/// 0.016% of the body. Going further has a floor: holding the road's own
+/// WIDTH rather than one column wants `5.5 + cell`, which is 21.5 m at
+/// level 5 and 37 m at level 6, and no width at all carries a road past
+/// the altitude where it is under a pixel anyway (9.6 km here). What
+/// reaches past that is a DECAL, never geometry and never a material
+/// byte on a vertex.
+pub const CORRIDOR: f64 = 16.0;
 
 /// How many pieces a waypoint span is cut into.
 ///
