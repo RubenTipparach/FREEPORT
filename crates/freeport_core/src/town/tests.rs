@@ -623,3 +623,81 @@ fn a_towns_plateau_follows_its_outline_and_not_a_disc() {
         "the plateau runs {widest:.0} m one way and {narrowest:.0} the other: a disc"
     );
 }
+
+/// How far a building's own SOLID boxes reach from the middle of its lot,
+/// metres east and north: what stands in the road, rather than what hangs
+/// over it. An eave, a parapet and a pane are `Model::trim` and a body
+/// passes through them, which is this crate's own rule about what a box
+/// is for.
+fn footprint(m: &crate::model::Model) -> DVec2 {
+    let mut half = DVec2::ZERO;
+    for s in &m.solids {
+        let a = s.axes();
+        let (x, y) = (
+            (a[0].x * s.half.x).abs() + (a[1].x * s.half.y).abs(),
+            (a[0].y * s.half.x).abs() + (a[1].y * s.half.y).abs(),
+        );
+        half.x = half.x.max(s.centre.x.abs() + x);
+        half.y = half.y.max(s.centre.y.abs() + y);
+    }
+    half
+}
+
+/// How far a lot's footprint reaches INTO the paving a town laid, metres:
+/// the penetration of two boxes, which is the smaller of their two
+/// overlaps, and nought where the building clears every piece.
+fn into_street(town: &Town, lot: &Lot, half: DVec2) -> f64 {
+    let mut worst: f64 = 0.0;
+    for p in &town.pieces {
+        let dx = (half.x + p.w * 0.5) - (lot.x - p.x).abs();
+        let dz = (half.y + p.d * 0.5) - (lot.z - p.z).abs();
+        if dx > 0.0 && dz > 0.0 {
+            worst = worst.max(dx.min(dz));
+        }
+    }
+    worst
+}
+
+/// A wall is one oriented box that is DRAWN and COLLIDED, so a wall
+/// standing on a pavement is a wall a body walks into in the middle of
+/// the road. A block is `BLOCK` across and the street's own inner kerb is
+/// exactly `BLOCK / 2` from its middle, so what a building may cover is
+/// its own block and nothing past it.
+#[test]
+fn a_building_stands_on_its_own_block_and_never_in_the_street() {
+    let planet = planet();
+    let towns = plan(&planet, 996.0, 60.0, 4, 7);
+    assert!(!towns.is_empty());
+    for town in &towns {
+        let (mut worst, mut where_) = (0.0f64, None);
+        let mut over = 0usize;
+        for lot in &town.lots {
+            let m = crate::model::building(
+                lot.kind,
+                super::BLOCK,
+                super::BLOCK,
+                lot.storeys,
+                town.seed ^ lot.id,
+            );
+            let into = into_street(town, lot, footprint(&m));
+            if into > 0.01 {
+                over += 1;
+            }
+            if into > worst {
+                worst = into;
+                where_ = Some((lot.kind, lot.x, lot.z));
+            }
+        }
+        println!(
+            "town {} of {:.0} m: {} lots, {over} in the street, worst {worst:.2} m at {where_:?}",
+            town.index,
+            town.radius,
+            town.lots.len()
+        );
+        assert!(
+            worst <= 0.01,
+            "town {} stands a building {worst:.2} m into its own street",
+            town.index
+        );
+    }
+}

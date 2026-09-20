@@ -299,6 +299,32 @@ impl Kind {
         }
     }
 
+    /// How much of its own BLOCK a kind's walls cover, as a share of
+    /// `town::BLOCK` across.
+    ///
+    /// A block is `BLOCK` and the street's own inner kerb stands exactly
+    /// `BLOCK / 2` from its middle, so this is the one number that says
+    /// how far a lot may be set back or jittered without putting a wall
+    /// on a pavement: the room a lot has is `BLOCK * (1 - covers) / 2`
+    /// either way, and `town::plot` bounds every offset by it. A wall is
+    /// one oriented box that is DRAWN and COLLIDED, so a building
+    /// standing in a street is a body walking into a wall in the middle
+    /// of the road, which is what the owner photographed.
+    ///
+    /// It is ONE for every kind today, and that is a fact about the
+    /// LIBRARY rather than a knob nobody turned:
+    /// `assets/config/buildings.json` bakes every one of the thirteen
+    /// variants at the full block and `Library` refuses a bake wider
+    /// than this, so there is no room for a setback to be in. The day a
+    /// house is baked at six metres this is where that is said, and the
+    /// suburb's own setback appears with it and with nothing else
+    /// changed.
+    pub fn covers(self) -> f64 {
+        match self {
+            Kind::Block | Kind::House | Kind::Bungalow | Kind::Tower | Kind::Hangar => 1.0,
+        }
+    }
+
     /// The fewest and the most storeys it stands in.
     pub fn storeys(self) -> (u32, u32) {
         match self {
@@ -758,13 +784,8 @@ pub struct Fabric {
 /// under it is placed in one piece.
 pub fn fabric(town: &Town, radius: f64, seed: u32) -> Fabric {
     fabric_with(town, radius, |lot| {
-        building(
-            lot.kind,
-            crate::town::BLOCK,
-            crate::town::BLOCK,
-            lot.storeys,
-            seed ^ lot.id,
-        )
+        let w = lot.kind.covers() * crate::town::BLOCK;
+        building(lot.kind, w, w, lot.storeys, seed ^ lot.id)
     })
 }
 

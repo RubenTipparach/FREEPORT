@@ -84,9 +84,13 @@ impl Library {
             if bake.kind != entry.kind || bake.storeys != entry.storeys {
                 return Err("building identity mismatch".into());
             }
+            let kind = model::Kind::all()
+                .into_iter()
+                .find(|k| k.name() == entry.kind)
+                .ok_or_else(|| format!("unknown building kind {}", entry.kind))?;
             library
                 .0
-                .insert((entry.kind, entry.storeys), bake.models()?);
+                .insert((entry.kind, entry.storeys), bake.models(kind)?);
         }
         for kind in model::Kind::all() {
             let (lo, hi) = kind.storeys();
@@ -120,21 +124,33 @@ impl Library {
                 m.reskin(freeport_core::field::CONCRETE, lot.kind.skin(dice));
                 m
             }
-            None => model::building(lot.kind, BLOCK, BLOCK, lot.storeys, dice),
+            None => {
+                let w = lot.kind.covers() * BLOCK;
+                model::building(lot.kind, w, w, lot.storeys, dice)
+            }
         }
     }
 }
 
 impl Bake {
-    fn models(self) -> Result<[Model; 3], String> {
+    /// A bake's three LODs, refused unless it fits the block its kind
+    /// COVERS.
+    ///
+    /// `Kind::covers` is what `town::plot` bounds a lot's own setback by,
+    /// so a variant baked wider than its kind claims is a wall standing
+    /// in the street with nothing to say so: the plan would leave room
+    /// the building does not have. The two are one number and this is
+    /// where they are held together.
+    fn models(self, kind: model::Kind) -> Result<[Model; 3], String> {
+        let covers = kind.covers() * BLOCK;
         if self.schema != 1
             || self.lods.len() != 3
             || !self.width.is_finite()
             || !self.depth.is_finite()
             || self.width <= 0.0
             || self.depth <= 0.0
-            || self.width > BLOCK
-            || self.depth > BLOCK
+            || self.width > covers
+            || self.depth > covers
         {
             return Err("invalid building schema, LOD count, or footprint".into());
         }

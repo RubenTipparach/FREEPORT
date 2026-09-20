@@ -1471,6 +1471,34 @@ replace were JSON files read at startup with a reader written for them
 (`recipe.rs`, `json.rs`, 1,064 lines and eight files in `assets`); a kind
 is a variant and an arm, and there is nothing to ship beside the binary.
 
+**A building stands on its own BLOCK and never in the street**, which
+is the owner's picture of a wall standing on a pavement. A block is
+`BLOCK` (10 m) across and the street's own inner kerb is exactly
+`BLOCK / 2` from its middle, so a lot may be moved within five metres
+of its block's centre and no further. What it was moved by instead was
+a JITTER of `BLOCK - 8` downtown and twice `SUBURB_SETBACK` in the
+suburbs, up to 4.5 m either way, on a building that already covered the
+whole block: measured on the fixture port, **14 of 15 lots stood in
+their own street and the worst was 3.72 m in**, which is a suburban
+hangar with its far wall past the centreline of the road.
+
+`Kind::covers` is the one number that closes it: how much of its block
+a kind's walls cover, so the room a lot has is `BLOCK * (1 - covers) / 2`
+either way and `town::plot` bounds every offset by it. It is ONE for
+every kind today, and that is a fact about the LIBRARY rather than a
+knob nobody turned: `assets/config/buildings.json` bakes all thirteen
+variants at the full block and `Library` REFUSES a bake wider than its
+kind claims, so there is no room for a setback to be in and every
+building sits square on its block, flush with the back of its own
+pavement, which is what a terrace is. `SUBURB_SETBACK` is what a suburb
+WANTS and the block is what it gets; the day a house is baked at six
+metres the setback appears with it and with nothing else changed.
+
+`a_building_stands_on_its_own_block_and_never_in_the_street` measures
+it, off the building's own SOLID boxes rather than its mesh, because an
+eave, a parapet and a pane are `Model::trim` and a body passes through
+them: **0 of 15 lots, worst 0.00 m**.
+
 **Every building is a shell with a doorway**, and the walker walks in:
 four walls, the south one two piers and a lintel, a floor slab, a roof,
 panes on every storey of every face but where the door is, and a lamp over

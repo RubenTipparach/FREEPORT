@@ -169,10 +169,24 @@ const TOWN_AT: f64 = 0.38;
 /// at one it is the same grid as downtown with shorter buildings on it,
 /// which is what this was.
 const SUBURB_FILL: f64 = 0.55;
-/// How far a suburban house stands off the middle of its own block,
-/// metres either way, against a town house's own small jitter. A setback
-/// and a garden are the other thing that says suburb.
+/// How far a suburban house WANTS to stand off the middle of its own
+/// block, metres either way, against a town house's own small jitter. A
+/// setback and a garden are the other thing that says suburb.
+///
+/// What it GETS is whatever its own block leaves once the building is on
+/// it, which is `Kind::covers`: a block is `BLOCK` across and the
+/// street's inner kerb stands exactly `BLOCK / 2` from its middle, so a
+/// building covering its whole block may not move at all. Every variant
+/// in the baked library is `BLOCK` square today, so this is nought on
+/// the ground and is the number that comes back the day a house is baked
+/// smaller. A wall is one oriented box that is DRAWN and COLLIDED, so a
+/// setback taken off a block it does not fit on is a wall standing in
+/// the middle of the road, which is what the owner photographed.
 const SUBURB_SETBACK: f64 = 4.5;
+/// How far a town house stands off the middle of its own block, metres
+/// either way: enough that a terrace is not a ruler and no more, and
+/// bounded by the same block.
+const TOWN_JITTER: f64 = 1.0;
 
 /// East and north at a direction on the sphere.
 pub fn frame_at(dir: DVec3) -> (DVec3, DVec3) {
@@ -709,11 +723,18 @@ fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> (Vec<Lot>, Vec<u8>) {
                 _ => 1 + ((hash(i, j, 3) * 0.4 + want * want) * 7.0).floor() as u32,
             };
             let (kind, storeys) = choose(tall, hash(i, j, 6));
-            let jitter = if zone == Zone::Suburb {
-                SUBURB_SETBACK * 2.0
+            // A lot may move within its own BLOCK and no further,
+            // because the street's inner kerb is `BLOCK / 2` from the
+            // block's middle and what stands past it is a wall in the
+            // road. The room is what the building does not cover, and
+            // the zone says how much of that room it wants.
+            let room = BLOCK * 0.5 * (1.0 - kind.covers()).max(0.0);
+            let want = if zone == Zone::Suburb {
+                SUBURB_SETBACK
             } else {
-                BLOCK - 8.0
+                TOWN_JITTER
             };
+            let jitter = 2.0 * want.min(room);
             built[(i + n) as usize * wide + (j + n) as usize] |= if zone == Zone::Suburb {
                 faces(i, j)
             } else {
