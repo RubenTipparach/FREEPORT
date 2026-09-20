@@ -125,35 +125,46 @@ pub(crate) fn road_out(world: &World, up: f64) -> Option<(DVec3, DVec3)> {
         .map(|(i, _)| i)
         .collect();
     let (first, last) = (*open.first()?, *open.last()?);
-    // How far down the road to LOOK, in pieces. It is a function of how
+    // How far down the road to LOOK, METRES. It is a function of how
     // high the camera stands, because the two are one framing: from
     // three metres up a road runs to the horizon and 300 m of it fills
     // the frame, and the first cut of this looked sixty pieces ahead,
     // which is twenty kilometres and well under the horizon of an eye
     // 25 m up. The picture came back as bare hills.
-    let pieces = ((up * 20.0 / freeport_core::road::PIECE).ceil() as usize).clamp(1, 12);
+    //
+    // In METRES and not in PIECES, which is the dashes' and the lamps'
+    // own mistake a third time in the same file: written as a count of
+    // pieces it was 341 m of road at the old spacing and 85 at the new,
+    // so quartering the piece quartered the framing and the picture came
+    // back with the camera's nose on the tarmac.
+    const LOOK: f64 = 100.0;
+    let piece = freeport_core::road::PIECE;
+    let pieces = (((up * LOOK).clamp(piece, 4_000.0) / piece).ceil() as usize).max(1);
     // And OUT of the town first. The first open point is a couple of
     // hundred metres from the town's centre, which is its own edge: the
     // picture from there is a street with a field at the end of it, and
     // what this camera is for is the country road.
     //
-    // ONE piece and not three, which is measured rather than chosen. At
-    // three the camera stood about 1.7 km from the port's middle looking
+    // 341 METRES and not three pieces, which is measured rather than
+    // chosen and is in metres for the reason above. At three pieces of
+    // 341 the camera stood about 1.7 km from the port's middle looking
     // further out, and `road::LIT_NEAR` is 1.5 km: every lamp on the
     // road was BEHIND it, so the night picture of a lit approach came
-    // back with nothing on it at all. One piece is 341 m of country
-    // between the camera and the town's own edge, which is still a
-    // country road, and it is inside the lighting rather than past it.
-    const CLEAR: usize = 1;
+    // back with nothing on it at all. 341 m of country between the
+    // camera and the town's own edge is still a country road, and it is
+    // inside the lighting rather than past it.
+    const CLEAR_M: f64 = 341.0;
+    let clear = ((CLEAR_M / piece).ceil() as usize).max(1);
+
     let (start, along) = if ahead {
         (
-            (first + CLEAR).min(last),
-            (first + CLEAR + pieces).min(last),
+            (first + clear).min(last),
+            (first + clear + pieces).min(last),
         )
     } else {
         (
-            last.saturating_sub(CLEAR).max(first),
-            last.saturating_sub(CLEAR + pieces).max(first),
+            last.saturating_sub(clear).max(first),
+            last.saturating_sub(clear + pieces).max(first),
         )
     };
     Some((at(start), at(along)))

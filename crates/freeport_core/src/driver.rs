@@ -49,6 +49,21 @@ const TAPER: f64 = 9.0;
 /// The tallest kerb the wheels climb, metres. A pavement's is 12 cm, so a
 /// stolen car mounts one; a wall is not a kerb and stops it.
 const CLIMB: f64 = 0.3;
+/// The steepest GROUND it drives up, rise over run.
+///
+/// It is `walker::STAND` said as a GRADE rather than a second number:
+/// `sqrt(1 - STAND^2) / STAND`, fifty degrees, and
+/// `a_car_climbs_exactly_what_a_walker_can_stand_on` holds the two in
+/// step. A body drives over what it walks over, and a slope past this
+/// is a cliff to both.
+///
+/// A step was refused on `CLIMB` alone, which is a rule in METRES that
+/// is really a rule in FRAMES: at sixty a second a car covers 0.27 m and
+/// a one in two hill rises 0.13 under it, and at the twentieth a
+/// software rasteriser runs at it covers 0.8 and rises 0.4, so the same
+/// hill the same car climbed was a wall. Measured, ten seconds of
+/// twentieths up one in two went 64.8 m against 136.9.
+const STEEPEST: f64 = 1.200_5;
 /// What is left of the speed when the car hits something square on.
 const CRASH: f64 = 0.15;
 const GRAVITY: f64 = 9.81;
@@ -242,7 +257,10 @@ impl Driver {
         // car stopped dead made none of it.
         let made = (got - self.dir).dot(self.fwd) * bounds.radius;
         let g = walker::ground(field, bounds, got, Some(self.foot));
-        if g - (self.foot) > CLIMB || made.abs() < asked.abs() * 0.05 {
+        // A kerb's worth of step, plus whatever the GROUND itself rose
+        // over the distance the car actually covered.
+        let allowed = CLIMB + made.abs() * STEEPEST;
+        if g - (self.foot) > allowed || made.abs() < asked.abs() * 0.05 {
             self.speed *= CRASH;
             return;
         }

@@ -86,6 +86,7 @@ fn grid(n: i32) -> Town {
         lots: Vec::new(),
         pieces,
         index: 0,
+        seed: 0,
     }
 }
 

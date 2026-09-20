@@ -35,6 +35,21 @@ use freeport_core::walker::{Bounds, Walker};
 /// of the inside of its own bonnet.
 const CHASE: f64 = 8.5;
 const LIFT: f64 = 3.2;
+/// How fast that camera comes round BEHIND the car, seconds.
+///
+/// A time constant and not a share of a frame, so the swing takes the
+/// same wall time at twenty frames a second as at a hundred and twenty,
+/// which is swarm-demo's own rule for its sliding deck. Placed rigidly
+/// off `car.fwd` the camera is welded to the roof: the car never turns
+/// on screen, the WORLD whips round it, and a corner reads as the
+/// horizon snapping rather than as the car going round.
+const SWING: f64 = 0.40;
+/// How much further back and higher it sits at the car's top speed,
+/// metres. A camera at one distance says nothing about how fast the car
+/// is going; one that pulls back and lifts as the speed rises does, and
+/// it is what makes the same corner read as fast.
+const STRETCH: f64 = 4.0;
+const RISE: f64 = 1.2;
 /// How many sixtieths of a second a SCRIPTED drive steps per rendered
 /// frame. Sixty, so one rendered frame is one second of driving.
 const SUB_STEPS: usize = 60;
@@ -55,6 +70,42 @@ pub struct Theft {
     /// not, because two would be two things to keep in step and the one
     /// that goes stale is the parked one.
     pub car: Driver,
+    /// The heading the CHASE CAMERA sits behind: the car's own, eased
+    /// toward it, so the view swings round a corner rather than cutting
+    /// to it. Per THEFT rather than one for the player, so getting back
+    /// into a parked car resumes behind it instead of whipping round
+    /// from wherever the last one was pointing.
+    pub swing: DVec3,
+}
+
+impl Theft {
+    /// Where that heading has got to this frame.
+    pub fn swung(&mut self, dt: f64) -> DVec3 {
+        // Squared to the car's own up FIRST, or a heading carried over a
+        // curving planet leaves the tangent plane and the camera sinks
+        // into the ground a hundred kilometres down the road.
+        let car = &self.car;
+        let held = (self.swing - car.dir * self.swing.dot(car.dir)).normalize_or(car.fwd);
+        self.swing = slerp(held, car.fwd, 1.0 - (-dt / SWING).exp());
+        self.swing
+    }
+}
+
+/// The shorter way round from one unit vector to another, `t` of the way
+/// there.
+///
+/// SLERP and not a lerp of the two: a lerp crosses the chord, so it
+/// turns fastest in the middle of a swing and the camera arrives with a
+/// jerk. It is the owner's own word for what a chase camera should do.
+fn slerp(from: DVec3, to: DVec3, t: f64) -> DVec3 {
+    let angle = from.dot(to).clamp(-1.0, 1.0).acos();
+    let s = angle.sin();
+    // Dead ahead or dead behind, where there is no plane to turn in and
+    // never a NaN out of a divide by nought.
+    if s <= 1e-9 || !s.is_finite() {
+        return to;
+    }
+    (from * ((angle * (1.0 - t)).sin() / s) + to * ((angle * t).sin() / s)).normalize_or(to)
 }
 
 /// Every car the player has taken, and which of them is being driven.
@@ -163,7 +214,13 @@ pub fn board(
             let dir = at.normalize();
             let field = street.fabric.underfoot(&ground.0.planet, here, 8.0);
             let car = Driver::board(&field, &ground.0.bounds, dir, fwd);
-            thefts.cars.push(Theft { who, tint, car });
+            let swing = car.fwd;
+            thefts.cars.push(Theft {
+                who,
+                tint,
+                car,
+                swing,
+            });
             thefts.at_wheel = Some(thefts.cars.len() - 1);
             commands.remove_resource::<OnFoot>();
             *scripted = true;
@@ -284,7 +341,6 @@ pub fn drive_car(
     if steps > 1 {
         auto.say(car, was, script.goal.0, here.world().planet.radius);
     }
-    eye.0 = WorldPos(here.centre() + chase(car));
     status.walker = format!(
         "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel{}",
         car.foot - here.world().planet.radius,
@@ -296,6 +352,14 @@ pub fn drive_car(
             car.dir.angle_between(g) * here.world().planet.radius / 1000.0
         )),
     );
+    // The camera eases over the DRIVING this frame carried, which on a
+    // scripted run is `steps` sixtieths and not the frame's own delta: a
+    // rendered frame there is a whole second of driving, and a camera
+    // eased by the frame would still be pointing where the car was a
+    // second ago in every picture the flag takes.
+    let theft = &mut thefts.cars[k];
+    let swing = theft.swung(dt * steps as f64);
+    eye.0 = WorldPos(here.centre() + chase(&theft.car, swing));
 }
 
 /// How long a scripted car has to have made no ground before it is
@@ -555,15 +619,18 @@ pub fn aim_drive(
 /// Where the camera sits: behind the car and over it, which is what a
 /// chase camera is. It never looks at the car from in front, so reverse
 /// backs TOWARD the camera rather than swinging it round.
-fn chase(car: &Driver) -> DVec3 {
-    car.dir * (car.foot + LIFT) - car.fwd * CHASE
+fn chase(car: &Driver, fwd: DVec3) -> DVec3 {
+    // How hard it is being driven, nought to one, which is what decides
+    // how far back the camera stands.
+    let hurry = (car.speed.abs() / freeport_core::driver::TOP).clamp(0.0, 1.0);
+    car.dir * (car.foot + LIFT + RISE * hurry) - fwd * (CHASE + STRETCH * hurry)
 }
 
 /// Which way that camera looks: at the car's own ROOF rather than along
 /// its heading, so the car sits in the middle of the frame instead of
 /// under the bottom of it.
-pub fn look_at(car: &Driver) -> DVec3 {
-    (car.dir * (car.foot + AIM) - chase(car)).normalize()
+pub fn look_at(car: &Driver, fwd: DVec3) -> DVec3 {
+    (car.dir * (car.foot + AIM) - chase(car, fwd)).normalize()
 }
 
 /// Draw every stolen car where its own `Theft` says it is, driven or

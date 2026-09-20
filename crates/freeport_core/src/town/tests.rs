@@ -132,7 +132,12 @@ fn a_town_has_towers_in_the_middle_and_suburbs_outside() {
     // out along the stretch is nearer the middle than the same distance
     // across it, and a test that measured the plain radius was reading
     // downtown as suburb wherever the town is long.
-    let zone = |l: &Lot| Zone::of(demand(l.x, l.z, t.radius, t.along, town_seed(7, t.index)));
+    // At the lot's own BLOCK, which is what `plot` asked: a lot is
+    // jittered off its block's middle by up to half a pitch, so asking
+    // the demand where the building ended up reads a lot near a zone
+    // boundary on the wrong side of it.
+    let block = |v: f64| (v / PITCH).round() * PITCH;
+    let zone = |l: &Lot| Zone::of(demand(block(l.x), block(l.z), t.radius, t.along, t.seed));
     let inner: Vec<&Lot> = t.lots.iter().filter(|l| zone(l) == Zone::Core).collect();
     let outer: Vec<&Lot> = t.lots.iter().filter(|l| zone(l) == Zone::Suburb).collect();
     assert!(
@@ -506,5 +511,115 @@ fn an_arcs_nearest_point_is_on_it_and_its_level_ramps() {
         (site.grade(radius) - 0.01).abs() < 1e-4,
         "{}",
         site.grade(radius)
+    );
+}
+
+/// A town's own outline never moves faster than the bound its skirt is
+/// widened by, which is what keeps the planet's slope bound where it was.
+///
+/// The bound is what `field::site_skirt` reads, so a town whose edge
+/// swung faster than this would fade to the relief over a band steeper
+/// than `Planet::steepest` allows, and a chunk with surface in it would
+/// be ruled empty: a hole in the world. Measured over every bearing of a
+/// thousand towns of every size, stretch and seed rather than reasoned
+/// about, because the lobes are noise and a bound on noise reasoned from
+/// its own gradient is four times what it ever reaches.
+#[test]
+fn the_outline_never_moves_faster_than_the_bound() {
+    const STEP: f64 = 1e-5;
+    let mut worst = 0.0f64;
+    for k in 0..1000u32 {
+        let seed = super::town_seed(7, k as usize);
+        let radius = 20.0 + (k % 23) as f64 * 11.0;
+        let turn = k as f64 * 0.7;
+        let along = if k % 5 == 0 {
+            DVec2::ZERO
+        } else {
+            DVec2::new(turn.cos(), turn.sin())
+        };
+        let bearing = |a: f64| DVec2::new(a.cos(), a.sin());
+        for t in 0..2000 {
+            let a = t as f64 / 2000.0 * std::f64::consts::TAU;
+            let here = super::edge(bearing(a), radius, along, seed);
+            let next = super::edge(bearing(a + STEP), radius, along, seed);
+            // Metres of EDGE per metre of ARC: turning the bearing by
+            // `STEP` walks the outline's own point by `edge * STEP`.
+            worst = worst.max((next - here).abs() / (STEP * here.min(next)));
+        }
+    }
+    println!("the outline moves at most {worst:.3} m of edge a metre of arc");
+    assert!(
+        worst < super::WOBBLE,
+        "an outline moving at {worst:.3} a metre needs a skirt wider than WOBBLE {:.3} allows",
+        super::WOBBLE
+    );
+}
+
+/// A town's levelled ground FOLLOWS its outline, and every lot stands
+/// on it.
+///
+/// The first cut levelled `radius * OUTLINE + APRON` right round every
+/// town, which is a DISC, and a town is not one: it is stretched by
+/// `STRETCH` along its own shore and squeezed by the same across it, so
+/// along the squeezed axis the disc reaches more than twice as far as
+/// the town ever does. What that leaves on the ground is a flat apron
+/// wider than the town standing on it, which is what the owner read off
+/// the climb as big flat discs.
+///
+/// Both halves matter and only together: levelling less than the town
+/// is a building on bare relief with its base at the town's level, which
+/// is the buried suburb this file already has a test for.
+#[test]
+fn a_towns_plateau_follows_its_outline_and_not_a_disc() {
+    let planet = planet();
+    let towns = plan(&planet, 996.0, 60.0, 3, 7);
+    let t = &towns[0];
+    let mut here = planet.clone();
+    here.sites = vec![site_of(t)].into();
+    let (east, north) = frame_at(t.dir);
+    let at = |x: f64, z: f64| (t.dir * planet.radius + east * x + north * z).normalize();
+    // `keep` is how much of the bare relief is left at a direction, so
+    // nought is ground the site levels outright.
+    for l in &t.lots {
+        let keep = here.surface_blend(at(l.x, l.z)).1;
+        assert!(
+            keep <= 0.0,
+            "a lot {:.0} m out stands on {keep:.3} of bare relief",
+            l.x.hypot(l.z)
+        );
+    }
+    let disc = t.radius * OUTLINE + APRON;
+    let (mut flat, mut all) = (0.0f64, 0.0f64);
+    let (mut widest, mut narrowest) = (0.0f64, f64::MAX);
+    const RINGS: usize = 200;
+    const BEARINGS: usize = 360;
+    for k in 0..BEARINGS {
+        let a = k as f64 / BEARINGS as f64 * std::f64::consts::TAU;
+        let mut reach = 0.0f64;
+        for i in 0..RINGS {
+            // Weighted by `r`, because a ring's own area is `r dr dth`.
+            let r = (i as f64 + 0.5) / RINGS as f64 * disc;
+            all += r;
+            if here.surface_blend(at(r * a.cos(), r * a.sin())).1 <= 0.0 {
+                flat += r;
+                reach = r;
+            }
+        }
+        widest = widest.max(reach);
+        narrowest = narrowest.min(reach);
+    }
+    let share = flat / all;
+    println!(
+        "the port levels {:.0}% of the disc's own area, {narrowest:.0} m out at its narrowest and {widest:.0} at its widest, against a disc of {disc:.0}",
+        share * 100.0
+    );
+    assert!(
+        share < 0.7,
+        "the plateau is {:.0}% of the disc: still a disc",
+        share * 100.0
+    );
+    assert!(
+        widest > narrowest * 1.5,
+        "the plateau runs {widest:.0} m one way and {narrowest:.0} the other: a disc"
     );
 }

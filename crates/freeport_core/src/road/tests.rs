@@ -269,7 +269,7 @@ fn a_corridor_follows_the_ground_and_stops_short_of_its_towns() {
     // And it stops short of both towns, so a town's disc owns its ground.
     let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
     let sites = corridor(road, &run, planet.radius, &discs);
-    let skip = crate::field::site_band(&crate::town::site_of(&towns[road.from])).1;
+    let town = crate::town::site_of(&towns[road.from]);
     assert!(
         !sites.is_empty(),
         "a road with no corridor is a road on data"
@@ -277,6 +277,12 @@ fn a_corridor_follows_the_ground_and_stops_short_of_its_towns() {
     let centre = towns[road.from].dir;
     for site in &sites {
         for end in [site.dir, site.to] {
+            // Outside the town's own levelling AT THAT BEARING, which
+            // is what owns the ground there. Against the town's WIDEST
+            // instead, a road out along the squeezed axis stopped three
+            // hundred metres short of anything the town had levelled
+            // and the tarmac ended in a field.
+            let skip = town.level_r(end) + crate::field::site_skirt(&town);
             assert!(
                 end.angle_between(centre) * planet.radius > skip,
                 "a corridor piece reaches inside the town it serves"

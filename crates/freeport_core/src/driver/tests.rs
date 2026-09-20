@@ -500,3 +500,106 @@ fn a_car_slowed_to_a_crawl_can_pull_away_again() {
         "a car at a crawl on open ground went {gone:.1} m in five seconds"
     );
 }
+
+/// A ball whose ground RISES along x at a fixed grade: a hillside with
+/// nothing built on it, which is what a car meets between two towns.
+struct Hill {
+    grade: f64,
+}
+
+impl Density for Hill {
+    fn at(&self, p: DVec3) -> f64 {
+        let len = p.length();
+        if len <= 0.0 {
+            return R;
+        }
+        // How far along x from the pole, metres of arc, so the grade is
+        // a rise over a run along the GROUND and not over a chord.
+        let along = (p.x / len).clamp(-1.0, 1.0).asin() * R;
+        R + self.grade * along - len
+    }
+
+    fn slope(&self) -> f64 {
+        1.0 + self.grade.abs()
+    }
+}
+
+/// A car drives UP a hill, and the hill it stops on is a cliff rather
+/// than a slope.
+///
+/// It did not. A car's outline reaches `CAR_LONG * 0.5` (2.05 m) forward
+/// and its ring was tested for solid at a fixed 0.45 m over its own
+/// MIDDLE's foot, so ground rising 0.45 m within 2.05 was a wall to it:
+/// every slope past about one in four and a half stopped the car dead,
+/// which on this planet is most of the country. A walker never met it
+/// because a walker is 35 cm across, so ground rising its own 60 cm step
+/// within 35 is a slope of 1.7 and `can_stand` had already refused it.
+/// One rule, asked in both places: a body drives and walks over anything
+/// it can stand on.
+#[test]
+fn a_car_drives_up_a_hill_and_is_stopped_by_a_cliff() {
+    let b = Bounds {
+        floor: R - 400.0,
+        top: R + 400.0,
+        ..bounds()
+    };
+    let throttle = Drive {
+        throttle: 1.0,
+        ..Default::default()
+    };
+    // Every grade a road is ever built at, and then some: `road::STEEPEST`
+    // is one in ten, and this climbs one in one and comes back DOWN it.
+    for grade in [0.0, 0.1, 0.25, 0.5, 1.0, -0.5] {
+        let w = Hill { grade };
+        let mut d = car(&w, &b);
+        let from = d.foot;
+        let gone = drive(&mut d, &w, &b, throttle, 10.0);
+        let up = d.foot - from;
+        println!("ten seconds up a {grade:.2} hill goes {gone:.1} m and climbs {up:.1} m");
+        assert!(
+            gone > 100.0,
+            "a car on a {grade:.2} hill went {gone:.1} m in ten seconds: it is stuck"
+        );
+        assert!(
+            (up - gone * grade).abs() < gone * 0.05 + 1.0,
+            "it climbed {up:.1} m over {gone:.1} m of ground, which is not a {grade:.2} grade"
+        );
+    }
+    // And on a SLOW machine too. A frame is a twentieth on a software
+    // rasteriser and `update` clamps there, so the step is 0.8 m rather
+    // than 0.27: a rise allowed as a flat `CLIMB` would refuse a hill
+    // the same car climbs at sixty frames a second, which is a rule in
+    // FRAMES wearing the costume of a rule in metres.
+    let w = Hill { grade: 0.5 };
+    let mut d = car(&w, &b);
+    let (from, at) = (d.dir, d.foot);
+    for _ in 0..200 {
+        d.update(&w, &b, &throttle, 0.05);
+    }
+    let (gone, up) = (from.angle_between(d.dir) * R, d.foot - at);
+    println!("ten seconds of TWENTIETHS up a 0.50 hill goes {gone:.1} m and climbs {up:.1} m");
+    assert!(
+        gone > 100.0,
+        "a car stepped a twentieth at a time went {gone:.1} m up a one in two hill"
+    );
+}
+
+/// A car climbs exactly what a walker can stand on.
+///
+/// `walker::STAND` is a COSINE, because that is what a surface normal
+/// answers, and `STEEPEST` is a GRADE, because that is what a rise over
+/// a run is. They are one rule said twice across a boundary the machine
+/// cannot cross, so this is what keeps them in step: a car that drove up
+/// less than a walker walks up would stop on ground a player could climb
+/// out and walk, and one that drove up more would climb what the field
+/// pushes it out of.
+#[test]
+fn a_car_climbs_exactly_what_a_walker_can_stand_on() {
+    let stand = walker::STAND;
+    let grade = (1.0 - stand * stand).sqrt() / stand;
+    println!("a walker stands on {stand:.4}, which is a grade of {grade:.4}");
+    assert!(
+        (STEEPEST - grade).abs() < 1e-3,
+        "the car climbs {STEEPEST} and the walker stands on {grade:.4}"
+    );
+}

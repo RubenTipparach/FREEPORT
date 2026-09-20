@@ -471,3 +471,54 @@ fn a_corridors_ground_ramps_through_a_station_without_a_landing() {
         "the corridor's ground strays {worst:.3} m from the ramp it was cut to"
     );
 }
+
+/// And across a TOWN's skirt, which is not a circle.
+///
+/// A road's corridor is a capsule, so its boundary is everywhere square
+/// to the way out of it and a fade over a fixed width climbs at a
+/// smoothstep's one and a half over that width. A town's outline is the
+/// `demand` its lots are laid on, so its boundary is TILTED, and the same
+/// fade past a tilted boundary climbs `hypot(1, WOBBLE)` times as fast:
+/// left at a road's width the field would climb past the bound
+/// everywhere the outline swings, a chunk with surface in it would be
+/// ruled empty, and that is a hole in the world. `field::site_skirt`
+/// widens a town's own skirt by exactly that factor, and this is what
+/// says the two numbers agree.
+#[test]
+fn the_slope_bound_holds_across_a_towns_own_outline() {
+    let mut planet = Planet {
+        radius: 2000.0,
+        relief: 40.0,
+        ..Default::default()
+    };
+    let along = glam::DVec2::new(1.0, 0.0);
+    let site = crate::town::Site::town(DVec3::Z, -25.0, 100.0, along, 7);
+    planet.sites = vec![site].into();
+    let bound = planet.slope();
+    let reach = site_band(&planet.sites[0]).1 + 20.0;
+    let (east, north) = crate::town::frame_at(DVec3::Z);
+    let mut worst = 0.0f64;
+    const BEARINGS: usize = 160;
+    const RINGS: usize = 160;
+    for k in 0..BEARINGS {
+        let a = k as f64 / BEARINGS as f64 * std::f64::consts::TAU;
+        for i in 0..RINGS {
+            let out = reach * (i as f64 + 0.5) / RINGS as f64;
+            let dir =
+                (DVec3::Z * planet.radius + (east * a.cos() + north * a.sin()) * out).normalize();
+            for step in 0..3 {
+                let p = dir * (planet.radius - 20.0 + 20.0 * step as f64);
+                for d in [DVec3::X, DVec3::Y, DVec3::Z] {
+                    let h = 0.05;
+                    let g = (planet.at(p + d * h) - planet.at(p - d * h)).abs() / (2.0 * h);
+                    worst = worst.max(g);
+                }
+            }
+        }
+    }
+    println!("a town's own skirt climbs at {worst:.2} against a bound of {bound:.2}");
+    assert!(
+        worst <= bound,
+        "the field climbs at {worst} across a town's outline against a bound of {bound}"
+    );
+}

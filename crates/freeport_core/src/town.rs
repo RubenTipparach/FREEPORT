@@ -16,137 +16,6 @@ use crate::field::{hash3, noise3, Density, Planet};
 use crate::model::Kind;
 use glam::{DVec2, DVec3};
 
-/// A patch of planet LEVELLED: a town's own ground, or the corridor a
-/// road is cut along.
-///
-/// It is an ARC and a disc is the case where the two ends are the same
-/// direction, which is what a town is. A road's corridor is a chain of
-/// short arcs whose ends meet, each cut to the ground its own two ends
-/// stand on, so the corridor follows the country instead of being a
-/// straight ramp through it: measured on this body's own roads, a
-/// corridor levelled on the atlas's ten kilometre waypoints cuts a
-/// median of 45 m and up to 830 m into the ground, and one cut every
-/// 341 m cuts a median of 1.2 m and a 99th of 6.2, which is a cutting
-/// and an embankment rather than a canyon.
-///
-/// One TYPE rather than a town's disc beside a road's capsule, because
-/// everything that reads a site (`field::site_band`, `site_weight`,
-/// `surface_blend`, `local_solid`, `Planet::around` and the slope bound
-/// they all rest on) would otherwise need saying twice, and two of them
-/// are subtle enough that one copy would be wrong.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Site {
-    /// One end of the arc, and a town's own middle.
-    pub dir: DVec3,
-    /// The level at `dir`, metres over the mean radius.
-    pub h: f64,
-    /// The other end, equal to `dir` on a town.
-    pub to: DVec3,
-    /// The level there.
-    pub to_h: f64,
-    /// How far either side of the arc the levelling reaches, metres.
-    pub r: f64,
-    /// Whether it may BUILD GROUND UP as well as cut it away.
-    ///
-    /// A town may not, and that is one of this game's own rules: its
-    /// level is the lowest its survey found, so a site that filled would
-    /// be a city standing on a pedestal with its apron hanging out over
-    /// the valley, which is what the owner read off a picture.
-    ///
-    /// A ROAD may, and that is what a road IS. Its level is the ground
-    /// at its own stations, so the ramp between two of them runs over
-    /// every hollow between: measured on this body, tarmac laid on a
-    /// corridor that could only cut floated 18.6 m over the ground in
-    /// the worst place. An embankment is the other half of a cutting and
-    /// no road is built without both.
-    pub fills: bool,
-}
-
-impl Site {
-    /// A round site: a town's own ground, level right across it.
-    pub fn round(dir: DVec3, h: f64, r: f64) -> Site {
-        Site {
-            dir,
-            h,
-            to: dir,
-            to_h: h,
-            r,
-            fills: false,
-        }
-    }
-
-    /// An ARC: a corridor `r` metres either side of the great circle
-    /// between two directions, its level ramped from one end to the
-    /// other. A road's own piece.
-    pub fn arc(from: (DVec3, f64), to: (DVec3, f64), r: f64) -> Site {
-        Site {
-            dir: from.0,
-            h: from.1,
-            to: to.0,
-            to_h: to.1,
-            r,
-            fills: true,
-        }
-    }
-
-    /// Where along the arc a direction falls, nought at `dir` and one at
-    /// `to`, clamped to the segment. Nought for a round site.
-    ///
-    /// The point is projected onto the great circle through the two ends
-    /// and then measured from `dir` along it, which is the only honest
-    /// "how far along" on a sphere: a chord through the middle of the
-    /// planet is not a distance along the ground.
-    pub fn along(&self, dir: DVec3) -> f64 {
-        let pole = self.dir.cross(self.to);
-        let sweep = self.dir.angle_between(self.to);
-        if sweep < 1e-12 || pole.length_squared() < 1e-24 {
-            return 0.0;
-        }
-        let pole = pole.normalize();
-        let on = (dir - pole * dir.dot(pole)).normalize_or(self.dir);
-        // The tangent at `dir` toward `to`, so the angle is SIGNED and a
-        // point behind the start clamps to the start rather than to the
-        // far end.
-        let ahead = (self.to - self.dir * self.dir.dot(self.to)).normalize_or_zero();
-        (on.dot(ahead).atan2(on.dot(self.dir)) / sweep).clamp(0.0, 1.0)
-    }
-
-    /// The nearest point of the arc to a direction, and the level there.
-    pub fn nearest(&self, dir: DVec3) -> (DVec3, f64) {
-        let t = self.along(dir);
-        if t <= 0.0 {
-            return (self.dir, self.h);
-        }
-        if t >= 1.0 {
-            return (self.to, self.to_h);
-        }
-        let sweep = self.dir.angle_between(self.to);
-        let (s, c) = (sweep * t).sin_cos();
-        let ahead = (self.to - self.dir * self.dir.dot(self.to)).normalize_or_zero();
-        (
-            (self.dir * c + ahead * s).normalize_or(self.dir),
-            self.h + (self.to_h - self.h) * t,
-        )
-    }
-
-    /// How far the arc reaches off the axis, as a CHORD: half its own
-    /// sweep. A round site reaches nought, so a query window built from
-    /// this is a point for a town and a segment for a road.
-    pub fn reach(&self) -> f64 {
-        (self.dir - self.to).length() * 0.5
-    }
-
-    /// How steeply its own level ramps along it, as a slope. A town's is
-    /// nought; a road's is the grade it was routed at.
-    pub fn grade(&self, radius: f64) -> f64 {
-        let run = self.dir.angle_between(self.to) * radius;
-        if run <= 0.0 {
-            return 0.0;
-        }
-        (self.to_h - self.h).abs() / run
-    }
-}
-
 /// A lot: where on the town's grid, metres east and north of its middle,
 /// how big, how tall, and what kind of building stands on it.
 #[derive(Clone, Debug)]
@@ -175,6 +44,9 @@ pub struct Town {
     pub lots: Vec<Lot>,
     pub pieces: Vec<Piece>,
     pub index: usize,
+    /// The town's OWN seed, `town_seed` of the world's and its index:
+    /// what its lobes, its plazas and its skins are drawn off.
+    pub seed: u32,
 }
 
 /// A frame on the sphere: a direction, east and north there, and the
@@ -267,6 +139,24 @@ const STRETCH: f64 = 1.45;
 /// nominal radius: the lobes and the stretch together.
 pub const OUTLINE: f64 = (1.0 + REACH) * STRETCH;
 
+/// How fast that outline can MOVE as you walk round it, metres of edge
+/// per metre of arc.
+///
+/// It is the one thing a disc does not have and it is the price of an
+/// outline that is not one: a fade over a fixed width past a boundary
+/// that is not radial is steeper than the same fade past one that is,
+/// by `hypot(1, WOBBLE)`. `field::site_skirt` widens a town's skirt by
+/// exactly that, so the planet's own slope bound is untouched and no
+/// chunk is ruled on ground the levelling reaches into.
+///
+/// MEASURED over every bearing of a thousand towns of every size,
+/// stretch and seed rather than reasoned about
+/// (`the_outline_never_moves_faster_than_the_bound`): the worst is
+/// 1.571, and this is 2, which is the headroom a bound on noise wants.
+/// Reasoned from the lobes' own gradient instead it is 4.65, which is a
+/// fifty metre apron round every town for a swing no town ever takes.
+pub(crate) const WOBBLE: f64 = 2.0;
+
 /// Where a town stops being one thing and starts being another, in the
 /// same demand the outline is cut from: over `CORE_AT` is downtown and
 /// over `TOWN_AT` is the town proper, and everything out to nought is
@@ -355,7 +245,7 @@ pub fn lot_frame(planet_radius: f64, town: &Town, x: f64, z: f64) -> Frame {
 /// apron covers the half block and half street a lot's own corner stands
 /// past its centre.
 pub fn site_of(town: &Town) -> Site {
-    Site::round(town.dir, town.h, town.radius * OUTLINE + APRON)
+    Site::town(town.dir, town.h, town.radius, town.along, town.seed)
 }
 
 /// The order qualifying sites are taken in: the PORT first, which is the
@@ -676,19 +566,44 @@ pub(crate) fn lay_all_from(
 /// hundred and sixty sites read as one stamp used a hundred and sixty
 /// times, which is exactly what the owner was looking at.
 fn demand(x: f64, z: f64, radius: f64, along: DVec2, seed: u32) -> f64 {
+    let p = DVec2::new(x, z);
+    let d = p.length();
+    // Dead on the middle, and never a NaN out of a zero length divide.
+    if d <= 0.0 || !d.is_finite() {
+        return 1.0;
+    }
+    1.0 - d / edge(p / d, radius, along, seed)
+}
+
+/// How far a town reaches along a BEARING out of its own middle, metres.
+///
+/// The stretch and the lobes, in one function, because this is the one
+/// place a town's edge is decided: `demand` reads it to say where the
+/// town stops and `Site::level_r` reads it to say how far the ground is
+/// levelled, and a town whose plateau and whose lots came off two
+/// answers is the disc the owner was looking at.
+///
+/// The lobes are read at the NOMINAL edge rather than at the query
+/// point, which is what makes this a function of the bearing alone: a
+/// ray out of the middle of a town then crosses the outline exactly
+/// once, so there is an edge to level up to rather than a level set
+/// somebody has to root find.
+fn edge(b: DVec2, radius: f64, along: DVec2, seed: u32) -> f64 {
     // Stretched ALONG the shore and squeezed across it, at the same area:
     // a coastal town runs up and down its own beach, because the water
     // stops it one way and the hill behind it stops it the other. A town
     // with no slope under it gets no stretch and stays round.
     let (u, v) = if along.length_squared() < 0.5 {
-        (x, z)
+        (b.x, b.y)
     } else {
-        (x * along.x + z * along.y, z * along.x - x * along.y)
+        (b.x * along.x + b.y * along.y, b.y * along.x - b.x * along.y)
     };
-    let r = (u / STRETCH).hypot(v * STRETCH) / radius.max(f64::MIN_POSITIVE);
-    let p = DVec3::new(x / (radius * LOBE), 3.5, z / (radius * LOBE));
+    let s = (u / STRETCH).hypot(v * STRETCH);
+    let nominal = radius / s.max(f64::MIN_POSITIVE);
+    let at = b * nominal;
+    let p = DVec3::new(at.x / (radius * LOBE), 3.5, at.y / (radius * LOBE));
     let lobe = (noise3(p, seed) - 0.5) + (noise3(p * 2.7, seed ^ 0x5B2D) - 0.5) * 0.5;
-    1.0 - r + lobe * REACH
+    nominal * (1.0 + lobe * REACH)
 }
 
 /// What a block of a town's grid IS. The zones are the demand's own
@@ -749,6 +664,7 @@ pub fn lay(dir: DVec3, h: f64, radius: f64, along: DVec2, index: usize, seed: u3
         lots,
         pieces,
         index,
+        seed,
     }
 }
 
@@ -862,6 +778,9 @@ pub fn ground_at(planet: &dyn Density, dir: DVec3, near: f64, far: f64) -> f64 {
     }
     0.5 * (lo + hi)
 }
+
+mod site;
+pub use site::*;
 
 mod street;
 pub use street::*;

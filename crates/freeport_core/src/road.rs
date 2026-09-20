@@ -560,14 +560,24 @@ mod tests;
 /// 2.3, 341 m is 1.20 with a 99th of 6.2, and 171 m is 0.72 with a 99th
 /// of 3.1.
 ///
-/// 341 m is where it stops being worth halving. A metre of cut is a
-/// verge, six metres is a cutting and both are things a road HAS; the
-/// next halving buys half a metre and doubles a count that is already
-/// 187,000 arcs on this body. What made that count affordable at all is
-/// `field::Sites`, the latitude index, and what made it necessary is
-/// that a corridor has to exist planet wide from the first frame for the
-/// same reason a town's site does: a chunk is meshed once.
-pub const PIECE: f64 = 341.0;
+/// It was 341 m, on the reading that a metre of cut is a verge and six
+/// is a cutting and both are things a road HAS. That reading looked at
+/// the median and the 99th and not at the WORST, and the worst at 341 m
+/// is a **36 m canyon**: the owner read it off a picture as a highway
+/// sinking into the ground, and a road that disappears into the country
+/// once on a body is a road that disappears. The same sweep says 170 m
+/// is 0.72 median and 15.9 worst, and 85 m is 0.54 median, a 99th of
+/// 2.10 and a worst of 4.56, which is a CUTTING everywhere on the body
+/// and a canyon nowhere.
+///
+/// What it costs is the count, four times over: 187,000 arcs become
+/// 747,000 and the atlas's own heights go with them. What makes that
+/// affordable is `field::Sites`, the latitude index, which is why a
+/// chunk pays for the sites in its own band and not for the body's, and
+/// what makes it necessary is that a corridor has to exist planet wide
+/// from the first frame for the same reason a town's site does: a chunk
+/// is meshed once.
+pub const PIECE: f64 = 85.0;
 
 /// How far either side of its centreline a road's ground is levelled,
 /// metres. The carriageway is `town::LANE` each way and the rest is the
@@ -685,11 +695,12 @@ fn smooth(mut run: Vec<f64>, gap: &[f64], dry: f64) -> Vec<f64> {
 /// ground its own two ends stand on.
 ///
 /// `skip` is how near a town's own centre the corridor stops, and it is
-/// the town's whole SITE BAND (`field::site_band` of `town::site_of`)
-/// rather than its outline: inside the band the town's own site wins at
-/// full weight and answers the town's level, so a corridor that reached
-/// that far would lay its tarmac at the road's level over ground held at
-/// the town's. Measured, tarmac stood 0.10 m off its own lift there;
+/// the town's own levelling AT THAT BEARING plus its skirt
+/// (`Site::level_r` and `field::site_skirt`): inside that the town's
+/// site wins at full weight and answers the town's level, so a corridor
+/// that reached further would lay its tarmac at the road's level over
+/// ground held at the town's, and one that stopped short of it would
+/// end in a field. Measured, tarmac stood 0.10 m off its own lift there;
 /// past the band it is 0.003. Consecutive arcs share an end and its level by
 /// construction, which is what lets the field's slope bound assume TWO
 /// overlapping skirts rather than however many roads meet at a hub.
@@ -734,7 +745,13 @@ pub fn open(line: &[DVec3], radius: f64, towns: &crate::field::Sites) -> Vec<boo
     line.iter()
         .map(|d| {
             !towns.near(*d, window).any(|site| {
-                let (_, outer) = crate::field::site_band(site);
+                // How far the town levels THIS WAY, which is its own
+                // outline and not the disc round it: measured against
+                // the widest a town reaches, a road out along the
+                // SQUEEZED axis stopped three hundred metres short of
+                // ground the town had never levelled, so the tarmac
+                // ended in a field.
+                let outer = site.level_r(*d) + crate::field::site_skirt(site);
                 (*d - site.nearest(*d).0).length() * radius <= outer
             })
         })

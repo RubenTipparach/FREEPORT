@@ -48,6 +48,20 @@ pub(crate) struct Atlas {
     /// own size is `town::size_of` of this and its rank, so a change to
     /// how sizes are spread needs no rebake of where they stand.
     pub town_radius: f64,
+    /// How finely the corridor's centreline is refined, metres
+    /// (`road::PIECE`).
+    ///
+    /// It is in the FINGERPRINT because the atlas keeps the corridor's
+    /// heights and derives its directions, so a file baked at another
+    /// spacing has a run of the wrong length for every road on the body
+    /// and `road::corridor` hands back nothing: roads on the chart, a
+    /// route a car can follow, and no ground under any of it and no
+    /// tarmac on it. Refused instead, the body is planned here and the
+    /// log says why, which is what every other field in this fingerprint
+    /// is for. An atlas from before there was a piece parses as nought
+    /// and is refused, which is the same answer.
+    #[serde(default)]
+    pub piece: f64,
     /// The sea this plan was made against. A town qualifies on how high
     /// it stands over the sea and a road is refused into it, so a plan
     /// made at one level is a set of cities underwater at another.
@@ -161,6 +175,7 @@ impl Atlas {
             radius: planet.radius,
             octaves: planet.octaves,
             town_radius,
+            piece: road::PIECE,
             sea,
             probe: probe(planet),
             towns: towns
@@ -250,6 +265,7 @@ impl Atlas {
             && (self.radius - planet.radius).abs() < 1.0
             && (self.sea - sea).abs() < 1.0
             && (self.town_radius - town_radius).abs() < 1e-6
+            && (self.piece - road::PIECE).abs() < 1e-6
             && self.probe.len() == PROBES
             && self
                 .probe
@@ -304,7 +320,11 @@ pub(crate) fn write(atlas: &Atlas, path: &Path) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let text = serde_json::to_string_pretty(atlas).map_err(std::io::Error::other)?;
+    // COMPACT, because this file is 760,000 numbers and pretty printing
+    // puts each on its own line under three levels of indentation: 13
+    // bytes of whitespace a number, which is 7.3 MB of a 13.9 MB file
+    // and nothing a reader could have read anyway. It is 6.6 MB.
+    let text = serde_json::to_string(atlas).map_err(std::io::Error::other)?;
     std::fs::write(path, text)
 }
 

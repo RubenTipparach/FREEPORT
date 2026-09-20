@@ -714,7 +714,7 @@ fn place_eye(
     // rotation and the picture came back with no car in it at all.
     *tf = match (thefts.driving(), walker) {
         (Some(theft), _) => {
-            let look = drive::look_at(&theft.car);
+            let look = drive::look_at(&theft.car, theft.swing);
             Transform::from_translation(at).looking_to(look.as_vec3(), theft.car.dir.as_vec3())
         }
         (None, Some(w)) => {

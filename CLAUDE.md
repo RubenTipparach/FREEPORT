@@ -1370,6 +1370,55 @@ there keeping the town's heading, the town's level as its base).
 the ONE thing a town still does to the terrain, and it is a term in the
 planet's own field rather than a second lattice.
 
+**And that plateau FOLLOWS THE TOWN'S OUTLINE, because a town is not a
+disc.** `site_of` levelled `radius * OUTLINE + APRON` right round, which
+is the furthest a town can EVER reach in any direction, and a town
+reaches that far in one direction: `demand` stretches it by `STRETCH`
+(1.45) along its own shore and squeezes it by the same across, so along
+the squeezed axis the disc stood more than twice as far out as anything
+built on it. Measured on the fixture port: the disc is 109 m and the town
+is 40 m out at its narrowest and 84 at its widest, so **72% of that
+plateau was bare flat ground**. The owner read it off the climb as big
+flat discs, and it was one, a hundred and sixty times.
+
+`Site::outline` is the fix and it is the design's own rule about `demand`
+arriving at the one reader that had not asked: how far a town REACHES
+and how far its ground is LEVELLED are one function (`town::edge`) rather
+than two that have to agree. `demand` is `1 - dist / edge(bearing)` now
+and `Site::level_r` is `edge(bearing) + APRON`, so every lot is on
+levelled ground by construction
+(`a_towns_plateau_follows_its_outline_and_not_a_disc` walks both halves,
+and `a_lot_stands_on_its_own_ground_and_is_not_buried` still measures
+0.00 m into the ground).
+
+**The lobes are read at the NOMINAL edge and not at the query point**,
+which is what makes the outline a function of its own bearing: a ray out
+of the middle of a town then crosses it exactly once, so there is an edge
+to level up to rather than a level set somebody has to root find.
+
+**And a skirt past a boundary that is not radial is STEEPER than one
+past a boundary that is**, by `hypot(1, WOBBLE)`, which is the whole
+price of an outline. `town::WOBBLE` is how fast the edge can move as you
+walk round it, metres of edge a metre of arc, MEASURED over every bearing
+of a thousand towns rather than reasoned about (the worst is 1.571 and
+the constant is 2; reasoned from the lobes' own noise gradient it is
+4.65, which is a fifty metre apron for a swing no town ever takes).
+`field::site_skirt` widens a town's own skirt by exactly that, so the
+blend's gradient is what it always was and the planet's slope bound
+(`steepest`, which divides by the NARROWEST skirt on the body, a road's)
+never moved. `Site::level_floor` is the same number the other way up:
+what a BOX spanning some arc can be ruled against, because a bound that
+ignored the wobble would call a chunk air over ground the town never
+levelled, which is a hole.
+
+**And the tarmac comes IN to the town now.** `road::open` measured
+against the town's whole site band, which is its widest: a road out along
+the squeezed axis stopped three hundred metres short of anything the town
+had levelled and the highway ended in a field, which is the owner's "the
+main city I spawn at doesn't appear to have a highway leaving out of it".
+It reads `Site::level_r` at the road's own point, which is exactly where
+the town's own site starts winning.
+
 **A building is a MODEL, which is the owner's ask.** It used to be a
 recipe of signed distance brushes evaluated in the ground's field on a
 lattice six times finer under each town. That bought one thing, which is
@@ -2028,10 +2077,69 @@ at a wall eight metres off stops at 5.53 m, which is eight less its own
 2.05 m of bonnet, and the same car over a 17 cm kerb goes 72.9 m without
 dropping under 16 m/s.
 
+**And a HILL is neither, which took two rules that were the same rule
+said twice.** The owner's "my car cannot drive up slopes" was both of
+them:
+
+- **`resolve_body` pushed a body out of anything it overlapped, and a
+  hillside is something a body overlaps.** The guard was
+  `push.length() < 0.25`, which is the SINE of the surface's own tilt:
+  fourteen and a half degrees, where `walker::STAND` is fifty. A walker
+  never met the difference, because a walker is 35 cm across and ground
+  rising its own 60 cm step within 35 is a slope of 1.7, far past
+  `STAND` anyway. A CAR is 4.1 m long, so its ring reaches 2.05 m
+  forward and one in four was already a wall to it: measured, ten
+  seconds up a one in two hill threw it **164 m back DOWN the slope**.
+  It reads `STAND` now, off the surface's own normal, so a body is
+  pushed out of exactly what it cannot stand on and drives and walks
+  over everything else. That is the owner's "just like the player
+  controller", and it is ONE rule rather than two.
+- **And the rise a step was allowed was `CLIMB` alone, which is a rule
+  in METRES that is really a rule in FRAMES.** At sixty a second a car
+  covers 0.27 m and a one in two hill rises 0.13 under it; at the
+  twentieth a software rasteriser runs at it covers 0.8 and rises 0.4,
+  so the same hill the same car climbed was a wall. It is `CLIMB` plus
+  `STEEPEST` times the ground the car actually made, and `STEEPEST` is
+  `walker::STAND` said as a GRADE
+  (`a_car_climbs_exactly_what_a_walker_can_stand_on` holds the two in
+  step across that boundary). Measured, ten seconds up a one in two
+  hill: 136.9 m in sixtieths and 137.1 in twentieths, against 64.8
+  before.
+
+Measured over every grade a road is ever built at and past it
+(`a_car_drives_up_a_hill_and_is_stopped_by_a_cliff`): nought, one in ten,
+one in four, one in two, one in ONE and one in two DOWNHILL all go
+136.9 m in ten seconds, which is the flat ground's own number, and each
+climbs exactly its own grade.
+
 **The camera is a CHASE**, behind and over the car, and the walker's is
 first person. That is the one place this world has two camera rules, and
 the reason is that the point of stealing a car is the car: a first
 person view of one is a view of the inside of its own bonnet.
+
+**And it SWINGS, rather than being welded to the roof.** Placed rigidly
+off `car.fwd` the camera turns with the car exactly, so the car never
+turns on screen at all and the WORLD whips round it: a corner reads as
+the horizon snapping rather than as the car going round. `Theft::swung`
+eases a heading of its own toward the car's and the camera sits behind
+THAT, SLERPED and not lerped, because a lerp crosses the chord and so
+turns fastest in the middle of a swing and arrives with a jerk. `SWING`
+is 0.40 SECONDS, a time constant and not a share of a frame, so the
+swing takes the same wall time at twenty frames a second as at a hundred
+and twenty, which is swarm-demo's own rule for its sliding deck. The
+heading is squared to the car's own up before it is eased, or a heading
+carried over a curving planet leaves the tangent plane and the camera
+sinks into the ground a hundred kilometres down the road. It is per
+THEFT rather than one for the player, so getting back into a parked car
+resumes behind it instead of whipping round from wherever the last one
+was pointing, and on a scripted drive it eases over the DRIVING the
+frame carried (`steps` sixtieths) and not the frame's own delta, or
+every picture the flag takes is aimed a second behind the car.
+
+**And it PULLS BACK as the car goes faster**, `STRETCH` (4 m) and `RISE`
+(1.2 m) at the top speed. A camera at one distance says nothing about
+how fast the car is going; one that stretches does, and it is what makes
+the same corner read as fast.
 
 **And a car burned WHITE at both ends, which is what made that chase
 view unreadable.** The first picture of one came back apparently showing
@@ -2277,9 +2385,54 @@ ground strays from a straight ramp between two stations. On the atlas's
 ten kilometre waypoints it is a median of 45 m and up to 830, which is a
 canyon rather than a cutting. The sweep halves with the spacing: 2.7 km is
 10.3 m, 1.4 km is 4.8, 683 m is 2.3, 341 m is 1.20 with a 99th of 6.2, and
-171 m is 0.72. `PIECE` is 341 m, because a metre of cut is a verge and six
-is a cutting and both are things a road HAS, and the next halving buys
-half a metre and doubles a count that is already 186,788 arcs.
+171 m is 0.72, and 85 m is 0.54 with a 99th of 2.10.
+
+**`PIECE` is 85 m, and it was 341 because the WORST was never looked
+at.** A median of 1.20 m and a 99th of 6.13 read as a verge and a
+cutting, which are things a road HAS; the worst at that spacing is a
+**36.25 m canyon**, and a road that disappears into the country once on
+a body is a road that disappears. The owner read it off a picture as a
+highway sinking into the ground. At 85 m the worst is 4.56 m, which is a
+cutting everywhere on the body and a canyon nowhere.
+
+What it costs is the count, four times over: 186,788 arcs become
+749,431, the bake goes from 23.8 s to 99.7 (the survey sphere traces four
+times the stations), the atlas from 4.4 MB to 6.6 and reading it from
+160 ms to 753. What it does NOT cost is the chunk, and that was worth
+measuring rather than assuming: the same road scene settles in **69.5 s
+at 30.0 ms a chunk against 123.5 s at 106.3**, the same 2,304 chunks
+either side. Four times the pieces landed at 377 ms a chunk on their own,
+and the arc reject below is what turned a 3.5 fold regression into a 3.5
+fold improvement. `ribbon::STRETCH` went 16 to 64 with it, because a
+stretch is a LENGTH of road and not a count of pieces: left at sixteen
+every road would have arrived and left in 1.4 km bites, four times the
+meshes and four times the entities for the same tarmac.
+
+**And `site_weight` REJECTS an arc before it does its trigonometry**,
+which is what made four times the pieces affordable. `Site::nearest`
+costs an `atan2` and a `sin_cos`, and it is asked of every corridor
+piece a chunk keeps for every one of that chunk's seven thousand
+samples: fine while a piece was 341 m and a chunk on a road kept one,
+and not fine at 85 m where it keeps three or four. Every point of an arc
+is within its own CHORD of the end it starts at, so a direction further
+off than that plus the band cannot be in it, and the reject is two
+subtractions and a squared length. A town's chord is nought, so its
+reject is exact.
+
+**And the piece is in the ATLAS'S FINGERPRINT now.** The file keeps the
+corridor's heights and DERIVES its directions at a spacing both sides
+compute from `PIECE`, so a file baked at another spacing has a run of the
+wrong length for every road on the body and `road::corridor` hands back
+nothing: roads on the chart, a route a car can follow, and no ground
+under any of it and no tarmac on it. That is a silent failure of exactly
+the kind the other six fields exist to refuse, and it was not one of
+them.
+
+**The file is written COMPACT, which is most of its size.** It is
+760,000 numbers and pretty printing puts each on its own line under three
+levels of indentation: 13 bytes of whitespace a number, 7.3 MB of a
+13.9 MB file, and nothing a reader could have read anyway. It is 6.6 MB
+compact.
 
 **A road may FILL and a town may not**, and that is the one rule the two
 do not share. A town's level is the lowest its own survey found, so a site
@@ -2407,8 +2560,13 @@ was. The night picture had nothing on it at all.
 `the_lamps_on_an_approach_are_staggered_a_stride_apart` holds both the
 spacing and the stagger, and the harness says where the lighting actually
 STOPS rather than restating the constant: road 0 out of the port is lit
-from its first open piece to piece 5, **1,001 m of approach**. It is that
-line the road camera is aimed off now. The post only DRAWS, which is this file's rule
+from its first open piece to piece 18, **1,354 m of approach**. It is
+that line the road camera is aimed off now, and the camera's own look
+ahead and stand off are in METRES rather than in pieces for the reason
+the dashes and the lamps are: written as a count of pieces they were
+341 m of road at the old spacing and 85 at the new, so quartering the
+piece quartered the framing and the picture came back with the camera's
+nose on the tarmac. The post only DRAWS, which is this file's rule
 that anything a body should pass through is trim: a lamp post is not what
 stops a car.
 The lights themselves are `lamps.rs`'s, unchanged but for knowing that a
@@ -3195,8 +3353,8 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 139, the core, about 27 s
-cargo test -p freeport_app                        # 45, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 166, the core, about 46 s
+cargo test -p freeport_app                        # 47, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
@@ -3326,7 +3484,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 139 tests in about 27 s, and `freeport_app` 45 in 3. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 166 tests in about 46 s, and `freeport_app` 47 in 5. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -3483,6 +3641,39 @@ Numbers in the commit message. What is measured so far:
   three. A lamp standard is `CONCRETE` and not `PLATE`, because hull
   plate's panel lines are centimetres apart on a column 0.18 m across and
   the post in the foreground came out candy striped.
+- **A town's PLATEAU against the disc it replaces**, on the fixture
+  port: the disc is 109 m of radius and the town reaches 40 m at its
+  narrowest and 84 at its widest, so the levelled ground is **28% of the
+  disc's own area** and 72% of that plateau was bare flat apron. Every
+  lot is still on ground the site levels outright and the worst burial
+  is 0.00 m. The outline moves at most **1.571 m of edge a metre of
+  arc** over every bearing of a thousand towns, which is what
+  `town::WOBBLE` (2) is set from and what a town's own skirt is widened
+  by: 11 m becomes 24.6, and a town's skirt then climbs at 7.20 against
+  the planet's bound of 36.57.
+- **A car on a HILL**, ten seconds of throttle: at nought, one in ten,
+  one in four, one in two, one in ONE and one in two downhill it goes
+  136.9 m and climbs exactly its own grade, which is the flat ground's
+  own number. Before, one in four went 136.9 m and one in two threw the
+  car **164 m back down the slope**. Stepped a twentieth at a time
+  rather than a sixtieth it is 137.1 m against 64.8, which is the rise
+  allowance being a grade rather than a flat `CLIMB`.
+- **How far the ground strays from a road's own ramp**, swept on this
+  body's 310 roads (`examples/road_ground.rs`): 10.9 km a piece is a
+  median of 43.89 m and a worst of 830.13; 341 m is 1.20 and **36.25**;
+  170 m is 0.72 and 15.85; and **85 m is 0.54, a 99th of 2.10 and a
+  worst of 4.56**. The worst is the number that decides it, because one
+  canyon on a body is a road that disappears into the country. What it
+  costs: 749,431 corridor arcs against 186,788, a bake of 99.7 s against
+  23.8, an atlas read of 753 ms against 160, and a file of 6.6 MB against
+  4.4 (13.9 before it was written compact).
+- **And what a CHUNK costs, on the road out of the port, the same 2,304
+  chunks either side**: 123.5 s to settle at 106.3 ms a chunk before, 377
+  ms a chunk with four times the pieces and nothing else, and **69.5 s at
+  30.0 ms a chunk** with the arc reject in. The reject is worth more than
+  the pieces cost, which is what says the old cost was `Site::nearest`'s
+  own trigonometry asked of every piece for every sample rather than the
+  count of pieces.
 - **A corridor's LANDINGS, which the dashes are what found.** The tarmac
   test went from 0.103 m of float to 0.796 the moment anything was drawn
   at an interior point of a piece: an arc's band is a capsule whose round

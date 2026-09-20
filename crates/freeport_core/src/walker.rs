@@ -37,7 +37,7 @@ const JUMP: f64 = 5.3;
 const GRAVITY: f64 = 9.81;
 /// Ground steeper than this (the cosine of fifty degrees) is a wall unless
 /// it tops out within a step of the feet two body widths on.
-const STAND: f64 = 0.64;
+pub const STAND: f64 = 0.64;
 /// The gradient's step and the clearance a push leaves, metres.
 const EPS: f64 = 0.04;
 const CLEAR: f64 = 0.02;
@@ -243,9 +243,31 @@ pub fn resolve_body(
                 // field is a distance where it matters, so the way out is
                 // the density over the slope, plus a little.
                 let out = dens / (len / (2.0 * EPS)) + CLEAR;
+                // GROUND rather than a wall, or a CEILING rather than
+                // one: a body walks and drives over anything it can
+                // STAND on, and is stopped by a slab over its head by
+                // `ceiling` rather than by being shoved sideways out
+                // from under it. It is the same `STAND` `can_stand`
+                // reads, asked of the surface's own normal, so a body
+                // is pushed out of exactly what it cannot stand on.
+                //
+                // It was `push.length() < 0.25`, which is that rule at
+                // fourteen and a half degrees rather than fifty. A
+                // WALKER never met the difference: it is 35 cm across,
+                // so ground rising its own 60 cm step within 35 is a
+                // slope of 1.7 and far past `STAND` anyway. A CAR is
+                // 4.1 m long, so its ring reaches 2.05 m forward and
+                // one in four was already a wall to it: measured, ten
+                // seconds up a one in two hill threw it 164 m back
+                // DOWN the slope. That is the owner's "my car cannot
+                // drive up slopes".
+                let lean = -grad.dot(d) / len;
+                if lean.abs() > STAND {
+                    continue;
+                }
                 let mut push = -grad / len;
                 push -= d * push.dot(d);
-                if push.length() < 0.25 {
+                if push.length() < 1e-6 {
                     continue;
                 }
                 d = (d + push * (out / bounds.radius)).normalize();

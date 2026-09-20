@@ -95,10 +95,17 @@ pub const LAMP_REACH: f64 = 26.0;
 ///
 /// A stretch is one mesh, one entity and one frame, the way a town is,
 /// and the frame is what decides how long it may be: its vertices are
-/// `f32` metres from its own middle, so at sixteen pieces it is 5.5 km
-/// across and an `f32` there holds a third of a millimetre. It is also
-/// what streams, so it is the grain at which a road arrives and leaves.
-pub const STRETCH: usize = 16;
+/// `f32` metres from its own middle, so at sixty four pieces of
+/// `PIECE` it is 5.4 km across and an `f32` there holds a third of a
+/// millimetre. It is also what streams, so it is the grain at which a
+/// road arrives and leaves.
+///
+/// SIXTY FOUR and not sixteen, because the piece is a quarter of what it
+/// was: a stretch is a LENGTH of road and not a count of pieces, and
+/// left at sixteen every road on the body would have arrived and left in
+/// 1.4 km bites, which is four times the meshes and four times the
+/// entities for the same tarmac.
+pub const STRETCH: usize = 64;
 
 /// The tarmac for a run of corridor points, in a frame of its own:
 /// carriageway, a dashed centreline and a solid line down each edge.

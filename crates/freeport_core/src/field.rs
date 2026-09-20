@@ -362,15 +362,49 @@ impl From<Vec<crate::town::Site>> for Sites {
     }
 }
 
+/// How wide a site's own skirt is: the blend from its level to the
+/// relief, metres.
+///
+/// A road's corridor is a capsule, so its boundary is everywhere square
+/// to the way out of it and a fade over a fixed width climbs at a
+/// smoothstep's one and a half over that width. A TOWN's outline is not
+/// a circle, so its boundary is tilted by up to `town::WOBBLE` and the
+/// same fade would climb `hypot(1, WOBBLE)` times as fast. It is that
+/// much wider instead, which leaves the planet's own slope bound (the
+/// `skirt` term of `steepest`, which divides by the NARROWEST skirt on
+/// the body) exactly where it was.
+pub fn site_skirt(site: &crate::town::Site) -> f64 {
+    let widen = match site.outline {
+        Some(_) => crate::town::WOBBLE.hypot(1.0),
+        None => 1.0,
+    };
+    (SKIRT_IN + SKIRT_OUT) * widen
+}
+
 pub fn site_band(site: &crate::town::Site) -> (f64, f64) {
-    (site.r, site.r + SKIRT_IN + SKIRT_OUT)
+    (site.r, site.r + site_skirt(site))
 }
 
 impl Planet {
     /// How much a site levels a direction: one right across it, nought
     /// past its apron.
     fn site_weight(&self, site: &crate::town::Site, dir: DVec3) -> f64 {
-        let (inner, outer) = site_band(site);
+        let (_, outer) = site_band(site);
+        // A cheap REJECT before the arc's own trigonometry. Every point
+        // of an arc is within its own chord of the end it starts at, so
+        // a direction further off than that plus the band cannot be in
+        // it, and a town's own chord is nought so its reject is exact.
+        //
+        // `nearest` costs an `atan2` and a `sin_cos`, and it is asked of
+        // every corridor piece a chunk keeps for every one of that
+        // chunk's seven thousand samples. That was affordable while a
+        // piece was 341 m and a body carried 187,000 of them; at 85 m it
+        // carries 747,000 and a chunk on a road keeps three or four
+        // where it kept one.
+        let far = site.reach() * 2.0 + outer / self.radius;
+        if (dir - site.dir).length_squared() > far * far {
+            return 0.0;
+        }
         // To the NEAREST point of the arc, which is the site's own middle
         // on a town and a point along the corridor on a road.
         let chord = (dir - site.nearest(dir).0).length();
@@ -378,7 +412,10 @@ impl Planet {
             return 0.0;
         }
         let dist = 2.0 * (chord * 0.5).clamp(0.0, 1.0).asin() * self.radius;
-        1.0 - smoothstep(inner, outer, dist)
+        // How far the site levels THIS WAY, which on a town is its own
+        // outline and never a disc round it.
+        let inner = site.level_r(dir);
+        1.0 - smoothstep(inner, inner + site_skirt(site), dist)
     }
 
     /// The additive site height and the fraction of procedural relief left
@@ -541,10 +578,13 @@ impl Planet {
         let span = (2.0 * reach / near + 1e-12).min(2.0);
         for site in self.sites_near(dir, span) {
             let distance = (dir - site.nearest(dir).0).length();
-            let (inner, outer) = site_band(site);
+            let (_, outer) = site_band(site);
             if (distance - span) * self.radius >= outer {
                 continue;
             }
+            // The LEAST it levels anywhere this box reaches, because a
+            // town's own outline moves as you walk round it.
+            let inner = site.level_floor(dir, span * self.radius);
             let level_chord = 2.0 * (0.5 * inner / self.radius).sin();
             if inner > 0.0 && distance + span < level_chord {
                 // Wholly inside this site's LEVEL, where the ground is

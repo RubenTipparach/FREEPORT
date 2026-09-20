@@ -28,6 +28,7 @@ fn atlas_of(planet: &Planet, towns: &[Town], roads: Vec<Line>) -> Atlas {
         radius: planet.radius,
         octaves: planet.octaves,
         town_radius: 80.0,
+        piece: freeport_core::road::PIECE,
         sea: SEA,
         probe: probe(planet),
         towns: towns
