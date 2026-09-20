@@ -99,12 +99,29 @@ impl Library {
         Ok(library)
     }
 
+    /// The model for a lot, at a LOD, RE-SKINNED into the trade this
+    /// particular building is put up in.
+    ///
+    /// A bake is authored in concrete and there are thirteen of them, so
+    /// a skin baked in would mean sixty five; which trade a building is
+    /// built in is a fact about the LOT and not about the variant, and
+    /// `model::Kind::skin` is the one table that answers it. The
+    /// procedural fallback below builds its skin in directly, because it
+    /// is making the walls anyway and knows a wall from a floor.
     pub fn model(&self, lot: &Lot, lod: usize, seed: u32) -> Model {
         let (lo, hi) = lot.kind.storeys();
-        self.0
+        let dice = seed ^ lot.id;
+        match self
+            .0
             .get(&(lot.kind.name().into(), lot.storeys.clamp(lo, hi)))
-            .map(|models| models[lod.min(2)].clone())
-            .unwrap_or_else(|| model::building(lot.kind, BLOCK, BLOCK, lot.storeys, seed ^ lot.id))
+        {
+            Some(models) => {
+                let mut m = models[lod.min(2)].clone();
+                m.reskin(freeport_core::field::CONCRETE, lot.kind.skin(dice));
+                m
+            }
+            None => model::building(lot.kind, BLOCK, BLOCK, lot.storeys, dice),
+        }
     }
 }
 

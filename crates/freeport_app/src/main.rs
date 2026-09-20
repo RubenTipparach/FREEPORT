@@ -64,11 +64,12 @@ use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use drive::{aim_drive, board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
+use freeport_core::day;
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
 use freeport_core::town;
 use freeport_core::walker::Walker;
-use lamps::light_lamps;
+use lamps::{dim_lamps, light_lamps};
 use std::sync::Arc;
 use std::time::Instant;
 use stream::{rebase_origin, stream, Frame, Streamer};
@@ -356,6 +357,9 @@ fn tick(app: &mut App) {
                     .chain(),
                 (
                     place_eye,
+                    sky::turn_sun,
+                    dim_lamps,
+                    sky::rebake_env,
                     sky::drift_sky,
                     show_status,
                     lod_debug::apply,
@@ -452,7 +456,8 @@ fn spawn_world(
     // The sun, worked out while the world is still here to ask: it is a
     // fact about where the WALKER starts, and `start_eye` is wherever the
     // camera was aimed.
-    let sun = sun_over(world::start(&world).0);
+    let here = world::start(&world).0;
+    let sun = sun_over(here);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
     // The lattice's origin sits half a fine cell off the half metre grid
@@ -518,11 +523,7 @@ fn spawn_world(
         &mut skies,
         &mut images,
         eye - body.centre,
-        sky::Weather {
-            air: body.air,
-            sea: body.world.sea.radius,
-            sun,
-        },
+        clock_of(&args, sun, here, body),
     );
     spawn_camera(&mut commands, body, &args, eye, look, env, &flight);
     commands.insert_resource(Eye(WorldPos(eye)));
@@ -603,6 +604,31 @@ fn spawn_sky(
     );
     commands.insert_resource(weather);
     env
+}
+
+/// The weather this world starts under, clock and all. `sun` is where
+/// the sun stood when the clock read nought and `here` is where the world
+/// starts, so `--hour` is SOLVED back into the seconds that put the hour
+/// asked for over that spot: an hour is a thing a person can ask for and
+/// a sun direction is not, which is this file's own solved camera rule
+/// arriving at the time of day. With no flag the clock starts at nought
+/// and the sun is where `sun_over` put it, so every picture taken before
+/// there was a day is the picture it always was.
+fn clock_of(args: &Args, sun: DVec3, here: DVec3, body: &planets::Body) -> sky::Weather {
+    let start = args
+        .hour
+        .map(|h| day::at_oclock(sun, here, h, day::DAY))
+        .unwrap_or(0.0);
+    sky::Weather {
+        air: body.air,
+        sea: body.world.sea.radius,
+        sun: day::sun_at(sun, start, day::DAY),
+        noon: sun,
+        start,
+        now: start,
+        day: day::DAY,
+        here,
+    }
 }
 
 /// The sun, and the light it casts. The direction is the weather's own and
@@ -747,16 +773,31 @@ fn show_status(
     status: Res<Status>,
     streamer: Option<Res<Streamer>>,
     walker: Option<Res<OnFoot>>,
+    weather: Res<sky::Weather>,
     mut text: Query<&mut Text, With<Stat>>,
 ) {
     let what = streamer.map(|s| s.status()).unwrap_or_default();
     let mode = if walker.is_some() { "fly" } else { "walk" };
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
-            "{}\n{}   |   F {mode}, Tab wire, L LOD, Esc mouse",
-            status.walker, what
+            "{}\n{}   |   {}   |   F {mode}, Tab wire, L LOD, Esc mouse",
+            status.walker,
+            what,
+            clock(&weather)
         );
     }
+}
+
+/// What o'clock it is where the eye stands, on the twenty four hour dial
+/// `--hour` is asked in, so the flag and the readout cannot mean two
+/// different times. The ONE place a time is turned into words.
+fn clock(weather: &sky::Weather) -> String {
+    let h = weather.oclock();
+    format!(
+        "{:02}:{:02}",
+        h.floor() as u32 % 24,
+        ((h.fract() * 60.0) as u32).min(59)
+    )
 }
 
 /// Hold the loop to `--fps`. It is a DEADLINE rather than a fixed sleep,

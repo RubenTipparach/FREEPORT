@@ -122,8 +122,39 @@ pub struct Weather {
     pub air: Air,
     /// The sea's radius, which is where the ground fog is thickest.
     pub sea: f64,
-    /// Where the sun is, as a direction in the world frame.
+    /// Where the sun is NOW, as a direction in the world frame. It is
+    /// derived from `noon` and `now` once a frame by `turn_sun` and is
+    /// what the light, the dome, the fog, the sea, the lamps and the
+    /// bodies drawn from far off all read, so they cannot point six ways.
     pub sun: DVec3,
+    /// Where the sun stood when this body's clock read nought.
+    pub noon: DVec3,
+    /// Seconds into the body's own day when the app's own clock read
+    /// nought, which is what `--hour` sets.
+    pub start: f64,
+    /// Seconds into the body's own day. It only ever grows; `day::hour`
+    /// is what turns it into a place on the dial.
+    pub now: f64,
+    /// How long one of this body's days is, seconds.
+    pub day: f64,
+    /// Where the EYE is on this body, as a direction: which of its hours
+    /// the lamps are lit by, and what `turn_sun` measures the clock at.
+    pub here: DVec3,
+}
+
+impl Weather {
+    /// What o'clock it is where the eye stands.
+    pub fn oclock(&self) -> f64 {
+        freeport_core::day::oclock(self.sun, self.here)
+    }
+
+    /// How hard the lamps are burning where the eye stands, one at night
+    /// and nought by day. The CPU's answer, read by `lamps.rs`; the
+    /// fragment shaders transcribe `day::daylight` and get the same one
+    /// per fragment.
+    pub fn lamplight(&self) -> f64 {
+        freeport_core::day::lamplight(self.sun, self.here)
+    }
 }
 
 /// A handle held so `atmos.wgsl` is LOADED and not merely registered: an
@@ -146,6 +177,7 @@ impl Plugin for SkyPlugin {
             .resource::<AssetServer>()
             .load("embedded://freeport_app/atmos.wgsl");
         app.insert_resource(Lib(lib));
+        app.init_resource::<Baking>();
         app.add_plugins((
             MaterialPlugin::<Sky>::default(),
             environment::StaticEnvironmentPlugin,
@@ -179,13 +211,121 @@ pub fn spawn_dome(
     // metre and four decimals of it print as nought, which is a line that
     // says nothing exactly where the number moved.
     info!(
-        "sky: air from {:.0} m to {:.0} m, the sun at {:.2}, fog e folding over {:.0} m and gone by {:.0} m up",
+        "sky: air from {:.0} m to {:.0} m, the sun at {:.2} ({:.2} o'clock, a day is {:.0} min), fog e folding over {:.0} m and gone by {:.0} m up",
         weather.air.ground,
         weather.air.top,
         weather.sun,
+        weather.oclock(),
+        weather.day / 60.0,
         1.0 / weather.air.fog.max(f64::MIN_POSITIVE),
         weather.air.fog_height
     );
+}
+
+/// How far the sun may TURN before the sky that lights the world is
+/// baked again, radians. Half a degree is the sun's own width, which is
+/// the finest step there is any point taking: what the cubemap feeds is
+/// the ambient, a cosine average over a whole hemisphere, so it cannot
+/// hold a feature narrower than the source that made it. At four hours
+/// to a day the sun covers this in twenty seconds of play, and a bake is
+/// four to twenty milliseconds on a thread of its own, which is a
+/// thousandth of a core.
+const RE_BAKE: f64 = 0.0087;
+
+/// The sky being baked for a sun that has moved, on a thread of its own.
+///
+/// It is a THREAD and not the frame's own work because a bake is up to
+/// twenty milliseconds and a frame is sixteen: done in line it would be a
+/// visible hitch every twenty seconds, which is a worse picture than the
+/// stale ambient it is there to replace. A `JoinHandle` and not a channel
+/// because there is exactly ONE answer and no queue: `is_finished` is the
+/// poll and `join` on a finished thread returns without waiting, so this
+/// system never blocks the frame it runs on.
+#[derive(Resource, Default)]
+pub struct Baking {
+    /// The sun the cubemap on the camera was last baked FOR, which is
+    /// what says whether another bake is owed. It is written when the
+    /// worker is started rather than when it lands, so a slow bake is
+    /// never started twice.
+    asked: DVec3,
+    waiting: Option<std::thread::JoinHandle<Image>>,
+}
+
+/// The sun, turned. `Weather::now` is the body's own clock and everything
+/// that reads the sun reads this one number: the light that casts the
+/// shadows, the dome, the fog, the sea, the lamps and the bodies drawn
+/// from far off.
+///
+/// The BODY is held still and the sky turns, which is what `day.rs` says
+/// and why: every direction this game reasons about is written on a
+/// sphere that never moves, so spinning the planet would mean moving
+/// every chunk, every town and every lamp in the world once a frame for
+/// a picture identical to turning one vector.
+///
+/// The clock is `Time::elapsed_secs_f64` and an offset rather than a
+/// delta summed frame by frame, which is the SAME clock `traffic.rs`
+/// puts its townsmen on: two clocks is how a sun and the people under it
+/// come to disagree about what time it is.
+pub fn turn_sun(
+    time: Res<Time>,
+    eye: Res<crate::Eye>,
+    ground: Res<crate::Ground>,
+    mut weather: ResMut<Weather>,
+    mut light: Query<&mut Transform, With<DirectionalLight>>,
+) {
+    weather.now = weather.start + time.elapsed_secs_f64();
+    weather.sun = freeport_core::day::sun_at(weather.noon, weather.now, weather.day);
+    weather.here = (eye.0 .0 - ground.1).normalize_or(DVec3::Y);
+    let sun = weather.sun.as_vec3();
+    // The light shines the way the sun is NOT: Bevy's forward is negative
+    // z and a directional light travels along it. The up is the axis the
+    // sun is LEAST along, because a `looking_to` whose up is parallel to
+    // its direction has no frame to build and the sun passes over the
+    // pole twice a year on any body with a tilt.
+    let up = if sun.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
+    for mut tf in &mut light {
+        *tf = Transform::from_translation(Vec3::ZERO).looking_to(-sun, up);
+    }
+}
+
+/// The sky baked into the cubemap again once the sun has moved, on a
+/// worker, and swapped in at the same handle when it lands.
+///
+/// Replacing the IMAGE is what regenerates the filtered light:
+/// `StaticEnvironment` caches Bevy's own filtering on the source
+/// texture's id (`sky/environment.rs`), so a new image is a new texture
+/// is a new filter, and nothing here has to know how that is done.
+pub fn rebake_env(
+    weather: Res<Weather>,
+    eye: Res<crate::Eye>,
+    ground: Res<crate::Ground>,
+    mut baking: ResMut<Baking>,
+    mut images: ResMut<Assets<Image>>,
+    lights: Query<&bevy::light::GeneratedEnvironmentMapLight>,
+) {
+    let Ok(light) = lights.single() else {
+        return;
+    };
+    if baking.waiting.as_ref().is_some_and(|j| !j.is_finished()) {
+        return;
+    }
+    if let Some(job) = baking.waiting.take() {
+        // A worker that panicked leaves the sky it baked LAST, which is a
+        // stale ambient rather than a black one: the picture is wrong by
+        // however far the sun has gone since, and never a hole.
+        if let Ok(image) = job.join() {
+            if let Err(e) = images.insert(&light.environment_map, image) {
+                warn!("the sky could not be baked again: {e}");
+            }
+        }
+        return;
+    }
+    if weather.sun.angle_between(baking.asked) < RE_BAKE {
+        return;
+    }
+    let (air, sun, here) = (weather.air, weather.sun, eye.0 .0 - ground.1);
+    baking.asked = sun;
+    baking.waiting = std::thread::spawn(move || bake_env(&air, sun, here)).into();
 }
 
 /// The materials the sky is painted onto: the ground, the sea and the
@@ -248,6 +388,12 @@ pub fn drift_sky(
         if let Some(m) = painted.ground.get_mut(id) {
             m.extension.fog = fog;
             m.extension.haze = haze;
+            // The SUN, so a street lamp and a lit pane burn at night and
+            // not at noon. The w is how hard they burn and is the
+            // material's, not the weather's, so it is read back rather
+            // than written over, which is what the sea and the bodies
+            // drawn from far off already do with theirs.
+            m.extension.sun = weather.sun.as_vec3().extend(m.extension.sun.w);
         }
     }
     let ids: Vec<_> = painted.water.ids().collect();

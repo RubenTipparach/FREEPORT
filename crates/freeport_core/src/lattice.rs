@@ -404,7 +404,6 @@ mod tests {
         assert_eq!(rings.level_at(lat.fine_cell(eye)), Some(0));
     }
 
-    #[test]
     /// THE GROUND IS IN THE BOX AT EVERY ALTITUDE, which is what the
     /// owner's picture of `0 chunks, 0 triangles` from 49 km up said it
     /// was not. Followed on the eye, the coarsest box is 16 km either
@@ -437,6 +436,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn altitude_drops_air_rings_without_leaving_a_hole() {
         let lat = Lattice::new(DVec3::ZERO, 0.25);
         let mut rings = Rings::around(&lat, DVec3::ZERO, 8);

@@ -35,6 +35,9 @@ struct Terrain {
     // measured from.
     haze: vec4<f32>,
     palette: vec4<f32>,
+    // xyz the way the sun lies, a unit direction in the world; w how hard
+    // a lamp and a lit pane burn at full night.
+    sun: vec4<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> terrain: Terrain;
@@ -52,6 +55,13 @@ const L_GRASS: i32 = 2;
 const L_CONCRETE: i32 = 3;
 const L_PLATE: i32 = 4;
 const L_ASPHALT: i32 = 5;
+// What a BUILDING is made of: the owner's own list of trades.
+const L_WOOD: i32 = 6;
+const L_BRICK: i32 = 7;
+const L_VINYL: i32 = 8;
+const L_MARBLE: i32 = 9;
+const L_STONE: i32 = 10;
+const L_CURTAIN: i32 = 11;
 
 // The sand band: all sand to this over the sea, all grass past the second,
 // metres. The mockup's numbers, which is a beach a walker wades out of.
@@ -92,6 +102,21 @@ const WOODED: f32 = 0.52;
 // is what this world was.
 const BIOME_TINT: f32 = 0.72;
 
+// Where the terminator falls, on the sine of the sun's elevation over
+// this fragment's own radial: `freeport_core::day::DUSK_FROM` and
+// `DUSK_TO`, the same pair `distant.wgsl` and `water.wgsl` carry. On the
+// RADIAL and never on the bent normal, because which half of a planet
+// the sun is on is a fact about the planet and a normal leaned off a
+// mountain would put a patch of midnight on a slope at noon.
+const DUSK_FROM: f32 = 0.14;
+const DUSK_TO: f32 = -0.10;
+
+// `freeport_core::day::daylight`, transcribed: one under a sun well up,
+// nought well after it has set, and the band between.
+fn daylight(sun: vec3<f32>, up: vec3<f32>) -> f32 {
+    return smoothstep(DUSK_TO, DUSK_FROM, dot(normalize(sun), up));
+}
+
 // The materials, as `freeport_core::field` numbers them.
 const M_TERRAIN: f32 = 0.0;
 const M_CONCRETE: f32 = 1.0;
@@ -101,6 +126,12 @@ const M_LAMP: f32 = 4.0;
 const M_LIT: f32 = 5.0;
 const M_STREET: f32 = 6.0;
 const M_PAINT: f32 = 7.0;
+const M_WOOD: f32 = 8.0;
+const M_BRICK: f32 = 9.0;
+const M_VINYL: f32 = 10.0;
+const M_MARBLE: f32 = 11.0;
+const M_STONE: f32 = 12.0;
+const M_CURTAIN: f32 = 13.0;
 
 // One where the material is `m`, else nought: the vertex colour carries
 // the material as a whole number, flat over the triangle.
@@ -285,6 +316,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let paint = is(material, M_PAINT);
     let w_conc = is(material, M_CONCRETE);
     let w_plate = is(material, M_PLATE);
+    // A building's own skin. Each is one layer of the same three array
+    // textures the ground already binds, mapped in the nearest town's
+    // frame like the concrete, so a course of brick is level and plumb
+    // on the wall it is laid up rather than on the planet's axes.
+    let w_wood = is(material, M_WOOD);
+    let w_brick = is(material, M_BRICK);
+    let w_vinyl = is(material, M_VINYL);
+    let w_marble = is(material, M_MARBLE);
+    let w_stone = is(material, M_STONE);
+    let w_curtain = is(material, M_CURTAIN);
     // A street and its markings are ASPHALT, which is a set of its own
     // rather than concrete darkened: what a road is made of is chips of
     // stone in bitumen, so it is a fifth as bright as concrete and it has
@@ -307,13 +348,20 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let w = tri_weights(n);
     let local = in_frame(nearest_frame(up), up, n);
     let wc = tri_weights(local.n);
-    let mapped = w_rock + w_sand + w_grass + w_conc + w_plate + w_asphalt;
+    let mapped = w_rock + w_sand + w_grass + w_conc + w_plate + w_asphalt
+        + w_wood + w_brick + w_vinyl + w_marble + w_stone + w_curtain;
     var albedo = tri(albedo_maps, albedo_sampler, L_ROCK, pg, w, w_rock).rgb * w_rock
         + tri(albedo_maps, albedo_sampler, L_SAND, pg, w, w_sand).rgb * w_sand
         + tri(albedo_maps, albedo_sampler, L_GRASS, pg, w, w_grass).rgb * w_grass
         + tri(albedo_maps, albedo_sampler, L_CONCRETE, pc, wc, w_conc).rgb * w_conc
         + tri(albedo_maps, albedo_sampler, L_PLATE, pc, wc, w_plate).rgb * w_plate
-        + tri(albedo_maps, albedo_sampler, L_ASPHALT, pc, wc, w_asphalt).rgb * w_asphalt;
+        + tri(albedo_maps, albedo_sampler, L_ASPHALT, pc, wc, w_asphalt).rgb * w_asphalt
+        + tri(albedo_maps, albedo_sampler, L_WOOD, pc, wc, w_wood).rgb * w_wood
+        + tri(albedo_maps, albedo_sampler, L_BRICK, pc, wc, w_brick).rgb * w_brick
+        + tri(albedo_maps, albedo_sampler, L_VINYL, pc, wc, w_vinyl).rgb * w_vinyl
+        + tri(albedo_maps, albedo_sampler, L_MARBLE, pc, wc, w_marble).rgb * w_marble
+        + tri(albedo_maps, albedo_sampler, L_STONE, pc, wc, w_stone).rgb * w_stone
+        + tri(albedo_maps, albedo_sampler, L_CURTAIN, pc, wc, w_curtain).rgb * w_curtain;
     // A marking is the asphalt set BRIGHTENED, which is what worn road
     // paint on tarmac looks like, and it needs no texture of its own.
     // The street itself is no longer darkened here: it is dark because
@@ -324,14 +372,26 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         + tri(orm_maps, orm_sampler, L_GRASS, pg, w, w_grass).rgb * w_grass
         + tri(orm_maps, orm_sampler, L_CONCRETE, pc, wc, w_conc).rgb * w_conc
         + tri(orm_maps, orm_sampler, L_PLATE, pc, wc, w_plate).rgb * w_plate
-        + tri(orm_maps, orm_sampler, L_ASPHALT, pc, wc, w_asphalt).rgb * w_asphalt;
+        + tri(orm_maps, orm_sampler, L_ASPHALT, pc, wc, w_asphalt).rgb * w_asphalt
+        + tri(orm_maps, orm_sampler, L_WOOD, pc, wc, w_wood).rgb * w_wood
+        + tri(orm_maps, orm_sampler, L_BRICK, pc, wc, w_brick).rgb * w_brick
+        + tri(orm_maps, orm_sampler, L_VINYL, pc, wc, w_vinyl).rgb * w_vinyl
+        + tri(orm_maps, orm_sampler, L_MARBLE, pc, wc, w_marble).rgb * w_marble
+        + tri(orm_maps, orm_sampler, L_STONE, pc, wc, w_stone).rgb * w_stone
+        + tri(orm_maps, orm_sampler, L_CURTAIN, pc, wc, w_curtain).rgb * w_curtain;
     let away = length(in.world_position.xyz - view.world_position);
     var nm = n;
     if (away < BUMP_FAR) {
         let built_n = local.to_world
             * (tri_normal(L_CONCRETE, pc, wc, local.n, w_conc) * w_conc
                 + tri_normal(L_PLATE, pc, wc, local.n, w_plate) * w_plate
-                + tri_normal(L_ASPHALT, pc, wc, local.n, w_asphalt) * w_asphalt);
+                + tri_normal(L_ASPHALT, pc, wc, local.n, w_asphalt) * w_asphalt
+                + tri_normal(L_WOOD, pc, wc, local.n, w_wood) * w_wood
+                + tri_normal(L_BRICK, pc, wc, local.n, w_brick) * w_brick
+                + tri_normal(L_VINYL, pc, wc, local.n, w_vinyl) * w_vinyl
+                + tri_normal(L_MARBLE, pc, wc, local.n, w_marble) * w_marble
+                + tri_normal(L_STONE, pc, wc, local.n, w_stone) * w_stone
+                + tri_normal(L_CURTAIN, pc, wc, local.n, w_curtain) * w_curtain);
         nm = tri_normal(L_ROCK, pg, w, n, w_rock) * w_rock
             + tri_normal(L_SAND, pg, w, n, w_sand) * w_sand
             + soften(tri_normal(L_GRASS, pg, w, n, w_grass), n, GRASS_BUMP) * w_grass
@@ -357,7 +417,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     pbr_input.material.perceptual_roughness = orm.g;
     pbr_input.material.metallic = orm.b;
-    pbr_input.material.emissive = vec4<f32>(vec3<f32>(8.0, 7.4, 6.0) * lamp + vec3<f32>(3.0, 2.4, 1.5) * lit, 1.0);
+    // A street lamp and a lit window burn at NIGHT and not at noon, on
+    // the same terminator the sea and the body from orbit read, which is
+    // `day::daylight` in the core. It is a share of what they were drawn
+    // at before there was a night, so a midnight street is the picture
+    // this shader always drew and a midday one has its lights off.
+    let lamps = terrain.sun.w * (1.0 - daylight(terrain.sun.xyz, up));
+    pbr_input.material.emissive = vec4<f32>(
+        (vec3<f32>(8.0, 7.4, 6.0) * lamp + vec3<f32>(3.0, 2.4, 1.5) * lit) * lamps,
+        1.0,
+    );
     pbr_input.diffuse_occlusion = vec3<f32>(orm.r);
     pbr_input.N = nm;
     var out: FragmentOutput;

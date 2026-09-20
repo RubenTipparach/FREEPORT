@@ -76,6 +76,37 @@ pub const STREET: u8 = 6;
 /// texture, no draw and no second shader.
 pub const PAINT: u8 = 7;
 
+/// What a building's own SKIN can be made of. A town used to be one grey:
+/// every house and every office wore `CONCRETE`, so a suburb and a
+/// downtown were the same wall at two heights, and the owner asked for
+/// the trades' own list instead. `model::Kind::skin` is what picks one,
+/// `tools/make_building_textures.py` bakes the set at the other end of
+/// each byte, and `terrain.wgsl` draws them in the same triplanar pass
+/// the ground and the concrete already go through: a wall costs no draw
+/// call, no second shader and no material of its own, because what a
+/// triangle is made of is one number on its own vertices.
+///
+/// Board and batten timber: a house.
+pub const WOOD: u8 = 8;
+/// Fired red brick in a running bond: a house or an office.
+pub const BRICK: u8 = 9;
+/// Vinyl lap siding, pale and near flat: a house.
+pub const VINYL: u8 = 10;
+/// Polished veined marble: an office that wants to be looked at.
+pub const MARBLE: u8 = 11;
+/// Dressed ashlar blocks: an office built to last.
+pub const STONE: u8 = 12;
+/// A glazed CURTAIN WALL: dark panes in a grid of aluminium mullions.
+///
+/// It is not `GLASS`, which is what a WINDOW is drawn with, and the
+/// difference was measured in a picture: a whole tower given the pane's
+/// material is a flat dark colour at a roughness of 0.08, which is a
+/// mirror, and the first render of one reflected the sky so exactly
+/// that the building vanished against it, leaving its own floor slabs
+/// and window frames hanging in the air. A facade is a GRID, and the
+/// grid is what makes it read as a building.
+pub const CURTAIN: u8 = 13;
+
 /// A ball of rock and nothing else.
 pub struct Sphere {
     pub radius: f64,
@@ -142,10 +173,7 @@ impl Default for Planet {
     }
 }
 
-fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
-    let k = ((t - a) / (b - a)).clamp(0.0, 1.0);
-    k * k * (3.0 - 2.0 * k)
-}
+use crate::noise::smoothstep;
 
 /// How wide a site's levelling takes to blend out to the relief, metres.
 /// Kept as two numbers because the slope bound below reads their sum and

@@ -1652,6 +1652,91 @@ area of any of them. A chunk near the port is 17 ms on lavapipe against
 12 before, which is what a site that cuts costs: `surface` can no longer
 return a level without asking the relief what was under it.
 
+## A building is built of a TRADE, and a town is not one grey
+
+Every house and every office wore `CONCRETE`, so a suburb and a downtown
+were the same wall at two heights, and the owner asked for the trades'
+own list instead: a house out of wood, red brick or vinyl and an office
+out of red brick, concrete, marble, glass or stone blocks.
+
+**It is a TABLE and a hash into it.** `model::Kind::skin` is the whole
+of the rule, which is this file's own "open for extension" rule: a new
+trade is a row and a set, not a branch in a builder. A hangar is neither
+a house nor an office and keeps its concrete. It is the SEED and never
+the lot's place, because `city::stream` builds a town as the eye comes
+near it and drops it again, and a skin picked off anything that streams
+would change colour every time you drove back into town.
+
+**A baked model is RE-SKINNED on the way out of the library.** The
+buildings are thirteen Blender bakes with three LODs each and they are
+authored in concrete; which trade a building is actually put up in is a
+fact about the LOT and not about the variant, so a skin baked in would
+mean sixty five bakes. `Model::reskin` repaints the mesh AND the solids
+together, which is this file's own rule that a wall is one oriented box
+that is drawn and collided from one set of numbers: a repaint that moved
+only one of them would be a wall that looked like brick and answered
+concrete to whatever asks what a body is standing on. The parametric
+fallback builds its skin in directly, because it is making the walls
+anyway and knows a wall from a FLOOR: a slab is poured concrete whatever
+is hung off the outside.
+
+**The sets are `tools/make_building_textures.py`, and `tools/texkit.py`
+is what both generators are made of.** Material Maker does not export in
+this container (the asphalt note below is the long form), so a generated
+set is the source; the hashes, the tileable noise, the worley and the
+normal off a height were written out twice the day there were two
+generators, and they are in one file now, with `make_asphalt_texture.py`
+proved byte identical across the extraction by its own `--check`.
+
+**EVERY NUMBER IS IN METRES FIRST.** A built thing's tile is three
+metres and the map is 1024, so a pixel is 2.93 mm of wall. A brick is
+215 by 65 mm with a 10 mm joint, a clapboard's reveal is 200, a board is
+150, an ashlar block is 500 by 300, a curtain wall's bay is 1.5 m: those
+are the sizes and the cell counts are what they come to on a three metre
+tile. A texture authored by eye comes out at whatever scale it came out
+at, and a wall of it reads as a doll's house or as a cliff.
+
+**The finest octave is 256 CELLS and no finer**, which is four pixels
+each. Past that an octave is noise under the sampler rather than detail,
+the mip chain throws all of it away, and what is left in the normal map
+is speckle. The first cut ran octaves out to 1,760 cells, which is under
+two pixels, and the stone came back as gravel.
+
+**A NIGHT is what found the normals, and the number is the mean LEAN.**
+Measured as the angle a normal stands off its own surface, asphalt was
+86.3 degrees against concrete's 21.1 and hull plate's 13.8: a chip's
+dome is a sharp worley cone, so nearly every texel of a road stood on
+end. Under the sun that reads as coarse gravel and is arguable; under a
+STREET LAMP a few metres up it is a field of white specular glints, and
+the first picture of the port at midnight was a road covered in them.
+That is the mockups' own lesson about a lamp a hand under a ceiling
+lighting every grain of a normal map at a grazing angle, arriving
+outdoors. The cure is `texkit::soften`: the normal is read off a LOW
+PASSED height and the map keeps all of its own detail. Every set is
+measured against concrete's 21 now: asphalt 27.0 (it was 86.3), brick
+33.3 (55.2), stone 28.0 (44.1), vinyl 19.1, wood 16.5, marble 5.0.
+
+**A whole tower of the PANE material vanished against the sky.**
+`field::GLASS` is what a window is drawn with, a flat dark colour at a
+roughness of 0.08, which is a mirror; the first render of an office
+skinned in it reflected the sky so exactly that the building was not
+there, leaving its own floor slabs and window frames hanging in the air.
+A facade is a GRID, so `CURTAIN` is a set of its own: dark panes in a
+grid of aluminium mullions, the mullions METAL in the ORM's own blue
+lane so their reflection takes the frame's colour and the pane's does
+not. The owner's word was glass and what they meant was a glazed facade.
+
+**Two lifts on the brick and one on the wood, both read off a picture.**
+Linear albedo is what a shader does arithmetic in and it is not what an
+eye reads: brick at a mean of 0.083 came back BLACK beside concrete's
+0.449, and cedar at 0.075 to 0.165 came back as charred timber with
+white speckle. A fired red brick is a fifth to a third in red with a
+third of that in green and stained cedar is much the same, which is sRGB
+0.44 to 0.58: brick is 0.130 now and wood 0.143. And a knot is 60 mm on
+a three metre tile; the first cut put five cells across the whole map,
+which is a 600 mm knot, and the wall came back blotched like scorched
+plywood.
+
 ## A town is INHABITED, and a townsman is on rails
 
 `traffic.rs` in the core says who is out on a town's streets and where
@@ -2238,12 +2323,19 @@ and lit as flat colours with an emissive, because what they are is a colour
 and a glow and not a surface, and Bevy's own PBR lighting after. Sand is
 the mockup's band by height, all sand to 1.3 m over the sea and all grass
 past 2.8, measured off the sea's own radius, so a beach is what a walker
-wades out onto. Every
-sample is taken whatever the material and blended by weight, because a
-texture sample under a branch is not in uniform control flow and the
-compiler refuses it; the mockup's GLSL was allowed the branch. The sets are
-five, basalt, dunes, grass, concrete and hull plate, as three array
-textures of five layers each (`terrain.rs`; `FREEPORT_ASSETS` or the checkout the
+wades out onto. **A sample under a weight of NOUGHT is SKIPPED**, and that
+is what makes a set cost nothing when it is not on the triangle: the
+mapping's derivatives are formed before any branch and `textureSampleGrad`
+carries them past it, so the sample is legal outside uniform control flow
+and `tri` returns early. This file said the opposite for a long time
+("every sample is taken whatever the material, because a texture sample
+under a branch is not in uniform control flow and the compiler refuses
+it"), which was true of `textureSample` and has not been true of this
+shader since the gradients were lifted out; it is why twelve sets cost
+what six did. The sets are twelve, basalt, dunes, grass, concrete and hull
+plate on the ground and in the old town, asphalt on the road, and the six
+a BUILDING is made of, as three array
+textures of twelve layers each (`terrain.rs`; `FREEPORT_ASSETS` or the checkout the
 binary was built from), and a missing map is a flat layer with a warning so
 the harness runs anywhere. Every layer carries its MIP CHAIN, built at load
 by a box filter down to one texel and laid out layer major, which is the
@@ -2330,6 +2422,92 @@ was built on still has every line:
   because at a grazing angle one tile of overlap left a band of sky
   wherever the far tier stood higher than a column's flat top. No number
   found that; a picture did.
+
+## A day is FOUR HOURS, and the BODY is held still while its sky turns
+
+`day.rs` in the core is what time it is and where the sun stands.
+`DAY` is 240 minutes, which is the owner's number: an hour of play is a
+quarter of one and a night is two hours long.
+
+**The body is held STILL and the sky turns, which is what a body fixed
+frame IS.** Every direction this game reasons about is written on a
+sphere that never moves: a town is a direction, a road is a chain of
+them, a chunk's corner is an index off a lattice pinned to the centre.
+Spinning the planet would mean moving all of that once a frame, and
+re-meshing nothing, for a picture identical to turning the ONE vector
+the light, the dome, the fog, the sea, the lamps and the impostor all
+read. So the sun goes round `day::AXIS` and the ground does not, and
+`AXIS` is plus y because `biome::Shape::climate` already reads latitude
+straight off `dir.y`: the one axis in the crate that means something,
+rather than a second one to keep in step with it.
+
+The turn HOLDS the sun's declination and moves only its bearing, so a
+body keeps its seasons and gains its hours, and the sign is the one that
+takes the sun WEST over the ground: east at a direction is `AXIS cross
+up` (`town::frame_at`), so a sun leaving plus x toward plus z is a sun
+setting. `the_sun_crosses_the_sky_from_east_to_west` measures it at
+twelve places rather than at one lucky longitude.
+
+**An HOUR is nameable, and that is the whole reason `highest` exists.**
+A sun direction says nothing about what time it is ANYWHERE, so a
+picture asked for at dawn or at midnight cannot be aimed by hand, which
+is this file's own solved camera rule arriving at the clock. `highest`
+solves the turn to a place's own noon in closed form: the elevation
+through a day is `A cos t + B sin t + C` with `A = up.x sun.x + up.z
+sun.z` and `B = up.z sun.x - up.x sun.z`, so it peaks at `atan2(B, A)`.
+`oclock` is twelve MINUS that turn on a twenty four hour dial (a sun a
+quarter turn short of its noon is six in the morning, not six in the
+evening, and written the other way up the clock runs backwards and every
+hour in it is still a valid hour), and `at_oclock` is the inverse:
+`--hour 0` is the port's own midnight and `--hour 6` its dawn, on any
+planet, any seed and any port. That closes the `--nightwater` gap this
+file named: a shore at a given sun elevation is now a flag.
+
+**The lamps come on because the sun went down, in ONE place.**
+`day::daylight` is the terminator, `DUSK_FROM` 0.14 to `DUSK_TO` -0.10
+on the sine of the sun's elevation over a place's own radial, a BAND
+rather than a line because a planet has air. It is the reference and
+there are THREE transcriptions, each naming it: `distant.wgsl` fades a
+body's albedo to its night floor and burns its cities, `water.wgsl`
+decides whether a sheet mirrors the day sky or the one the dome is
+painting, and `terrain.wgsl` lights a town's street lamps and its
+windows. `lamps.rs` calls the core function directly, so the light a
+lamp CASTS and the glow the pane is drawn with are one answer rather
+than two that have to agree. Before this the constants were written out
+twice in two shaders and the ground had no night at all: a lit pane at
+noon reads as a shading defect and a street lamp at noon reads as waste.
+
+**`dim_lamps` is a system of its own and that is the point.** Which
+lamps exist is a question about where the EYE is (`light_lamps`, its set
+held still until the eye has gone four metres); how bright they are is a
+question about what TIME it is. Folded into one system it would have
+been an eighth argument, which this file calls the smell that says a
+struct is missing, and the answer here was that there are two jobs. It
+also means a lamp dims through dusk on its own rather than waiting for
+the eye to move.
+
+**The sky that LIGHTS the world is baked again as the sun turns**, on a
+thread of its own. `RE_BAKE` is half a degree, which is the sun's own
+width and the finest step worth taking, since what the cubemap feeds is
+an ambient averaged over a whole hemisphere; at four hours to a day the
+sun covers it in twenty seconds of play and a bake is four to twenty two
+milliseconds. It is a THREAD and not the frame's own work because
+twenty two milliseconds is more than a frame: done in line it would be a
+visible hitch every twenty seconds, which is a worse picture than the
+stale ambient it replaces. A `JoinHandle` and not a channel, because
+there is one answer and no queue, and `is_finished` is the poll. Nothing
+had to be written to make the filtered light follow: `StaticEnvironment`
+caches Bevy's own filtering on the SOURCE TEXTURE's id, so a new image
+is a new texture is a new filter.
+
+**What is MISSING, named rather than hidden.** The cubemap is baked for
+where the eye was when the sun last moved, so flying from a beach to
+orbit carries the beach's own sky up with it until the next re-bake; the
+trigger is the sun and not the altitude. The sun is one direction for
+the whole system rather than a star a body orbits, so `noon` does not
+change when you fly to another planet. And nothing else knows what time
+it is yet: the traffic runs at the same rate at midnight as at noon, and
+a shop is not shut.
 
 ## The air is one march, and the sky is what lights the world
 
@@ -2490,7 +2668,17 @@ time it was broken.
 
 ## Content: what is generated, what is baked, and where it lives
 
-- **Textures are Material Maker's, with ONE named exception.** A material
+- **Textures are Material Maker's, with TWO named exceptions**, and both
+  are generators rather than graphs for the same reason: Material Maker
+  does not export in this container. `tools/texkit.py` is what the two
+  share (the integer hashes, the tileable value noise and its octaves,
+  the worley, the stretched grain, the low pass, the normal off a
+  height, the occlusion and the write or check), so one hash and one
+  noise rather than two that could quietly disagree about what a lattice
+  is. Everything in it is integer arithmetic and polynomials: no `sin`,
+  no `cos`, no random module and no GPU, which is what makes a
+  `--check` byte for byte mean anything, and the same rule the core's
+  field noise keeps so that two clients agree. A material
   is a graph in `materials/<name>.ptex` and nothing else is its source. `tools/bake_materials.sh`
   exports every graph through Material Maker's own command line (Godot
   target, which is the glTF layout Bevy reads: `<name>_albedo.png`,
@@ -2588,6 +2776,7 @@ cargo clippy -p freeport_core -- -D warnings      # the core's lints
 cargo clippy -p freeport_app                      # the app's count never rises: it is nought
 tools/bake_materials.sh --check                   # the maps match their graphs (Material Maker does not run in every container: see the asphalt note)
 python3 tools/make_asphalt_texture.py --check     # the asphalt set matches its generator, byte for byte
+python3 tools/make_building_textures.py --check   # and the six a building is built of
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
 ./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, Tab wires, Esc frees the mouse
@@ -2597,6 +2786,15 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 # what a picture on a software rasteriser is bought down with, since the
 # field is what a chunk costs.
 ./target/release/freeport_app --octaves 14 --levels 9 --frames 20 --shot town.png    # the port's main street, on foot, with its models round the walker
+# The same street at an HOUR. `--hour` is a twenty four hour dial over
+# wherever the WORLD starts, solved back into the clock by
+# `day::at_oclock`: twelve is the sun at its own highest over the port
+# and nought its midnight. A day is four hours, so the clock runs on
+# while the picture is taken and moves under a minute of game time over
+# thirty frames, which is a fiftieth of a degree of sun. The pair is
+# what shows the lamps: out at eleven and lit at eleven at night.
+./target/release/freeport_app --octaves 6 --levels 5 --frames 6 --hour 11 --shot day.png
+./target/release/freeport_app --octaves 6 --levels 5 --frames 6 --hour 23 --shot night.png
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --eye 0,1000012,-14 --look 0,1000012,60 --shot graze.png   # the horizon dead level, which is where the dark band was
 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 30 --eye 0,1030000,0 --look 0,1000000,120000 --shot high.png  # 30 km up: the curve, the sea and the haze
 ./target/release/freeport_app --octaves 14 --levels 9 --walk 600 --frames 620 --shot walked.png   # ten seconds of walking, the distance said every second

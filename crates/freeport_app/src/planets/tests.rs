@@ -103,6 +103,11 @@ fn changing_planets_updates_ground_streamer_and_weather_together() {
         air: planets.bodies[0].air,
         sea: 900.0,
         sun: DVec3::Z,
+        noon: DVec3::Z,
+        start: 0.0,
+        now: 0.0,
+        day: freeport_core::day::DAY,
+        here: DVec3::Y,
     };
     let mut app = App::new();
     app.insert_resource(planets)

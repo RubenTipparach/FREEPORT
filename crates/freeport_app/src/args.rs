@@ -29,6 +29,18 @@ pub(crate) struct Args {
     /// Metres over the PORT to stand and look straight down at it, for a
     /// picture of a town's own plan in the game.
     pub(crate) over: Option<f64>,
+    /// What o'clock it is where the world starts, on a twenty four hour
+    /// dial: twelve is the sun at its own highest over the port and
+    /// nought is its midnight. A day is `day::DAY` long (four hours), so
+    /// the clock runs on from here while the picture is taken; over the
+    /// thirty frames a headless render takes it moves under a minute of
+    /// game time, which is a fiftieth of a degree of sun.
+    ///
+    /// It is an HOUR and never a sun direction, which is this file's own
+    /// solved camera rule arriving at the clock: a direction says nothing
+    /// about what time it is anywhere, so a picture asked for at dusk
+    /// cannot be aimed by hand. `day::at_oclock` solves the turn.
+    pub(crate) hour: Option<f64>,
     /// Plan the home body's cities and roads, write its atlas and stop.
     /// It runs BEFORE any of Bevy is built, so a bake needs no window, no
     /// device and no Xvfb: it is arithmetic and a file.
@@ -75,6 +87,7 @@ impl Default for Args {
             sunward: None,
             around: 0.0,
             over: None,
+            hour: None,
             bake_atlas: false,
             levels: LEVELS,
             shot: None,
@@ -112,6 +125,7 @@ pub(crate) fn parse_args() -> Args {
             "--sunward" => args.sunward = it.next().and_then(|v| v.parse().ok()),
             "--around" => args.around = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0),
             "--over" => args.over = it.next().and_then(|v| v.parse().ok()),
+            "--hour" => args.hour = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),
