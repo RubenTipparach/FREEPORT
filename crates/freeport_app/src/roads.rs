@@ -358,36 +358,6 @@ fn mesh_points(mesh: &freeport_core::dc::DcMesh) -> impl Iterator<Item = Vec3> +
 /// Running the tarmac on INTO the town instead would put a 10 cm lip
 /// across whatever suburb street it crossed, since a road is lifted
 /// 0.15 m and a street 0.05.
-/// How far a road's tarmac stops short of a town's paving, walking IN
-/// along the road's own line from the mouth toward the town's middle,
-/// metres. Nought once a piece of the town's paving covers the walk.
-///
-/// A metre a step, which is well under `town::STREET`, so no street can
-/// be stepped over; and it gives up at the town's own `OUTLINE`, because
-/// past that there is no paving to reach and the answer is the whole
-/// walk.
-fn bare_run(town: &freeport_core::town::Town, from: DVec3, radius: f64) -> f64 {
-    const STEP: f64 = 1.0;
-    let reach = town.radius * freeport_core::town::OUTLINE;
-    let out = from.angle_between(town.dir) * radius;
-    let mut walked = 0.0;
-    while walked < out && walked < reach * 2.0 {
-        let t = walked / out;
-        let d = from.lerp(town.dir, t).normalize_or(from);
-        let here = d * radius - town.dir * radius;
-        let (x, z) = (here.dot(town.east), here.dot(town.north));
-        let covered = town
-            .pieces
-            .iter()
-            .any(|p| (p.x - x).hypot(p.z - z) <= p.w.max(p.d) * 0.5);
-        if covered {
-            return walked;
-        }
-        walked += STEP;
-    }
-    walked
-}
-
 /// Where a road's tarmac actually STARTS, which is the junction: the
 /// road, the town it runs into, the direction the first laid piece
 /// begins at and the ground under it.
@@ -395,44 +365,48 @@ fn bare_run(town: &freeport_core::town::Town, from: DVec3, radius: f64) -> f64 {
 /// It is part way ALONG its own piece wherever a road meets a town's
 /// paving, which is `ribbon::stretch`'s own rule and not merely the
 /// first open station, so the point has to be lerped exactly the way the
-/// ribbon lerps it. One implementation, because `gap_to_town` measures
-/// this point and `aim::junction` photographs it, and a camera aimed at
-/// a junction the harness measures somewhere else is a picture of the
+/// ribbon lerps it. One implementation, because `slip_of` measures this
+/// point and `aim::junction` photographs it, and a camera aimed at a
+/// junction the harness measures somewhere else is a picture of the
 /// wrong place.
 pub fn mouth_of(world: &World) -> Option<(usize, usize, DVec3, f64)> {
     let (k, road) = world.roads.iter().enumerate().next()?;
     let route = world.routes.get(k)?;
-    // The route's own HEAD, because `world::splice_slip` put the slip
-    // there: after it, point nought is the crossing the road joins and
-    // there is nothing to search for. Before it, this looked for the
-    // first point a mask called paved, which is the thing that measured
-    // its own constant.
-    let at = route.line.first().copied()?;
-    let h = route.run.first().copied()?;
+    // The HIGHWAY's own mouth, which is where the corridor stops being
+    // cut and the slip takes over: `route.slip.0` head points are the
+    // slip, so this is the first point the highway itself lays.
+    //
+    // The route's HEAD is the crossing the slip ends at, and measuring
+    // from there is the third tautology in this file's history: a walk
+    // in from a point already on the town's paving reports nought bare
+    // ground whatever the road does, exactly as `road::clear`'s own
+    // `MEET` did. A camera aimed there frames a crossing and not the
+    // junction.
+    // The MIDDLE of the slip, so a camera over it frames the whole
+    // junction rather than one end of it: over the highway's mouth the
+    // slip runs off the bottom of the frame and the picture is of a
+    // road, which is what the first three renders of this were.
+    let mid = route.slip.0 / 2;
+    let at = route.line.get(mid).copied()?;
+    let h = route.run.get(mid).copied()?;
     Some((k, road.from, at, h))
 }
 
-pub fn gap_to_town(world: &World) -> Option<(usize, usize, f64, f64, f64)> {
+/// The SLIP at a road's near end: how many pieces it is, how far it runs
+/// and where its two ends stand out of the town's own middle, metres.
+///
+/// `mouth_of` returns its MIDDLE, which is what a camera frames; this is
+/// what says whether the junction is there.
+///
+/// A junction is either there or it is not, and the one number that says
+/// so is how far the slip's own end stands from the crossing it was laid
+/// to. Everything else about it (the mouth, the length) is what says
+/// which end is short when it is not.
+pub fn slip_of(world: &World) -> Option<(usize, f64, f64, f64, f64, f64, f64)> {
+    let route = world.routes.first()?;
+    let town = world.towns.get(world.roads.first()?.from)?;
     let radius = world.planet.radius;
-    let (k, town_of, at, _) = mouth_of(world)?;
-    let town = world.towns.get(town_of)?;
-    // How far the tarmac stops SHORT of the paving ALONG THE ROAD's own
-    // line, which is the bare ground a picture shows.
-    //
-    // It measured the nearest piece in ANY direction, which is close to
-    // a tautology and reported 1 m for as long as the run in was dead:
-    // `road::clear` stops the tarmac `MEET` from the nearest piece, so a
-    // gap measured that way can only ever come back as `MEET` however
-    // much bare ground the road actually ends in. Measured off the frame
-    // from 900 m the tarmac ended 174 m out of the port with the paving
-    // starting near 150, which is 20 to 25 m the harness was calling 1.
-    // A number that cannot be anything but its own constant is a number
-    // that cannot find a defect.
-    let nearest = bare_run(town, at, radius);
-    // And where the two ends actually stand, out of the town's own
-    // middle, because a gap says nothing about which end is short: the
-    // tarmac starting late and the paving stopping early look alike.
-    let out = at.angle_between(town.dir) * radius;
+    let n = route.slip.0;
     let paved = town
         .pieces
         .iter()
@@ -441,7 +415,50 @@ pub fn gap_to_town(world: &World) -> Option<(usize, usize, f64, f64, f64)> {
             dir.angle_between(town.dir) * radius
         })
         .fold(0.0f64, f64::max);
-    Some((k, town_of, nearest, out, paved))
+    if n < 2 {
+        return Some((0, 0.0, 0.0, 0.0, f64::NAN, paved, 0.0));
+    }
+    let head = &route.line[..n];
+    let ran: f64 = head
+        .windows(2)
+        .map(|w| w[0].angle_between(w[1]) * radius)
+        .sum();
+    let out = |d: DVec3| d.angle_between(town.dir) * radius;
+    // And how far the slip's OWN END is from the paving it was laid to
+    // reach, which is the junction itself.
+    let end = head[0] * radius - town.dir * radius;
+    let (x, z) = (end.dot(town.east), end.dot(town.north));
+    let to_paving = town
+        .pieces
+        .iter()
+        .map(|p| {
+            ((p.x - x).abs() - p.w * 0.5)
+                .max(0.0)
+                .hypot(((p.z - z).abs() - p.d * 0.5).max(0.0))
+        })
+        .fold(f64::INFINITY, f64::min);
+    // And how far the ground the mesher DRAWS stands over the slip's own
+    // tarmac, which is the one number that says whether a junction is
+    // visible: the slip reads the analytic surface and the mesher
+    // contours the field, and the two part company wherever the
+    // volumetric term still bites.
+    let buried = (0..n)
+        .map(|k| {
+            let dir = route.line[k];
+            let here =
+                freeport_core::town::surface_radius(&world.planet.around(dir, 1e-9), dir) - radius;
+            here - (route.run[k] + ribbon::LIFT)
+        })
+        .fold(f64::NEG_INFINITY, f64::max);
+    Some((
+        n,
+        ran,
+        out(head[n - 1]),
+        out(head[0]),
+        to_paving,
+        paved,
+        buried,
+    ))
 }
 
 /// How far the ground a COARSE chunk draws stands over a road's own

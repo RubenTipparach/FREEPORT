@@ -2558,48 +2558,115 @@ What the probes cost is the BAKE: 322.5 s against 99.7, four
 `surface_radius` marches a piece against one, and nothing at all
 afterwards, because what the atlas carries is the answer.
 
-**And the highway RUNS IN and meets the town's own paving.** `road::open`
-stops at every town's levelling, because inside that the town's site
-answers the ground and a corridor there would lay its tarmac at the
-road's level over ground held at the town's. That is right for the FIELD
-and wrong for the GEOMETRY: measured on the port, it left the highway's
-first tarmac 169 m out with the town's own paving reaching 130 m on that
-bearing, **a 39 m ribbon of bare levelled ground** between the highway
-and the city.
+**And the highway RUNS IN on a SLIP, which is the owner's own ask:
+the highway should lower to meet the height of the city, curve down and
+merge with the local roads.** `road::open` stops the corridor at every
+town's levelling, because inside that the town's site answers the
+ground and a corridor there would lay its tarmac at the road's level
+over ground held at the town's. That is right for the FIELD and wrong
+for the GEOMETRY: measured on the port, it left the highway's first
+tarmac 169 m out with the town's own paving reaching 270 m, and what a
+picture showed was a square ended road in a field with the city beyond
+it.
 
-`road::paved` is the other half of `open` and the ribbon is laid on it:
-inside a town's levelling the ground is that town's flat LEVEL, and
-`survey` took the road's heights off the planet with the sites already
-in it, so the road's own profile there IS that level and tarmac laid on
-it lands exactly. What stops it is the town's OWN paving, `MEET` (half a
-metre) from the nearest piece any town laid: no threshold to tune and no
-bearing to get right, and where the two meet is where the streets
-actually are.
+**A MASK cannot close it, and that was measured rather than argued.**
+The first answer was `road::paved`, the other half of `open`, with
+`road::mouths` bisecting how much of the last piece carried tarmac. It
+lays the road's own BAKED PROFILE over a town's flat plateau, and the
+two are not the same height: `the_tarmac_lands_on_the_ground_its_corridor_levelled`
+came back at **1.790 m of float** the moment the mask's own gate was
+fixed. The profile is what `road::smooth` raised to clear the country;
+the plateau is what the town cut. A mask can only choose WHERE to lay
+tarmac and never at what height, so the whole of `paved`, `mouths`,
+`clear` and `MEET` went out.
 
-**Clear of the paving is not enough on its own, and a town's middle is
-what says so.** A town's centre is often a PLAZA, so "clear of every
-piece" is true there and the first cut laid the highway straight through
-the town to its middle. A road approaches from OUTSIDE, so what it may
-pave is ground further out than its own nearest piece and never a gap
-inside the built up part.
+`road::slip` is GEOMETRY instead, and it reads the ground rather than
+guessing at it. A cubic Hermite from the highway's own mouth to the
+nearest CROSSING the town paved, sampled every `SLIP_PIECE` (3 m,
+where a 15 m radius turn's chord is out by 7 cm, under the tarmac's own
+lift), leaving along the road's heading and arriving along the town's
+own grid axis. Three things fall out of that:
 
-**And a mask per STATION cannot close the last of it**, because the
-stations are `PIECE` (85 m) apart and a town's paving ends where it
-ends: the first station clear of it lands up to a piece further out.
-`road::mouths` is how much of each piece carries tarmac, a pair of
-parameters found by bisecting the same test along it, and `ribbon::
-stretch` lays the piece between them. The rest of the ribbon needed
-nothing, because every part of it is already built from a point and an
-across, so a piece that starts part way along is the same arithmetic
-with a lerped end; the dashes keep the phase of the WHOLE piece, so a
-road whose last piece starts part way along does not restart its
-markings at the junction.
+- **A CROSSING and never a run**, because a crossing is a node where
+  streets already meet and it owns its whole square (`town::paved`), so
+  a slip arriving at one merges into the grid; arriving at the middle
+  of a run would T bone a street at whatever angle the road came in on
+  and leave the corner bare.
+- **The height is the GROUND's and never a lerp.** The town's site has
+  levelled its plateau and the corridor has been cut outside it, so the
+  field's own surface between the two IS the ramp from the road's grade
+  down to the town's, and a slip that reads it lands on it. That is the
+  owner's "lower to meet the height of the city" and it needs no second
+  opinion about what that height is.
+- **And the LIFT tapers**, `ribbon::LIFT` (0.15 m) at the highway to
+  `town::LIFT` (0.05) at the street, which is the 10 cm lip this file
+  once gave as the reason not to run tarmac into a town.
 
-Measured on the port: the first tarmac stands **169 m out and 39 m from
-the paving, then 127 m and 9 m once the run in was allowed, then 114 m
-and 1 m once the piece could start part way along**, edge to edge. On
-the fixture's six highways the worst is 0.51 m, which is `MEET`
-(`a_highway_runs_in_and_meets_the_towns_own_paving`).
+It is SPLICED onto the head of the route rather than drawn beside it,
+because a route is what everything downstream reads: the stretches that
+stream, the lamps that light them and the `roads::Network` a car
+follows. A slip that was a mesh of its own would be tarmac a car could
+not drive onto, which is the same defect one level up.
+
+**And it is spliced AFTER the sites are installed, which is the whole
+of the first picture of one.** A slip stands on the GROUND, and the
+ground is the field with the towns' plateaus and the roads' corridors
+cut into it; the first cut ran inside the loop that BUILDS that list,
+so `town::surface_radius` was asked of a planet whose `sites` were
+still empty and the slip was laid on the BARE relief. Near a town's
+mouth the corridor is on an embankment metres over that, so the tarmac
+was UNDER the ground it was laid on: the picture from 90 m showed the
+slip's own curved SHADOW crossing an empty field with the road nowhere
+in it, the highway and the crossing showing at the two ends where the
+levelling gave out. A shadow with nothing casting it is the shape of
+geometry drawn below the terrain, and the order of two statements is
+what put it there.
+
+**A slip reads the ANALYTIC surface and stands on the highway's own
+EMBANKMENT, and those two facts are one decision.** `Planet::surface` is
+the relief with the sites applied, written down; `town::surface_radius`
+is a sphere trace down through eight kilometres of it for the field's
+own first crossing, and it is what the mesher agrees with exactly. The
+march is what the slip asked for first, and on this body 620 slips of
+fifteen points took **92.7 s of startup against 0.1 s**, because the
+trace steps by the planet's own slope bound and that bound is set by
+the narrowest corridor skirt on a body carrying three quarters of a
+million of them. So the slip reads the cheap one and PAYS for the
+disagreement: measured on the port, the drawn ground stood **0.34 m**
+over a tarmac laid at `ribbon::LIFT` alone. `road::EMBANK` is what a
+road already has for exactly that, and the reason is the one written
+beside the constant: the ground beside an embankment is LOWER than the
+road, so no chord between two lattice columns can close over it. The
+slip rides `ribbon::LIFT + EMBANK` and tapers to the street's own
+`town::LIFT` over its last `TAPER` (a quarter), which is a one in
+twenty ramp rather than the 10 cm step this file once gave as the
+reason not to run tarmac into a town.
+
+**And it ends on ground the town has LEVELLED.** A town's grid runs out
+past its own site onto the skirt, where the blend ramps and the
+volumetric term comes back, so the nearest crossing to a highway's mouth
+is often the one part of the town's paving that is itself partly in the
+hill. `road::slip` prefers a crossing inside `Site::level_r` and falls
+back to any crossing and then to any piece at all, which is what a one
+street hamlet needs. Measured on the port: the slip ends at a crossing
+**129 m out rather than 158**, it is 16 pieces over 42 m, and the drawn
+ground stands **-0.05 m** over its own tarmac at the worst, which is the
+tarmac over the ground everywhere.
+`a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground` holds
+both halves on six highways: nought under the ground anywhere, and never
+more than the highway's own embankment over it.
+
+**And the harness measured its own constant, for the third time in this
+file.** `gap_to_town` walked in from `mouth_of`, which after the splice
+is the CROSSING: a walk that starts on the paving reports nought bare
+ground whatever the road does, exactly as `road::clear`'s own `MEET`
+did before it and `cars_near`'s radius did in another file. Both went,
+and `roads::slip_of` is the one measure left: `Route::slip` records how
+many head points are the slip, so the number is the slip's own length
+and how far its END stands from the paving it was laid to reach.
+Measured on the port: **the slip is 14 pieces over 40 m, from the
+highway's mouth 169 m out of town 0 to a crossing 158 m out, ending
+0.00 m from the town's own paving.**
 
 **What was tried and taken OUT: painting the road on the terrain's own
 triangles.** `Density::material` was given the sample's own cell so
@@ -2754,32 +2821,32 @@ The lights themselves are `lamps.rs`'s, unchanged but for knowing that a
 lamp can be a road's as well as a town's, and a road's is indexed along
 the whole ROAD because a stretch of it streams.
 
-**And it does NOT quite JOIN the town, which is measured rather than
-assumed.** `roads::gap_to_town` is that number and the harness prints it:
-road 0's first tarmac stands **169 m out of the port, whose own paving
-reaches 270 m, a gap of 39 m**. The two ends say which one is short. The
-road leaves along a bearing where the town is NARROW, so its tarmac
-starts at that bearing's own `Site::level_r`, the outline plus a 12 m
-apron; the town's outermost block frontage on that bearing is 27 m
-further in, which is a block and a half of an 18.5 m grid. It is not the
-SKIRT: dropping `field::site_skirt` from `road::open` moves the levelling
-24.6 m inward and the gap not at all, because the first tarmac is laid at
-a STATION and the stations are 85 m apart. That measurement is why the
-skirt is still in `open`, where it keeps the tarmac out of the band the
-town's own site is winning: inside it a road's tarmac floats 0.10 m off
-its own 0.15 m lift, and past it 0.003.
+**And it JOINS the town now, on the slip above.** `roads::slip_of` is
+the number and the harness prints it: road 0's slip is 14 pieces over
+40 m, from the highway's mouth 169 m out of the port to a crossing
+158 m out, **ending 0.00 m from the town's own paving**. The highway's
+mouth stands where it does because the road leaves along a bearing
+where the town is NARROW, so its tarmac starts at that bearing's own
+`Site::level_r`, the outline plus a 12 m apron; the town's outermost
+block frontage on that bearing is further in, which is what the slip
+crosses. It is not the SKIRT: dropping `field::site_skirt` from
+`road::open` moves the levelling 24.6 m inward and the mouth not at
+all, because the first tarmac is laid at a STATION and the stations are
+85 m apart. That measurement is why the skirt is still in `open`, where
+it keeps the corridor out of the band the town's own site is winning:
+inside it a road's tarmac floats 0.10 m off its own 0.15 m lift, and
+past it 0.003.
 
-**What is MISSING, named rather than hidden.** A road has no junctions:
-where two roads cross, two corridors overlap and the field answers
-whichever it reaches first, and there is no give way, no slip road and no
-roundabout. **And there is none where a road MEETS a town** either, which
-is the same gap said at the other end: a road arrives on an arbitrary
-bearing and a town's streets run on its own grid, so there is nothing for
-the tarmac to meet until one of them is laid toward the other. Running
-the tarmac on INTO the town instead is not the answer, because a road is
-lifted 0.15 m and a street 0.05, so it would put a 10 cm lip across
-whatever suburb street it crossed. Nothing drives on it on rails, so the country between two
-towns is empty of traffic. A car has no HEADLAMPS: its lamps are emissive
+**What is MISSING, named rather than hidden.** A road has no junctions
+WITH ANOTHER ROAD: where two roads cross, two corridors overlap and the
+field answers whichever it reaches first, and there is no give way, no
+roundabout and no fan of tarmac where three arms converge. Measured on
+this body, all **1,118 road confluences are at settlements and none is
+in open country**, and the worst of them are at wayside villages nobody
+has built, so what that wants is a HUB at a settlement rather than a
+crossroads primitive, and it is named here rather than hidden. Nothing
+drives on a road on rails, so the country between two towns is empty of
+traffic. A car has no HEADLAMPS: its lamps are emissive
 and cast no light, so a night drive out past `LIT_NEAR` is a drive in the
 dark, which is what a day arriving on a world with unlit country roads
 costs and is named here rather than hidden. And a road is not drawn in a
@@ -3923,6 +3990,18 @@ Numbers in the commit message. What is measured so far:
   The last is the car flat out on a country road for ten minutes, and
   its distance to the goal does not close, because it is following the
   road it reached rather than routing over the network.
+- **The JUNCTION where a highway meets a town**, on the port, in four
+  measurements and four pictures: the slip spliced INSIDE the loop that
+  builds the sites read the bare relief and drew as its own curved
+  SHADOW on an empty field; spliced after them it drew for two thirds of
+  its length with the drawn ground **0.34 m** over its tarmac at the
+  worst; on the highway's own `EMBANK` and ending at a crossing inside
+  the town's levelling it is **16 pieces over 42 m, from the highway's
+  mouth 169 m out of the town to a crossing 129 m out, ending 0.00 m
+  from the paving, with the ground -0.05 m over its tarmac at the
+  worst**, which is tarmac over ground everywhere. What it cost was the
+  ground function: `Planet::surface` rather than
+  `town::surface_radius`, **0.1 s of startup against 92.7**.
 - **The CLIMB, a kilometre a step over the port, straight down.** The
   chunk count and the triangles fall monotonically with no cliff in
   them: 2,654 chunks and 578,924 triangles at 1 km, 1,051 and 414,969 at

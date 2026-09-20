@@ -130,6 +130,25 @@ const SLIP_PIECE: f64 = 3.0;
 /// their own direction without looping.
 const EASE: f64 = 0.55;
 
+/// What share of the slip the LIFT is tapered over, at the town end.
+///
+/// A slip rides the highway's own `EMBANK` for the rest of it, and the
+/// reason is measured: the slip reads `Planet::surface`, which is the
+/// ANALYTIC relief, and the mesher contours the field, which carries
+/// the volumetric term wherever a site has not faded it. On the port's
+/// own slip the drawn ground stands **0.34 m** over a tarmac laid at
+/// `ribbon::LIFT` alone, so the last third of it was under the hill it
+/// was laid on and the picture showed its own curved SHADOW crossing an
+/// empty field. An embankment is what a road already has for exactly
+/// this: the ground beside it is LOWER than the road, so no chord
+/// between two lattice columns can close over it.
+///
+/// The taper is over the last quarter and never the whole slip, because
+/// a lift that falls linearly from the mouth is under the burial for
+/// most of its length. A quarter of forty metres is ten, and dropping
+/// `EMBANK` over ten is a one in twenty ramp, which is a road.
+const TAPER: f64 = 0.25;
+
 /// The SLIP that joins a highway to a town's own streets: a curve from
 /// the last tarmac the road lays to the nearest CROSSING the town paved,
 /// with the ground under it read off the planet.
@@ -175,17 +194,28 @@ pub fn slip(
     // The nearest CROSSING, and any piece at all only if the town laid
     // no crossing, which a one street hamlet can manage.
     let near = |p: &&crate::town::Piece| (p.x - p0.x).hypot(p.z - p0.y);
-    let Some(target) = town
-        .pieces
-        .iter()
-        .filter(|p| !p.run())
-        .min_by(|a, b| near(a).total_cmp(&near(b)))
-        .or_else(|| {
-            town.pieces
-                .iter()
-                .min_by(|a, b| near(a).total_cmp(&near(b)))
-        })
-    else {
+    // And a crossing on ground the town has LEVELLED, which is where a
+    // street is laid five centimetres over a plane and stays there. The
+    // town's own grid runs out past its site onto the skirt, where the
+    // blend ramps and the volumetric term comes back: a slip ending
+    // there arrives at the one part of the town's paving that is itself
+    // partly in the hill, and its last piece is buried with it.
+    let site = crate::town::site_of(town);
+    let level = |p: &&crate::town::Piece| {
+        let dir = (town.dir * radius + town.east * p.x + town.north * p.z).normalize();
+        dir.angle_between(town.dir) * radius <= site.level_r(dir)
+    };
+    let pick = |firm: bool| {
+        town.pieces
+            .iter()
+            .filter(|p| !p.run() && (!firm || level(p)))
+            .min_by(|a, b| near(a).total_cmp(&near(b)))
+    };
+    let Some(target) = pick(true).or_else(|| pick(false)).or_else(|| {
+        town.pieces
+            .iter()
+            .min_by(|a, b| near(a).total_cmp(&near(b)))
+    }) else {
         return Vec::new();
     };
     let p1 = glam::DVec2::new(target.x, target.z);
@@ -217,8 +247,26 @@ pub fn slip(
                 + p1 * (-2.0 * t3 + 3.0 * t2)
                 + m1 * (t3 - t2);
             let dir = (town.dir * radius + town.east * q.x + town.north * q.y).normalize();
-            let ground = crate::town::surface_radius(planet, dir) - radius;
-            let lift = super::ribbon::LIFT + (crate::town::LIFT - super::ribbon::LIFT) * t;
+            // `Planet::surface` and never `town::surface_radius`, which
+            // is the analytic relief with the sites applied rather than
+            // a sphere trace down through the whole band for it. The
+            // two agree wherever `keep` is nought, which is exactly
+            // where a slip runs: a town has levelled its plateau and a
+            // road has cut its corridor, and on a levelled site the
+            // relief IS the site's height and the volumetric noise is
+            // not asked. Marched instead, 620 slips of fifteen points
+            // took 92.7 s of startup on this body against 0.1 s, which
+            // is 620 sphere traces through eight kilometres of relief
+            // for an answer the field can write down.
+            let ground = planet.surface(dir).0;
+            // The highway's own embankment, held for three quarters of
+            // the slip and tapered into the street's own five
+            // centimetres over the last quarter, which is the 10 cm lip
+            // this project's design gave as the reason not to run
+            // tarmac into a town: a ramp rather than a step.
+            let high = super::ribbon::LIFT + super::EMBANK;
+            let ease = ((1.0 - t) / TAPER).clamp(0.0, 1.0);
+            let lift = crate::town::LIFT + (high - crate::town::LIFT) * ease;
             (dir, ground + lift - super::ribbon::LIFT)
         })
         .collect()

@@ -598,6 +598,7 @@ fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
     let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
     let (mut worst_gap, mut worst_float) = (0.0f64, 0.0f64);
     let mut seen = 0;
+    let mut worst_sunk = f64::NEG_INFINITY;
     for road in roads.iter().take(6) {
         let line = centreline(road, planet.radius);
         let open = crate::road::open(&line, planet.radius, &discs);
@@ -624,16 +625,21 @@ fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
             .fold(f64::INFINITY, f64::min)
             .max(0.0);
         worst_gap = worst_gap.max(gap);
-        // And it LANDS: the ground the field makes under every point of
-        // it, against the height the slip asks the tarmac to sit at.
+        // And it RIDES its own ground: over it everywhere, by the
+        // street's own five centimetres at the crossing and no more
+        // than the highway's embankment out at the mouth. Under it
+        // ANYWHERE is the defect the pictures showed, which is a road
+        // drawn below the hill it was laid on.
         for (dir, h) in &slip {
             let ground = crate::town::surface_radius(&levelled, *dir) - planet.radius;
-            worst_float = worst_float.max((h + ribbon::LIFT - ground).abs());
+            let over = h + ribbon::LIFT - ground;
+            worst_float = worst_float.max(over);
+            worst_sunk = worst_sunk.max(-over);
         }
         seen += 1;
     }
     println!(
-        "{seen} slips end {worst_gap:.2} m from a crossing and stand {worst_float:.3} m off the ground"
+        "{seen} slips end {worst_gap:.2} m from a crossing and stand {worst_float:.3} m over their own ground, {worst_sunk:.3} m under it at the worst"
     );
     assert!(seen > 0, "no road laid a slip at all");
     assert!(
@@ -641,7 +647,11 @@ fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
         "a slip ends {worst_gap:.2} m short of the crossing it is supposed to join"
     );
     assert!(
-        worst_float < 0.35,
-        "a slip stands {worst_float:.3} m off the ground it is laid on"
+        worst_sunk <= 0.0,
+        "a slip stands {worst_sunk:.3} m INTO the ground it is laid on"
+    );
+    assert!(
+        worst_float <= ribbon::LIFT + crate::road::EMBANK + 1e-9,
+        "a slip stands {worst_float:.3} m over its own ground, past the highway's own embankment"
     );
 }

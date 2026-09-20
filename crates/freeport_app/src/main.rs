@@ -507,9 +507,9 @@ fn say_roads(commands: &mut Commands, world: &World) {
             "the ground a coarse chunk draws stands {worst:.2} m over road 0's tarmac at its worst and {median:.2} m at its median"
         );
     }
-    if let Some((k, town, gap, out, paved)) = roads::gap_to_town(world) {
+    if let Some((n, ran, mouth, end, meets, paved, buried)) = roads::slip_of(world) {
         info!(
-            "road {k}'s first tarmac stands {out:.0} m out of town {town}, whose own paving reaches {paved:.0} m: a gap of {gap:.0} m"
+            "road 0's SLIP is {n} pieces over {ran:.0} m, from the highway's mouth {mouth:.0} m out of town 0 to {end:.0} m out, ending {meets:.2} m from the town's own paving, which reaches {paved:.0} m; the drawn ground stands {buried:.2} m over its own tarmac at the worst"
         );
     }
     info!(

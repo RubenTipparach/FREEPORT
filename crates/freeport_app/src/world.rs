@@ -53,6 +53,15 @@ pub(crate) struct Route {
     pub open: Vec<bool>,
     /// Which points are near enough a settlement to carry a lamp.
     pub lit: Vec<bool>,
+    /// How many points at each END of the line are the SLIP that joins
+    /// the highway to that town's own streets, head first.
+    ///
+    /// It is what lets the harness measure the junction and a camera
+    /// frame it: without it the route's head is the crossing, so a walk
+    /// in from there starts ON the paving and reports nought however
+    /// much bare ground the road really ends in, which is the same
+    /// tautology `road::clear` and `MEET` were measured through twice.
+    pub slip: (usize, usize),
     /// The sea's radius, which is what a vertex's height is measured off
     /// for the shore band the ground shader reads.
     pub sea: f64,
@@ -278,25 +287,38 @@ pub(crate) fn build(args: &Args) -> World {
         let line = road::centreline(road, planet.radius);
         let open = road::open(&line, planet.radius, &discs);
         let lit = road::lit(&line, planet.radius, &discs);
-        let mut route = Route {
+        let route = Route {
             line,
             run: run.clone(),
             open,
             lit,
+            slip: (0, 0),
             sea: SEA,
         };
-        // And the SLIPS, one at each end, which is what turns a highway
-        // that STOPS near a town into one that joins its streets.
-        for town_of in [road.from, road.to] {
-            if let Some(town) = towns.get(town_of) {
-                splice_slip(&mut route, &planet, town, planet.radius);
-            }
-            route.flip();
-        }
         routes.push(route);
     }
     let corridors = sites.len() - towns.len();
     planet.sites = sites.into();
+    // And the SLIPS, one at each end of every road, which is what turns
+    // a highway that STOPS near a town into one that joins its streets.
+    //
+    // AFTER the sites are installed, and that ordering is the whole of
+    // it. A slip reads `town::surface_radius` to stand on the ground,
+    // and the ground is the field WITH the towns' plateaus and the
+    // roads' corridors cut into it: read off a planet whose `sites` are
+    // still empty it stands on the BARE relief instead, which near a
+    // town's mouth is metres under the corridor's own embankment. The
+    // first picture of one showed the slip's own SHADOW curving across
+    // an empty field with the tarmac nowhere in it, which is a road
+    // buried under the ground it was laid on.
+    for (route, road) in routes.iter_mut().zip(&roads) {
+        for town_of in [road.from, road.to] {
+            if let Some(town) = towns.get(town_of) {
+                splice_slip(route, &planet, town, planet.radius);
+            }
+            route.flip();
+        }
+    }
     let planned = t0.elapsed();
     say_port(&towns);
     info!(
@@ -431,6 +453,7 @@ impl Route {
         self.run.reverse();
         self.open.reverse();
         self.lit.reverse();
+        self.slip = (self.slip.1, self.slip.0);
     }
 }
 
@@ -489,4 +512,5 @@ fn splice_slip(route: &mut Route, planet: &Planet, town: &freeport_core::town::T
     route.lit = std::iter::repeat_n(lit, head)
         .chain(route.lit[rest..].iter().copied())
         .collect();
+    route.slip.0 = head;
 }

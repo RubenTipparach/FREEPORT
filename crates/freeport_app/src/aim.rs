@@ -88,7 +88,7 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
             Some((road, town, at, h)) => {
                 let ground = at * (world.planet.radius + h);
                 bevy::log::info!(
-                    "the junction camera stands {up:.0} m over road {road}'s first tarmac, \
+                    "the junction camera stands {up:.0} m over the middle of road {road}'s slip, \
                      {:.0} m out of town {town}, looking straight down",
                     at.angle_between(world.towns[town].dir) * world.planet.radius
                 );
