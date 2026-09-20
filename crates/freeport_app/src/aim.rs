@@ -70,6 +70,25 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
             return (ground + port.dir * over, ground);
         }
     }
+    // The port's own WATERLINE, looking out to sea. Solved and never
+    // hand aimed, which is this file's whole rule: two cameras pointed
+    // at this world's night sea by hand both landed on dry land, and
+    // the design file has carried a note ever since that the missing
+    // tool is exactly this.
+    if let Some(up) = args.shore {
+        match shore(world) {
+            Some((at, out)) => {
+                let sea = world.sea.radius;
+                bevy::log::info!(
+                    "the shore camera stands {up:.1} m over the waterline {:.0} m from the port",
+                    at.angle_between(world.towns[0].dir) * world.planet.radius
+                );
+                let eye = at * (sea + up);
+                return (eye, eye + out * 1_000.0);
+            }
+            None => bevy::log::warn!("no shore within reach of the port to aim at"),
+        }
+    }
     // Straight down on the JUNCTION, which is where the highway's own
     // tarmac meets the port's paving. `--over` looks down at a town's
     // MIDDLE, so the join is out at the edge of its frame and 25 px of
@@ -135,6 +154,53 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
         None => (eye, look),
     }
 }
+/// How far out to look for the sea, and how finely. Three kilometres in
+/// thirty metre steps: the port stands on a shore by construction
+/// (`town::coastal` is why it is the biggest settlement on the body), so
+/// the water is near, and thirty metres is well under a beach's own
+/// width.
+const SHORE_REACH: f64 = 3_000.0;
+const SHORE_STEP: f64 = 30.0;
+
+/// The port's own WATERLINE and which way the open sea is: the nearest
+/// point on any bearing where the ground falls under the sea.
+///
+/// Scanned over bearings rather than marched down the steepest fall,
+/// because a town levels its own site and the fall out of the middle of
+/// one says nothing about where the coast is. The NEAREST crossing over
+/// all of them is the shore this port actually stands on.
+pub(crate) fn shore(world: &World) -> Option<(DVec3, DVec3)> {
+    const BEARINGS: usize = 32;
+    let town = world.towns.first()?;
+    let radius = world.planet.radius;
+    let sea = world.sea.radius;
+    let (east, north) = town::frame_at(town.dir);
+    let mut best: Option<(f64, DVec3, DVec3)> = None;
+    for b in 0..BEARINGS {
+        let a = b as f64 / BEARINGS as f64 * std::f64::consts::TAU;
+        let way = east * a.cos() + north * a.sin();
+        let mut dry = town.dir;
+        let mut out = SHORE_STEP;
+        while out < SHORE_REACH {
+            let d = (town.dir + way * (out / radius)).normalize();
+            if town::surface_radius(&world.planet, d) < sea {
+                // The last DRY step is the waterline, to a step.
+                if best.as_ref().is_none_or(|(o, _, _)| out < *o) {
+                    best = Some((out, dry, way));
+                }
+                break;
+            }
+            dry = d;
+            out += SHORE_STEP;
+        }
+    }
+    let (_, at, way) = best?;
+    // Out to SEA and level with the horizon: the sheet is what this is
+    // a picture of, so the eye looks along the water rather than down at
+    // it or up into the sky.
+    Some((at, (way - at * way.dot(at)).normalize_or(way)))
+}
+
 /// How far BACK an approach camera stands, as a multiple of the town's
 /// own width.
 ///

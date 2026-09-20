@@ -46,6 +46,12 @@ pub(crate) struct Args {
     /// aimed: where a road leaves a town depends on where the network
     /// came out, so a hand aimed camera at a road finds a field.
     pub(crate) road: Option<f64>,
+    /// Metres over the PORT's own waterline, looking out to sea. The
+    /// one camera the sheet can be judged from, and the tool this
+    /// project's design named as missing: a shore at a given hour could
+    /// not be aimed at by hand, because where the sea meets the land
+    /// depends on where the towns came out.
+    pub(crate) shore: Option<f64>,
     /// Metres over the JUNCTION, looking straight down at it: the point
     /// where the highway's first laid tarmac meets the port's own
     /// paving. `--over` frames a town's PLAN and a junction is 25 px of
@@ -105,6 +111,7 @@ impl Default for Args {
             hour: None,
             road: None,
             junction: None,
+            shore: None,
             approach: None,
             bake_atlas: false,
             levels: LEVELS,
@@ -145,6 +152,7 @@ pub(crate) fn parse_args() -> Args {
             "--over" => args.over = it.next().and_then(|v| v.parse().ok()),
             "--road" => args.road = it.next().and_then(|v| v.parse().ok()),
             "--junction" => args.junction = it.next().and_then(|v| v.parse().ok()),
+            "--shore" => args.shore = it.next().and_then(|v| v.parse().ok()),
             "--approach" => args.approach = it.next().and_then(|v| v.parse().ok()),
             "--hour" => args.hour = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,
