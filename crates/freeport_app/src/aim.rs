@@ -97,8 +97,8 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
         match road_in(world, up) {
             Some((from, to)) => {
                 bevy::log::info!(
-                    "the approach camera stands {up:.0} m over the tarmac {:.2} km out of the port, looking back at it",
-                    from.angle_between(to) * world.planet.radius / 1000.0
+                    "the approach camera stands {up:.0} m over the tarmac {:.0} m out of the port, looking back at it",
+                    from.angle_between(to) * world.planet.radius
                 );
                 return (from + from.normalize_or(DVec3::Y) * up, to);
             }
@@ -113,18 +113,45 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
         None => (eye, look),
     }
 }
+/// How far BACK an approach camera stands, as a multiple of the town's
+/// own width.
+///
+/// Off the TOWN and not off the camera's height, which is what
+/// `road_out` solves its look ahead from and is the wrong rule here: a
+/// picture of a road LEAVING is framed by how much road is in it, and a
+/// picture of one ARRIVING is framed by the place it arrives at. Borrowed
+/// from `road_out` the camera stood four kilometres out and the city was
+/// a dot at the vanishing point. At two and a half widths a town 483 m
+/// across spans about a third of the frame, with a kilometre of its own
+/// road running into it.
+const STAND_OFF: f64 = 2.5;
+
 /// Where a road ARRIVES at the port, and what it arrives at: a point on
 /// its own tarmac out in the country, and the town itself.
 ///
-/// It is `road_out`'s own two points with the camera at the FAR one and
-/// the town for a target, so the tarmac runs away from the eye and into
-/// the city rather than out of it. The town's own position and not the
-/// near end of the road, because what the picture is of is the road
-/// MEETING the place.
-pub(crate) fn road_in(world: &World, up: f64) -> Option<(DVec3, DVec3)> {
-    let (_, far) = road_out(world, up)?;
-    let town = world.towns.get(world.roads.first()?.from)?;
-    Some((far, town.dir * (world.planet.radius + town.h)))
+/// The camera stands at whichever point of the road's own tarmac is
+/// nearest `STAND_OFF` town widths out and looks at the town's middle,
+/// so the road runs away from the eye and INTO the city rather than out
+/// of it. The town's own position and not the near end of the road,
+/// because what the picture is of is the road meeting the place.
+pub(crate) fn road_in(world: &World, _up: f64) -> Option<(DVec3, DVec3)> {
+    let road = world.roads.first()?;
+    let route = world.routes.first()?;
+    let town = world.towns.get(road.from)?;
+    let radius = world.planet.radius;
+    let back = town.radius * freeport_core::town::OUTLINE * 2.0 * STAND_OFF;
+    // Among the points that actually carry tarmac, the one standing
+    // nearest that far out of the town's own middle.
+    let at = (0..route.line.len())
+        .filter(|i| route.open[*i])
+        .min_by(|a, b| {
+            let away = |i: usize| (route.line[i].angle_between(town.dir) * radius - back).abs();
+            away(*a).total_cmp(&away(*b))
+        })?;
+    Some((
+        route.line[at] * (radius + route.run[at]),
+        town.dir * (radius + town.h),
+    ))
 }
 
 /// A direction turned `angle` away from itself, about whichever axis is
