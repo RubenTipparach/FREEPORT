@@ -175,26 +175,43 @@ pub(crate) fn shore(world: &World) -> Option<(DVec3, DVec3)> {
     let radius = world.planet.radius;
     let sea = world.sea.radius;
     let (east, north) = town::frame_at(town.dir);
+    // The bearing with the most OPEN SEA on it, and not the nearest
+    // water. The first cut took the nearest crossing, which on this port
+    // is an inlet with a spit across it: the frame came back mostly sand
+    // and sky, the water in it measured 0.495 of high frequency against
+    // the 2.4 of the sand beside it, and a picture that cannot show the
+    // sheet cannot be used to judge it. What this camera is FOR is the
+    // sheet, so the bearing is the one whose water runs furthest without
+    // land beyond it.
     let mut best: Option<(f64, DVec3, DVec3)> = None;
     for b in 0..BEARINGS {
         let a = b as f64 / BEARINGS as f64 * std::f64::consts::TAU;
         let way = east * a.cos() + north * a.sin();
         let mut dry = town.dir;
+        let mut at: Option<DVec3> = None;
+        let mut wet = 0.0;
         let mut out = SHORE_STEP;
         while out < SHORE_REACH {
             let d = (town.dir + way * (out / radius)).normalize();
-            if town::surface_radius(&world.planet, d) < sea {
+            let under = town::surface_radius(&world.planet, d) < sea;
+            match (at.is_some(), under) {
                 // The last DRY step is the waterline, to a step.
-                if best.as_ref().is_none_or(|(o, _, _)| out < *o) {
-                    best = Some((out, dry, way));
-                }
-                break;
+                (false, true) => at = Some(dry),
+                (true, true) => wet += SHORE_STEP,
+                // Land again: this bearing is an inlet, not open sea.
+                (true, false) => break,
+                (false, false) => dry = d,
             }
-            dry = d;
             out += SHORE_STEP;
         }
+        if let Some(at) = at {
+            if best.as_ref().is_none_or(|(w, _, _)| wet > *w) {
+                best = Some((wet, at, way));
+            }
+        }
     }
-    let (_, at, way) = best?;
+    let (open, at, way) = best?;
+    bevy::log::info!("the open sea on that bearing runs {open:.0} m before land");
     // Out to SEA and level with the horizon: the sheet is what this is
     // a picture of, so the eye looks along the water rather than down at
     // it or up into the sky.
