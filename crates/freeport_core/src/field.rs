@@ -24,13 +24,7 @@ pub trait Density {
 
     /// What the rock at `p` is made of: `TERRAIN` unless something built is
     /// the deepest solid there, which is how a mesher names a triangle.
-    ///
-    /// `reach` is how far apart the samples of the mesh being named are,
-    /// its own cell. A material that is a thin STRIPE on the ground needs
-    /// it: a band narrower than a cell is a band whose triangles are
-    /// tagged only where their middles happen to fall in it, which is a
-    /// dotted road rather than a road.
-    fn material(&self, _p: DVec3, _reach: f64) -> u8 {
+    fn material(&self, _p: DVec3) -> u8 {
         TERRAIN
     }
 
@@ -372,19 +366,6 @@ impl Planet {
     }
 }
 
-/// How coarse a mesh has to be before a road is PAINTED on the ground
-/// rather than left to its own tarmac, metres of cell.
-///
-/// A corridor is `road::CORRIDOR` (7 m) either side of the centreline, so
-/// a mesh with a cell of about half that still has samples inside the
-/// cutting and draws it: the ribbon sits in its own corridor and is the
-/// road. Past that the mesher has nothing inside the corridor at all,
-/// draws the hill that was there before the road, and the tarmac is
-/// under it. The rings put a cell of about a sixty fourth of its own
-/// distance under the eye, so four metres is a few hundred metres out,
-/// which is the owner's own word for where the near road ends.
-const PAINT_FROM: f64 = 4.0;
-
 impl Density for Planet {
     fn at(&self, p: DVec3) -> f64 {
         let r = p.length();
@@ -416,47 +397,6 @@ impl Density for Planet {
 
     fn slope(&self) -> f64 {
         self.steepest()
-    }
-
-    /// The ground is TERRAIN everywhere, except that a mesh too coarse to
-    /// hold a road's own cutting is PAINTED with one.
-    ///
-    /// The tarmac is geometry of its own (`road::ribbon`) and that is the
-    /// road wherever the terrain still carries the corridor it sits in.
-    /// Past `PAINT_FROM` it does not, so the road becomes a material on
-    /// the ground's own triangles: continuous at every level by
-    /// construction, because it IS the ground, and never under it.
-    ///
-    /// The band is at least one CELL wide, which is the lie and a
-    /// deliberate one, the same lie `chart::blot` makes: a band narrower
-    /// than a cell is tagged only where a triangle's middle happens to
-    /// fall in it, which is a dotted road rather than a road. At the
-    /// finest level that paints it the band is the tarmac's own width and
-    /// the lie is nought.
-    fn material(&self, p: DVec3, reach: f64) -> u8 {
-        if reach < PAINT_FROM || self.sites.is_empty() {
-            return TERRAIN;
-        }
-        let Some(dir) = p.try_normalize() else {
-            return TERRAIN;
-        };
-        let half = crate::road::ribbon::HALF.max(reach * 0.5);
-        let band = half / self.radius;
-        for site in self.sites_near(dir, band) {
-            // A road FILLS and a town does not, which is what tells a
-            // corridor from a town's own levelled ground here.
-            if !site.fills {
-                continue;
-            }
-            let far = site.reach() * 2.0 + band;
-            if (dir - site.dir).length_squared() > far * far {
-                continue;
-            }
-            if (dir - site.nearest(dir).0).length() * self.radius <= half {
-                return STREET;
-            }
-        }
-        TERRAIN
     }
 }
 
@@ -726,9 +666,9 @@ impl Density for Built<'_> {
         self.sample(p).0
     }
 
-    fn material(&self, p: DVec3, reach: f64) -> u8 {
+    fn material(&self, p: DVec3) -> u8 {
         if self.blocks.is_empty() {
-            self.ground.material(p, reach)
+            self.ground.material(p)
         } else {
             self.sample(p).1
         }

@@ -90,7 +90,7 @@ pub fn walk(
         clock.elapsed().as_secs_f64(),
     );
     let w = &walker.0;
-    let under = field.material(w.dir * (w.foot - 0.05), 0.0);
+    let under = field.material(w.dir * (w.foot - 0.05));
     status.walker = format!(
         "{:.1} m over the mean radius, {:.1} m/s{}, {}",
         w.foot - here.ground.0.planet.radius,

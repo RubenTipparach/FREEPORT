@@ -64,7 +64,9 @@ impl Network {
                 let at = ribbon::span(k, route.line.len());
                 // A stretch with nothing open in it is inside a town,
                 // which has laid its own streets there.
-                if at.len() < 2 || !route.open[at.clone()].windows(2).any(|o| o[0] && o[1]) {
+                // PAVED and not open: a stretch whose only tarmac is
+                // the run into a town is still a stretch of tarmac.
+                if at.len() < 2 || !route.paved[at.clone()].windows(2).any(|o| o[0] && o[1]) {
                     continue;
                 }
                 stretches.push((r, k, route.line[(at.start + at.end) / 2]));
@@ -260,11 +262,14 @@ fn lay(
     let (line, run, open, lit) = (
         &route.line[at.clone()],
         &route.run[at.clone()],
-        &route.open[at.clone()],
+        &route.paved[at.clone()],
         &route.lit[at.clone()],
     );
+    // One SHORTER than the points, because a mouth is a piece's.
+    let ends = at.start..at.end.saturating_sub(1).min(route.mouth.len());
+    let mouth = &route.mouth[ends];
     let frame = ribbon::frame(line, run, radius);
-    let model = ribbon::stretch(&frame, line, run, open, lit, radius);
+    let model = ribbon::stretch(&frame, line, run, open, mouth, lit, radius);
     if model.mesh.positions.is_empty() {
         return None;
     }
@@ -362,17 +367,30 @@ pub fn gap_to_town(world: &World) -> Option<(usize, usize, f64, f64, f64)> {
     let route = world.routes.get(k)?;
     // The first point a piece of tarmac is actually LAID at, which is
     // `ribbon::stretch`'s own rule and not merely the first open point.
-    let first = route.open.windows(2).position(|o| o[0] && o[1])?;
-    let at = route.line[first];
+    let first = route
+        .mouth
+        .iter()
+        .position(|(t0, t1)| t1 > t0)
+        .filter(|k| *k + 1 < route.line.len())?;
+    // Where the tarmac actually STARTS, which is part way along its own
+    // piece wherever a road runs in to meet a town's paving.
+    let (t0, _) = route.mouth[first];
+    let at = route.line[first]
+        .lerp(route.line[first + 1], t0)
+        .normalize_or(route.line[first]);
     let town = world.towns.get(road.from)?;
     let nearest = town
         .pieces
         .iter()
         .map(|p| {
             let dir = (town.dir * radius + town.east * p.x + town.north * p.z).normalize();
-            dir.angle_between(at) * radius
+            // To the piece's own EDGE and not its middle: a street is
+            // `town::STREET` across, so a centre to centre distance
+            // reports half of one as a gap that is not there.
+            dir.angle_between(at) * radius - p.w.max(p.d) * 0.5
         })
-        .fold(f64::INFINITY, f64::min);
+        .fold(f64::INFINITY, f64::min)
+        .max(0.0);
     // And where the two ends actually stand, out of the town's own
     // middle, because a gap says nothing about which end is short: the
     // tarmac starting late and the paving stopping early look alike.

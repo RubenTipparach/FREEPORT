@@ -109,9 +109,9 @@ fn a_block_is_a_signed_distance_in_its_own_frame() {
     };
     assert_eq!(built.at(b.centre), 0.5);
     assert_eq!(built.at(DVec3::ZERO), 1.0);
-    assert_eq!(built.material(b.centre, 0.0), CONCRETE);
-    assert_eq!(built.material(DVec3::ZERO, 0.0), TERRAIN);
-    assert_eq!(ground.material(DVec3::ZERO, 0.0), TERRAIN);
+    assert_eq!(built.material(b.centre), CONCRETE);
+    assert_eq!(built.material(DVec3::ZERO), TERRAIN);
+    assert_eq!(ground.material(DVec3::ZERO), TERRAIN);
 }
 
 #[test]
@@ -520,61 +520,5 @@ fn the_slope_bound_holds_across_a_towns_own_outline() {
     assert!(
         worst <= bound,
         "the field climbs at {worst} across a town's outline against a bound of {bound}"
-    );
-}
-
-/// A road is PAINTED on ground too coarse to hold its own cutting, and
-/// on nothing else.
-///
-/// The tarmac is geometry of its own and that is the road wherever the
-/// terrain still carries the corridor it sits in. Past `PAINT_FROM` the
-/// mesher has no sample inside a 14 m corridor at all, draws the hill
-/// that was there before the road and puts the tarmac under it, so the
-/// road becomes a material on the ground's own triangles instead:
-/// continuous at every level by construction, because it IS the ground.
-#[test]
-fn a_road_is_painted_on_ground_too_coarse_to_carry_it() {
-    let radius = 40_000.0;
-    let (a, b) = (
-        DVec3::new(0.0, 1.0, 0.0),
-        DVec3::new(0.02, 1.0, 0.0).normalize(),
-    );
-    let mut planet = Planet {
-        radius,
-        relief: 100.0,
-        lumps: 8.0,
-        octaves: 6,
-        seed: 3,
-        ..Default::default()
-    };
-    let town = crate::town::Site::town(DVec3::Z, 0.0, 80.0, glam::DVec2::ZERO, 1);
-    planet.sites = vec![
-        crate::town::Site::arc((a, 10.0), (b, 12.0), crate::road::CORRIDOR),
-        town,
-    ]
-    .into();
-    let on = ((a + b) * 0.5).normalize() * radius;
-    // A COARSE mesh paints it, and the band is the cell wide.
-    assert_eq!(planet.material(on, 8.0), STREET, "a coarse chunk paints it");
-    // A FINE one does not: there the tarmac is its own geometry sitting
-    // in a corridor the mesher can still hold.
-    assert_eq!(
-        planet.material(on, 0.5),
-        TERRAIN,
-        "a fine chunk paints a road the ribbon is already drawing"
-    );
-    // And nothing else is painted: not the country beside it, and not a
-    // TOWN, whose streets are models of their own.
-    let (east, _) = crate::town::frame_at(((a + b) * 0.5).normalize());
-    let beside = (((a + b) * 0.5).normalize() * radius + east * 200.0).normalize() * radius;
-    assert_eq!(
-        planet.material(beside, 8.0),
-        TERRAIN,
-        "the country is not a road"
-    );
-    assert_eq!(
-        planet.material(DVec3::Z * radius, 8.0),
-        TERRAIN,
-        "a town's own ground is not a road"
     );
 }

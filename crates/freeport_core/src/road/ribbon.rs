@@ -119,6 +119,7 @@ pub fn stretch(
     line: &[DVec3],
     run: &[f64],
     open: &[bool],
+    mouth: &[(f64, f64)],
     lit: &[bool],
     radius: f64,
 ) -> Model {
@@ -146,8 +147,24 @@ pub fn stretch(
             along += run_m;
             continue;
         }
-        let (a, b) = (at(k), at(k + 1));
-        let (u, v) = (across(k), across(k + 1));
+        // How much of the piece is TARMAC: all of it in the country,
+        // and the part clear of a town's own paving where it runs in.
+        let (t0, t1) = mouth.get(k).copied().unwrap_or((0.0, 1.0));
+        if t1 <= t0 {
+            along += run_m;
+            continue;
+        }
+        let part = |t: f64| {
+            (
+                at(k).lerp(at(k + 1), t),
+                across(k).lerp(across(k + 1), t).normalize_or(across(k)),
+            )
+        };
+        let ((a, u), (b, v)) = (part(t0), part(t1));
+        // The dashes keep the phase of the WHOLE piece, so a road whose
+        // last piece starts part way along does not restart its
+        // markings at the junction.
+        let (from, laid) = (along + run_m * t0, (b - a).length());
         band(&mut m, (a, u), (b, v), (-HALF, HALF), 0.0, STREET);
         // The two shoulders, falling from the tarmac's edge into the
         // ground, so there is no step for the field to show through.
@@ -175,13 +192,13 @@ pub fn stretch(
                 PAINT,
             );
         }
-        dashes(&mut m, (a, u), (b, v), along, run_m);
+        dashes(&mut m, (a, u), (b, v), from, laid);
         // The LAMPS on the approach to a town, and none out in the
         // country: `road::lit` is the one place that is decided, and it
         // is the town's own site it is measured from, so a road is lit
         // where a town is near it and dark where nothing is.
         if lit.get(k).copied().unwrap_or(false) {
-            posts(&mut m, (a, u), (b, v), along, run_m);
+            posts(&mut m, (a, u), (b, v), from, laid);
         }
         along += run_m;
     }

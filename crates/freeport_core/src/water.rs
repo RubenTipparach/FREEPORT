@@ -53,7 +53,7 @@ impl Density for Water<'_> {
     /// inside the ground's rock it is buried and never drawn. The depth
     /// test settles the shoreline to the pixel, since the ground is drawn
     /// first.
-    fn material(&self, p: DVec3, _reach: f64) -> u8 {
+    fn material(&self, p: DVec3) -> u8 {
         let Some(dir) = p.try_normalize() else {
             return BURIED;
         };
@@ -191,13 +191,13 @@ mod tests {
         assert!(!water.has_water(low * (bed - 0.5)), "rock under it");
         assert!(!water.has_water(low * 61.0), "air over the level");
         assert!(!water.has_water(high * 59.5), "rock in a hill");
-        assert_eq!(water.material(low * 59.0, 0.0), SURFACE);
+        assert_eq!(water.material(low * 59.0), SURFACE);
         assert_eq!(
-            water.material(high * 61.0, 0.0),
+            water.material(high * 61.0),
             BURIED,
             "the sphere under a hill"
         );
-        assert_eq!(water.material(DVec3::ZERO, 0.0), BURIED);
+        assert_eq!(water.material(DVec3::ZERO), BURIED);
         let r = sea.radius;
         assert!(water.at(low * (r - 1.0)) > 0.0 && water.at(low * (r + 1.0)) < 0.0);
         assert_eq!(

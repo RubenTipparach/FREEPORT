@@ -544,6 +544,9 @@ pub fn waysides(
     crate::town::lay_all_from(&placed, big_r, sea, seed, towns.len())
 }
 
+mod reach;
+pub use reach::*;
+
 pub mod ribbon;
 
 #[cfg(test)]
@@ -771,94 +774,4 @@ fn smooth(mut run: Vec<f64>, gap: &[f64], dry: f64, mid: &[f64]) -> Vec<f64> {
         }
     }
     run
-}
-
-/// The SITES a road's corridor levels: one arc a piece, each cut to the
-/// ground its own two ends stand on.
-///
-/// `skip` is how near a town's own centre the corridor stops, and it is
-/// the town's own levelling AT THAT BEARING plus its skirt
-/// (`Site::level_r` and `field::site_skirt`): inside that the town's
-/// site wins at full weight and answers the town's level, so a corridor
-/// that reached further would lay its tarmac at the road's level over
-/// ground held at the town's, and one that stopped short of it would
-/// end in a field. Measured, tarmac stood 0.10 m off its own lift there;
-/// past the band it is 0.003. Consecutive arcs share an end and its level by
-/// construction, which is what lets the field's slope bound assume TWO
-/// overlapping skirts rather than however many roads meet at a hub.
-pub fn corridor(
-    road: &Road,
-    run: &[f64],
-    radius: f64,
-    towns: &crate::field::Sites,
-) -> Vec<crate::town::Site> {
-    let line = centreline(road, radius);
-    if run.len() != line.len() {
-        return Vec::new();
-    }
-    let open = open(&line, radius, towns);
-    line.windows(2)
-        .zip(run.windows(2))
-        .zip(open.windows(2))
-        .filter(|(_, o)| o[0] && o[1])
-        .map(|((d, h), _)| crate::town::Site::arc((d[0], h[0]), (d[1], h[1]), CORRIDOR))
-        .collect()
-}
-
-/// Which points of a road's centreline are OUT of every town's own
-/// levelling: one per point of `centreline`.
-///
-/// EVERY town and not only the two a road joins. `road::waysides` grows
-/// a village wherever a road has run a day's cart since the last one, so
-/// a road passes THROUGH settlements as well as ending at them, and a
-/// town's disc levels its ground to the town's level while a corridor
-/// ramps to the road's. Where the two overlap the field answers whichever
-/// it reaches first and the tarmac stands on the other: measured, 0.10 m
-/// off its own lift, which is a road stepping in and out of the ground
-/// at every village on it.
-///
-/// It is measured against the town's whole SITE BAND rather than its
-/// outline, because inside the band the town's site is what the field
-/// answers; and through `field::Sites`, the latitude index, because a
-/// body carries 1,084 settlements and a road 600 points, and the product
-/// of those two is not a loop worth writing.
-pub fn open(line: &[DVec3], radius: f64, towns: &crate::field::Sites) -> Vec<bool> {
-    let window = towns.window(radius);
-    line.iter()
-        .map(|d| {
-            !towns.near(*d, window).any(|site| {
-                // How far the town levels THIS WAY, which is its own
-                // outline and not the disc round it: measured against
-                // the widest a town reaches, a road out along the
-                // SQUEEZED axis stopped three hundred metres short of
-                // ground the town had never levelled, so the tarmac
-                // ended in a field.
-                let outer = site.level_r(*d) + crate::field::site_skirt(site);
-                (*d - site.nearest(*d).0).length() * radius <= outer
-            })
-        })
-        .collect()
-}
-
-/// How near a settlement a stretch of road has to pass to be LIT,
-/// metres.
-///
-/// The owner's own rule: lights along the stretches near a city and
-/// none out in the country, which is what a road actually is. A
-/// kilometre and a half is the approach to a town rather than the town
-/// itself, since a town's own site band ends a couple of hundred metres
-/// out and its streets are lit from there in.
-pub const LIT_NEAR: f64 = 1_500.0;
-
-/// Which points of a road's centreline are near enough a settlement to
-/// carry lamps: one per point of `centreline`.
-pub fn lit(line: &[DVec3], radius: f64, towns: &crate::field::Sites) -> Vec<bool> {
-    let window = towns.window(radius) + LIT_NEAR / radius;
-    line.iter()
-        .map(|d| {
-            towns
-                .near(*d, window)
-                .any(|site| (*d - site.nearest(*d).0).length() * radius <= LIT_NEAR)
-        })
-        .collect()
 }

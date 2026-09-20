@@ -51,6 +51,16 @@ pub(crate) struct Route {
     pub line: Vec<DVec3>,
     pub run: Vec<f64>,
     pub open: Vec<bool>,
+    /// Which points carry TARMAC, which is `open` and the run on into a
+    /// town as far as the town's own paving (`road::paved`). The
+    /// corridor is cut on `open` and the ribbon is laid on this, because
+    /// a road may not CUT a town's ground and must still reach it.
+    pub paved: Vec<bool>,
+    /// How much of each PIECE carries tarmac, a pair of parameters along
+    /// it: all of it in the country, and the part clear of a town's own
+    /// paving where a road runs in. One per piece, so one shorter than
+    /// the line.
+    pub mouth: Vec<(f64, f64)>,
     /// Which points are near enough a settlement to carry a lamp.
     pub lit: Vec<bool>,
     /// The sea's radius, which is what a vertex's height is measured off
@@ -278,10 +288,14 @@ pub(crate) fn build(args: &Args) -> World {
         let line = road::centreline(road, planet.radius);
         let open = road::open(&line, planet.radius, &discs);
         let lit = road::lit(&line, planet.radius, &discs);
+        let paved = road::paved(&line, planet.radius, &towns, &open);
+        let mouth = road::mouths(&line, planet.radius, &towns, &paved);
         routes.push(Route {
             line,
             run: run.clone(),
             open,
+            paved,
+            mouth,
             lit,
             sea: SEA,
         });

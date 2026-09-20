@@ -2497,49 +2497,62 @@ What the probes cost is the BAKE: 322.5 s against 99.7, four
 `surface_radius` marches a piece against one, and nothing at all
 afterwards, because what the atlas carries is the answer.
 
-**And past a few hundred metres the GROUND ITSELF is the road.** Riding
-the country is not enough on its own, and the straight down picture is
-what settled it: from 2.5 km up, where no crest can occlude anything, the
-road out of the port came back in three pieces with long gaps. Measured
-along the chord of every laid piece, the ground a coarse chunk draws
-stands **1.33 m over the tarmac at its worst** and -1.18 m at its median,
-so a road rides an embankment better than a metre up nearly everywhere
-and is under the country in a few places. The residual is terrain finer
-than the quarter points the survey probes, and chasing it with more
-probes is a losing race against a fractal.
+**And the highway RUNS IN and meets the town's own paving.** `road::open`
+stops at every town's levelling, because inside that the town's site
+answers the ground and a corridor there would lay its tarmac at the
+road's level over ground held at the town's. That is right for the FIELD
+and wrong for the GEOMETRY: measured on the port, it left the highway's
+first tarmac 169 m out with the town's own paving reaching 130 m on that
+bearing, **a 39 m ribbon of bare levelled ground** between the highway
+and the city.
 
-So `Planet::material` PAINTS the road on the ground's own triangles where
-the mesh is too coarse to carry the corridor. `Density::material` takes
-the sample's own `reach` now, which is the chunk's cell, and past
-`field::PAINT_FROM` (4 m of cell, about a few hundred metres out) a
-triangle whose middle falls within the band is `STREET`. It is
-continuous at every level by construction, because it IS the ground and
-there is nothing left to bury. The band is at least one CELL wide, which
-is the same deliberate lie `chart::blot` makes and for the same reason: a
-band narrower than a cell is tagged only where a triangle's middle
-happens to land in it, which is a dotted road rather than a road. At the
-finest level that paints it the band is the tarmac's own 5.5 m and the
-lie is nought.
+`road::paved` is the other half of `open` and the ribbon is laid on it:
+inside a town's levelling the ground is that town's flat LEVEL, and
+`survey` took the road's heights off the planet with the sites already
+in it, so the road's own profile there IS that level and tarmac laid on
+it lands exactly. What stops it is the town's OWN paving, `MEET` (half a
+metre) from the nearest piece any town laid: no threshold to tune and no
+bearing to get right, and where the two meet is where the streets
+actually are.
 
-**And the NEAR road is the ribbon with a small DEPTH BIAS.** Inside
-`PAINT_FROM` the terrain still has samples in the corridor and draws it,
-so the tarmac sits in its own cutting and is the road at its true width
-with its markings and its kerb; what it needs there is not clearance
-from a hill but from the two millimetres a dual contoured plane is held
-to and the centimetre a mitre stands proud at a bend. `Ground3d` carries
-TWO handles and one shader for that, the ground's and the tarmac's, the
-second identical but for `TARMAC_BIAS`. A constant bias buys clearance
-that grows as the SQUARE of the distance under an infinite reverse Z
-projection, so a value that is nothing underfoot is centimetres a few
-hundred metres out, which is all the near road needs. It is small on
-purpose: a bias big enough to beat a HILL would draw the road through
-it, and a hill occluding a road is what a hill is for.
+**Clear of the paving is not enough on its own, and a town's middle is
+what says so.** A town's centre is often a PLAZA, so "clear of every
+piece" is true there and the first cut laid the highway straight through
+the town to its middle. A road approaches from OUTSIDE, so what it may
+pave is ground further out than its own nearest piece and never a gap
+inside the built up part.
 
-And because there are two of them, `rebase_origin` writes the body's
-centre into EVERY terrain material rather than into the streamer's own
-handle, which is what `sky.rs` already does with the sun and the air: one
-of the two left behind at a rebase would be a road mapped and fogged in
-the frame before.
+**And a mask per STATION cannot close the last of it**, because the
+stations are `PIECE` (85 m) apart and a town's paving ends where it
+ends: the first station clear of it lands up to a piece further out.
+`road::mouths` is how much of each piece carries tarmac, a pair of
+parameters found by bisecting the same test along it, and `ribbon::
+stretch` lays the piece between them. The rest of the ribbon needed
+nothing, because every part of it is already built from a point and an
+across, so a piece that starts part way along is the same arithmetic
+with a lerped end; the dashes keep the phase of the WHOLE piece, so a
+road whose last piece starts part way along does not restart its
+markings at the junction.
+
+Measured on the port: the first tarmac stands **169 m out and 39 m from
+the paving, then 127 m and 9 m once the run in was allowed, then 114 m
+and 1 m once the piece could start part way along**, edge to edge. On
+the fixture's six highways the worst is 0.51 m, which is `MEET`
+(`a_highway_runs_in_and_meets_the_towns_own_paving`).
+
+**What was tried and taken OUT: painting the road on the terrain's own
+triangles.** `Density::material` was given the sample's own cell so
+`Planet::material` could answer `STREET` on ground too coarse to hold a
+corridor, which is continuous at every level by construction because it
+IS the ground. It is also a per TRIANGLE tag, so the band is at least
+one cell wide, and the arithmetic says what that looks like: a cell is
+about a sixty fourth of its own distance and a metre subtends about
+640 / (0.414 d) pixels, so a painted road is a constant **24 px across
+at every range** against a true 3.4 px at 2.5 km, with sawtooth edges
+where the triangles fall. The owner's word for it was that painting it
+on the geometry vertices is a horrible idea, and the picture agrees. If
+it comes back it comes back as a TEXTURE or a decal, not as a material
+byte on a vertex.
 
 **A road may FILL and a town may not**, and that is the one rule the two
 do not share. A town's level is the lowest its own survey found, so a site

@@ -360,7 +360,8 @@ fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
             continue;
         }
         let frame = ribbon::frame(l, r, planet.radius);
-        let m = ribbon::stretch(&frame, l, r, o, t, planet.radius);
+        let whole = vec![(0.0, 1.0); l.len().saturating_sub(1)];
+        let m = ribbon::stretch(&frame, l, r, o, &whole, t, planet.radius);
         assert!(m.solids.is_empty(), "tarmac collides with nothing");
         // The road SURFACE alone: a lamp post stands seven metres up and
         // is not tarmac, which is what the material byte is for.
@@ -415,7 +416,8 @@ fn lit_run(radius: f64, points: usize) -> (crate::model::Model, Vec<DVec3>) {
         .collect();
     let (run, open, on) = (vec![0.0; points], vec![true; points], vec![true; points]);
     let frame = ribbon::frame(&line, &run, radius);
-    let model = ribbon::stretch(&frame, &line, &run, &open, &on, radius);
+    let whole = vec![(0.0, 1.0); points.saturating_sub(1)];
+    let model = ribbon::stretch(&frame, &line, &run, &open, &whole, &on, radius);
     let local = line
         .iter()
         .map(|d| frame.local(*d * (radius + ribbon::LIFT)))
@@ -567,5 +569,66 @@ fn a_road_rides_over_the_ground_rather_than_cutting_into_it() {
     assert!(
         cut < 1.0,
         "a road cuts {cut:.2} m into its own ground, which a coarse chunk cannot hold and the terrain then closes over"
+    );
+}
+
+/// A highway's tarmac RUNS IN and meets the town's own paving.
+///
+/// `road::open` stops at every town's levelling, because inside that the
+/// town's site answers the ground and a corridor there would lay its
+/// tarmac at the road's level over ground held at the town's. That is
+/// right for the FIELD and wrong for the geometry: measured on the port,
+/// it left the highway's first tarmac 169 m out with the town's own
+/// paving reaching 130 m on that bearing, a 39 m ribbon of bare levelled
+/// ground between the highway and the city.
+///
+/// `paved` runs the tarmac on in, because the ground inside a town's
+/// levelling is that town's flat LEVEL and the survey already took the
+/// road's heights off the planet with the sites in it. `mouths` then
+/// lays the last piece from where it leaves the paving rather than from
+/// its own station, which is what closes the last of it: the stations
+/// are 85 m apart and the paving ends where it ends.
+#[test]
+fn a_highway_runs_in_and_meets_the_towns_own_paving() {
+    let (planet, sea, towns) = world();
+    let levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
+    let mut worst = 0.0f64;
+    let mut seen = 0;
+    for road in roads.iter().take(6) {
+        let line = centreline(road, planet.radius);
+        let open = crate::road::open(&line, planet.radius, &discs);
+        let paved = crate::road::paved(&line, planet.radius, &towns, &open);
+        let mouth = crate::road::mouths(&line, planet.radius, &towns, &paved);
+        let Some(k) = mouth.iter().position(|(a, b)| b > a) else {
+            continue;
+        };
+        if k + 1 >= line.len() {
+            continue;
+        }
+        let at = line[k].lerp(line[k + 1], mouth[k].0).normalize_or(line[k]);
+        let town = &towns[road.from];
+        let gap = town
+            .pieces
+            .iter()
+            .map(|p| {
+                let dir =
+                    (town.dir * planet.radius + town.east * p.x + town.north * p.z).normalize();
+                dir.angle_between(at) * planet.radius - p.w.max(p.d) * 0.5
+            })
+            .fold(f64::INFINITY, f64::min)
+            .max(0.0);
+        worst = worst.max(gap);
+        seen += 1;
+    }
+    println!("{seen} highways end {worst:.2} m from their town's own paving at the worst");
+    assert!(seen > 0, "no road laid any tarmac at all");
+    assert!(
+        worst < 2.0,
+        "a highway ends {worst:.2} m short of the paving it is supposed to join"
     );
 }
