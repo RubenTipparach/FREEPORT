@@ -55,6 +55,12 @@ pub enum Swing {
     /// Swings about its own x axis, this far out of phase with the left
     /// leg, which is what makes the right one the other way about.
     Leg { phase: f64 },
+    /// ROLLS about its own x axis at the rate the ground goes past it:
+    /// `along / radius` radians, which is what a wheel that is not
+    /// sliding does by definition. Measured in METRES like the gait, so
+    /// a car that has stopped has stopped its wheels too and nothing
+    /// here needs a clock.
+    Wheel { radius: f64 },
 }
 
 /// One part of a figure: a mesh, where its pivot stands, and what the
@@ -175,6 +181,57 @@ pub const CAR_WIDE: f64 = 1.6;
 /// A town car: one part, because nothing on it has to move. A wheel that
 /// turned would be a second entity each for a thing a metre and a half
 /// long seen from a pavement, and the wheels are in the body.
+/// How many segments a wheel's tread is drawn in.
+///
+/// Twelve, which is `model::Kind::Tower`'s own drum: at the size a car
+/// is ever drawn the silhouette is what says ROUND, and past a dozen
+/// facets an eye cannot tell the difference from a circle while every
+/// one of them is four more triangles on a thing there are dozens of.
+const SPOKES: usize = 12;
+
+/// A WHEEL: a drum of `SPOKES` facets about its own lateral axis, with
+/// a cap at each end, centred on the origin so the part it becomes
+/// rolls about its own middle.
+///
+/// Round and not a box, which is what it was: `m.trim` with a half
+/// extent of `(0.11, 0.33, 0.33)` is a cube, and a car on four cubes is
+/// what the owner read off a picture. It is a part of its OWN now
+/// rather than geometry welded into the body, because a wheel that is
+/// in the body's mesh cannot turn: a car was one `Part` and `Swing` had
+/// nothing that rolls.
+fn wheel(radius: f64, half_wide: f64, material: u8) -> DcMesh {
+    let mut m = Model::new();
+    let step = std::f64::consts::TAU / SPOKES as f64;
+    for k in 0..SPOKES {
+        let (a, b) = (k as f64 * step, (k + 1) as f64 * step);
+        let rim = |t: f64, x: f64| DVec3::new(x, radius * t.cos(), radius * t.sin());
+        // The tread, wound so its outward normal points away from the
+        // axle rather than into it.
+        m.quad(
+            rim(a, -half_wide),
+            rim(a, half_wide),
+            rim(b, half_wide),
+            rim(b, -half_wide),
+            material,
+        );
+        // The two caps, each wound the other way up so both face out.
+        let hub = |x: f64| DVec3::new(x, 0.0, 0.0);
+        m.tri(
+            hub(half_wide),
+            rim(a, half_wide),
+            rim(b, half_wide),
+            material,
+        );
+        m.tri(
+            hub(-half_wide),
+            rim(b, -half_wide),
+            rim(a, -half_wide),
+            material,
+        );
+    }
+    m.mesh
+}
+
 pub fn car() -> Figure {
     let mut m = Model::new();
     let half = CAR_LONG / 2.0;
@@ -199,14 +256,6 @@ pub fn car() -> Figure {
         PAINT,
     );
     for side in [-1.0, 1.0] {
-        for end in [-1.0, 1.0] {
-            m.trim(
-                DVec3::new(side * (wide - 0.11), end * 1.32, 0.33),
-                DVec3::new(0.11, 0.33, 0.33),
-                0.0,
-                TYRE,
-            );
-        }
         m.trim(
             DVec3::new(side * 0.52, half - 0.05, 0.68),
             DVec3::new(0.17, 0.05, 0.09),
@@ -220,18 +269,58 @@ pub fn car() -> Figure {
             TAIL_LAMP,
         );
     }
-    Figure {
-        parts: vec![Part {
-            mesh: m.mesh,
-            at: DVec3::ZERO,
-            swing: Swing::Still,
-        }],
+    // The four WHEELS, each its own part so it can roll, and standing
+    // PROUD of the body rather than flush with it. At `wide - 0.11` a
+    // box wheel's outer face was coplanar with the body's own side, and
+    // two coplanar faces are a depth fight: that is the flicker on the
+    // wheels the owner photographed, and it is geometry rather than
+    // anything a bias would have cured.
+    let mut parts = vec![Part {
+        mesh: m.mesh,
+        at: DVec3::ZERO,
+        swing: Swing::Still,
+    }];
+    for side in [-1.0, 1.0] {
+        for end in [-1.0, 1.0] {
+            parts.push(Part {
+                mesh: wheel(TYRE_R, TYRE_W, TYRE),
+                at: DVec3::new(side * (wide + PROUD - TYRE_W), end * 1.32, TYRE_R),
+                swing: Swing::Wheel { radius: TYRE_R },
+            });
+        }
     }
+    Figure { parts }
 }
 
 /// How far a leg has swung, radians about its own hip, `along` metres
 /// into a walk. One STRIDE is half a cycle, because a stride is one leg
 /// and a cycle is both.
+/// The wheels: how big they are, how wide, and how far the outer face
+/// stands out of the body's own side.
+///
+/// `TYRE_R` is the radius the car's own `foot` is measured at, so the
+/// axle stands one radius over the ground and the tread touches it.
+/// `PROUD` is small and its only job is that no face of a wheel is
+/// COPLANAR with a face of the body, which is what a depth fight is: the
+/// pivot is `wide + PROUD - TYRE_W`, so the OUTER FACE stands `PROUD` of
+/// the body's side and the rest of the wheel is under the body, which is
+/// where a wheel goes. Written `wide + TYRE_W - PROUD` it is the whole
+/// wheel outboard of the body, and the first render of that is a car on
+/// four outriggers.
+pub const TYRE_R: f64 = 0.33;
+pub const TYRE_W: f64 = 0.11;
+const PROUD: f64 = 0.02;
+
+/// How far a WHEEL has rolled, radians about its own axle, `along`
+/// metres into a drive. A wheel that is not sliding turns `along /
+/// radius`, which is the whole of it and needs no clock.
+pub fn roll(along: f64, radius: f64) -> f64 {
+    if radius.abs() < f64::EPSILON {
+        return 0.0;
+    }
+    along / radius
+}
+
 pub fn gait(along: f64, phase: f64) -> f64 {
     SWING * (along / crate::traffic::STRIDE * std::f64::consts::PI + phase).sin()
 }
@@ -298,10 +387,40 @@ mod tests {
     /// A car is one part, it is the size a car is, and its wheels are on
     /// the ground.
     #[test]
-    fn a_car_is_one_part_of_the_size_a_car_is() {
+    fn a_car_is_the_size_a_car_is_and_rolls_on_four_round_wheels() {
         let f = car();
-        assert_eq!(f.parts.len(), 1);
-        let p = &f.parts[0].mesh.positions;
+        // A body and FOUR WHEELS, because a wheel welded into the body's
+        // own mesh cannot turn: the car was one part and the owner's
+        // word for what that looked like was that the wheels are square
+        // and do not spin.
+        assert_eq!(f.parts.len(), 5);
+        for p in &f.parts[1..] {
+            assert!(
+                matches!(p.swing, Swing::Wheel { .. }),
+                "a car's part past the body is not a wheel"
+            );
+            // ROUND: every vertex of a tread stands its own radius off
+            // the axle, which a box does not.
+            let off: Vec<f64> = p
+                .mesh
+                .positions
+                .iter()
+                .map(|q| (q[1] as f64).hypot(q[2] as f64))
+                .filter(|r| *r > 1e-6)
+                .collect();
+            let (lo, hi) = (
+                off.iter().copied().fold(f64::MAX, f64::min),
+                off.iter().copied().fold(f64::MIN, f64::max),
+            );
+            println!("a wheel's rim runs {lo:.3} to {hi:.3} m off its axle");
+            assert!(
+                (hi - lo).abs() < 1e-6,
+                "a wheel is not round: {lo:.3} to {hi:.3}"
+            );
+            assert!((hi - TYRE_R).abs() < 1e-6);
+        }
+        // The body's own span, which is what a car has to fit a lane in.
+        let p: Vec<[f32; 3]> = f.parts[0].mesh.positions.clone();
         let span = |k: usize| {
             let lo = p.iter().map(|q| q[k] as f64).fold(f64::MAX, f64::min);
             let hi = p.iter().map(|q| q[k] as f64).fold(f64::MIN, f64::max);
@@ -318,8 +437,20 @@ mod tests {
         );
         assert!((x1 - x0 - CAR_WIDE).abs() < 1e-5);
         assert!((y1 - y0 - CAR_LONG).abs() < 1e-5);
-        assert!(z0.abs() < 1e-5, "a wheel stands at {z0:.3} m");
-        assert!((1.2..1.6).contains(&(z1 - z0)));
+        // The BODY is clear of the ground now and the WHEELS are what
+        // stand on it, which is what taking them out of its mesh means.
+        assert!(
+            z0 > 0.2,
+            "the body's floor is at {z0:.3} m, under the axles"
+        );
+        for p in &f.parts[1..] {
+            let stands = p.at.z - TYRE_R;
+            assert!(
+                stands.abs() < 1e-9,
+                "a wheel's tread stands {stands:.3} m off the ground"
+            );
+        }
+        assert!((1.2..1.6).contains(&(z1 - z0 + TYRE_R)));
         // And it fits the street it drives on, which is what the lane
         // offset in `traffic` was picked against.
         assert!(CAR_WIDE <= crate::traffic::HALF_STREET * 2.0);

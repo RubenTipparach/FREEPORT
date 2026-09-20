@@ -48,6 +48,27 @@ pub(crate) struct Atlas {
     /// own size is `town::size_of` of this and its rank, so a change to
     /// how sizes are spread needs no rebake of where they stand.
     pub town_radius: f64,
+    /// How finely the corridor's centreline is refined, metres
+    /// (`road::PIECE`).
+    ///
+    /// It is in the FINGERPRINT because the atlas keeps the corridor's
+    /// heights and derives its directions, so a file baked at another
+    /// spacing has a run of the wrong length for every road on the body
+    /// and `road::corridor` hands back nothing: roads on the chart, a
+    /// route a car can follow, and no ground under any of it and no
+    /// tarmac on it. Refused instead, the body is planned here and the
+    /// log says why, which is what every other field in this fingerprint
+    /// is for. An atlas from before there was a piece parses as nought
+    /// and is refused, which is the same answer.
+    #[serde(default)]
+    pub piece: f64,
+    /// How high the baked profile stands over the ground it was routed
+    /// on (`road::EMBANK`). It is IN the heights the file stores, so a
+    /// file baked at another value is every road on the body at the
+    /// wrong level with its tarmac drawn over that, and no other field
+    /// here would have said so.
+    #[serde(default)]
+    pub embank: f64,
     /// The sea this plan was made against. A town qualifies on how high
     /// it stands over the sea and a road is refused into it, so a plan
     /// made at one level is a set of cities underwater at another.
@@ -83,7 +104,7 @@ const PROBE_TOL: f64 = 1.0;
 /// is checking.
 fn probe(planet: &Planet) -> Vec<f64> {
     let bare = Planet {
-        sites: Vec::new(),
+        sites: Vec::new().into(),
         ..planet.clone()
     };
     let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
@@ -126,6 +147,19 @@ pub(crate) struct Line {
     pub to: usize,
     /// x, y, z and the level over the mean radius.
     pub line: Vec<[f64; 4]>,
+    /// The GROUND under the road's refined centreline, metres over the
+    /// mean radius, one a point of `road::centreline`.
+    ///
+    /// Only the heights, because the DIRECTIONS are derivable: the
+    /// centreline is a slerp between the waypoints at a spacing both
+    /// sides compute from `road::PIECE`. Written out whole it would be
+    /// 17 MB of this file; as heights alone it is 1.5. An atlas from
+    /// before there was a corridor parses with none, and `road::corridor`
+    /// refuses a run whose length does not match the line it derives, so
+    /// an old file is a body with roads and no ground under them rather
+    /// than a body with its roads in the wrong place.
+    #[serde(default)]
+    pub run: Vec<f64>,
 }
 
 impl Atlas {
@@ -148,6 +182,8 @@ impl Atlas {
             radius: planet.radius,
             octaves: planet.octaves,
             town_radius,
+            piece: road::PIECE,
+            embank: road::EMBANK,
             sea,
             probe: probe(planet),
             towns: towns
@@ -165,6 +201,18 @@ impl Atlas {
                     from: r.from,
                     to: r.to,
                     line: r.line.iter().map(|(d, h)| [d.x, d.y, d.z, *h]).collect(),
+                    // Surveyed against the LEVELLED planet, the one the
+                    // roads were routed over, so a corridor arriving at
+                    // a town meets the level that town cut rather than
+                    // the hill that stood there before it.
+                    // Rounded to the CENTIMETRE, which is four times
+                    // finer than the half metre the finest terrain cell
+                    // is and takes 2 MB off this file: serde writes an
+                    // f64 in full and there are 190,168 of them.
+                    run: road::survey(&levelled, r, sea - planet.radius + road::DRY)
+                        .iter()
+                        .map(|h| (h * 100.0).round() / 100.0)
+                        .collect(),
                 })
                 .collect(),
         }
@@ -209,6 +257,12 @@ impl Atlas {
             .collect()
     }
 
+    /// The GROUND under each road's refined centreline, in the same order
+    /// as `roads`. Empty for a road an old atlas carries no survey for.
+    pub fn runs(&self) -> Vec<Vec<f64>> {
+        self.roads.iter().map(|r| r.run.clone()).collect()
+    }
+
     /// Whether this atlas is the plan of the body asked for. A plan from
     /// another seed or another size is not a stale plan, it is a plan of a
     /// different world.
@@ -219,6 +273,7 @@ impl Atlas {
             && (self.radius - planet.radius).abs() < 1.0
             && (self.sea - sea).abs() < 1.0
             && (self.town_radius - town_radius).abs() < 1e-6
+            && (self.piece - road::PIECE).abs() < 1e-6
             && self.probe.len() == PROBES
             && self
                 .probe
@@ -273,7 +328,11 @@ pub(crate) fn write(atlas: &Atlas, path: &Path) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let text = serde_json::to_string_pretty(atlas).map_err(std::io::Error::other)?;
+    // COMPACT, because this file is 760,000 numbers and pretty printing
+    // puts each on its own line under three levels of indentation: 13
+    // bytes of whitespace a number, which is 7.3 MB of a 13.9 MB file
+    // and nothing a reader could have read anyway. It is 6.6 MB.
+    let text = serde_json::to_string(atlas).map_err(std::io::Error::other)?;
     std::fs::write(path, text)
 }
 

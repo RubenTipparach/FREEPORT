@@ -67,11 +67,27 @@ fn towns_differ_in_size_and_are_not_discs() {
         sizes[0] >= sizes[1..].iter().cloned().fold(0.0, f64::max),
         "the port is not the biggest town on the body"
     );
+    // What makes towns differ is the SIZE LAW, so the law is what this
+    // asks: `coastal` falls from one at the shore to `SMALLEST` inland
+    // over the body's own habitable window. Reading the spread off
+    // whichever handful of sites a thousand metre fixture happens to
+    // accept is a pin on a coincidence, and it failed the day the site
+    // test legitimately got stricter: the six that qualified then all
+    // stood within a few metres of one another, so their sizes were all
+    // one number and the law was untouched.
+    let (low, high) = super::window(&planet);
+    let (shore, inland) = (
+        size_of(biggest, low, &planet, 0, 7),
+        size_of(biggest, high, &planet, 0, 7),
+    );
+    println!("a town on the shore is {shore:.0} m and one at {high:.0} m up is {inland:.0}");
     assert!(
-        sizes[0] > sizes[sizes.len() - 1] * 1.4,
-        "the biggest town is {:.0} m and the smallest {:.0}, which is one size",
-        sizes[0],
-        sizes[sizes.len() - 1]
+        shore > inland * 1.4,
+        "a shore town is {shore:.0} m and an inland one {inland:.0}: one size"
+    );
+    assert!(
+        sizes[0] >= sizes[sizes.len() - 1],
+        "the towns are not sorted biggest first"
     );
     // And the outline is RAGGED: the furthest lot from the middle
     // stands well past the nearest edge of the town.
@@ -116,7 +132,12 @@ fn a_town_has_towers_in_the_middle_and_suburbs_outside() {
     // out along the stretch is nearer the middle than the same distance
     // across it, and a test that measured the plain radius was reading
     // downtown as suburb wherever the town is long.
-    let zone = |l: &Lot| Zone::of(demand(l.x, l.z, t.radius, t.along, town_seed(7, t.index)));
+    // At the lot's own BLOCK, which is what `plot` asked: a lot is
+    // jittered off its block's middle by up to half a pitch, so asking
+    // the demand where the building ended up reads a lot near a zone
+    // boundary on the wrong side of it.
+    let block = |v: f64| (v / PITCH).round() * PITCH;
+    let zone = |l: &Lot| Zone::of(demand(block(l.x), block(l.z), t.radius, t.along, t.seed));
     let inner: Vec<&Lot> = t.lots.iter().filter(|l| zone(l) == Zone::Core).collect();
     let outer: Vec<&Lot> = t.lots.iter().filter(|l| zone(l) == Zone::Suburb).collect();
     assert!(
@@ -169,7 +190,7 @@ fn planet() -> Planet {
         overhang: 1.0,
         ledge: 8.0,
         seed: 7,
-        sites: vec![],
+        sites: vec![].into(),
     }
 }
 
@@ -233,8 +254,17 @@ fn towns_stand_on_level_land_over_the_sea_and_apart() {
     let p = f.world(DVec3::new(1.0, 2.0, 3.0));
     assert!((f.local(p) - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-9);
     assert!((f.local(f.dir * f.base)).length() < 1e-9);
+    // The site levels the town's own OUTLINE and an apron past it, not
+    // one nominal radius: everything past that used to stand on bare
+    // relief with its base at the town's level, which is a suburb
+    // buried to its eaves.
     let site = site_of(t);
-    assert_eq!(site.r, 2.0 * t.radius + APRON);
+    assert_eq!(site.r, t.radius * super::OUTLINE + APRON);
+    let (inner, _) = crate::field::site_band(&site);
+    assert!(
+        inner >= t.lots.iter().map(|l| l.x.hypot(l.z)).fold(0.0, f64::max),
+        "the site levels {inner:.0} m and the town reaches further"
+    );
 }
 
 #[test]
@@ -272,4 +302,402 @@ fn a_levelled_site_flattens_the_ground_to_the_towns_height() {
         (ground_at(&planet, far, 950.0, 1050.0) - ground_at(&bare, far, 950.0, 1050.0)).abs()
             < 1e-9
     );
+}
+
+/// How far a lot's own base stands from the ground the mesher will
+/// actually contour under it. This is the number the owner read off a
+/// picture of a suburb sunk to its eaves.
+fn sink(planet: &Planet, sea: f64, town: &Town) -> (f64, f64, f64) {
+    let mut here = planet.clone();
+    here.sites = vec![site_of(town)].into();
+    let (mut worst_in, mut worst_out, mut count) = (0.0f64, 0.0f64, 0.0f64);
+    for lot in &town.lots {
+        let f = lot_frame(planet.radius, town, lot.x, lot.z);
+        let ground = here.surface(f.dir).0 + planet.radius;
+        let gap = ground - f.base;
+        worst_in = worst_in.max(gap);
+        worst_out = worst_out.max(-gap);
+        count += 1.0;
+    }
+    let _ = sea;
+    (worst_in, worst_out, count)
+}
+
+/// A LOT STANDS ON ITS OWN GROUND, everywhere in the town.
+///
+/// The owner's picture: a suburb with its houses buried to the eaves and
+/// only their roofs and their driveways showing. Three numbers written
+/// against a town of ONE radius while a town actually reaches `OUTLINE`
+/// (2.06) of it: the survey `site_ground` walks out to 1.05 radii, the
+/// site `site_of` builds levels at full weight only to `site.r * 0.5`,
+/// and the lots `lay` emits go out to 2.06. Everything past about half a
+/// town stood on BARE RELIEF with its base at the town's own level, and
+/// the level is the LOWEST of the survey, so the relief out there is
+/// higher and the building is under it.
+#[test]
+fn a_lot_stands_on_its_own_ground_and_is_not_buried() {
+    let planet = planet();
+    let sea = 996.0;
+    let towns = plan(&planet, sea, 60.0, 4, 7);
+    assert!(!towns.is_empty());
+    for town in &towns {
+        let (into, over, lots) = sink(&planet, sea, town);
+        println!(
+            "town {} of {:.0} m: {lots:.0} lots, worst {into:.2} m INTO the ground, {over:.2} m over it",
+            town.index, town.radius
+        );
+        assert!(
+            into < 0.35,
+            "town {} buries a building {into:.2} m into the ground",
+            town.index
+        );
+        assert!(
+            over < 0.35,
+            "town {} floats a building {over:.2} m over the ground",
+            town.index
+        );
+    }
+}
+
+/// Whether a point stands on a town's own paving.
+fn on_paving(town: &Town, x: f64, z: f64) -> bool {
+    town.pieces
+        .iter()
+        .any(|p| (x - p.x).abs() <= p.w * 0.5 + 1e-6 && (z - p.z).abs() <= p.d * 0.5 + 1e-6)
+}
+
+/// EVERY HOUSE IS ON THE ROAD NETWORK, and the network is ONE network.
+///
+/// The owner's picture: a suburb whose houses each stood at an isolated
+/// rectangle of tarmac joining nothing. A suburb block fronted the side
+/// FACING the middle of town, and the street on that side runs ACROSS
+/// the way home: a house far out along east fronted west, which paves a
+/// north south street, and nothing on it leads west. `faces` fronts the
+/// side the road home is actually on now and `home_run` paves that road
+/// all the way in.
+#[test]
+fn every_house_is_on_one_connected_road_network() {
+    let planet = planet();
+    let towns = plan(&planet, 996.0, 60.0, 3, 7);
+    assert!(!towns.is_empty());
+    for town in &towns {
+        // Flood the paving from the middle of town, on a grid half a
+        // street wide so a step can never hop a gap.
+        let step = STREET * 0.5;
+        let n = ((town.radius * super::OUTLINE + PITCH) / step).ceil() as i64 + 2;
+        let wide = (2 * n + 1) as usize;
+        let cell = |x: f64, z: f64| {
+            let (i, j) = ((x / step).round() as i64, (z / step).round() as i64);
+            ((-n..=n).contains(&i) && (-n..=n).contains(&j))
+                .then(|| (i + n) as usize * wide + (j + n) as usize)
+        };
+        let mut seen = vec![false; wide * wide];
+        // The seed is whichever paved cell is nearest the middle.
+        let mut start = None;
+        for j in -n..=n {
+            for i in -n..=n {
+                let (x, z) = (i as f64 * step, j as f64 * step);
+                if !on_paving(town, x, z) {
+                    continue;
+                }
+                let d = x.hypot(z);
+                if start.is_none_or(|(_, _, best)| d < best) {
+                    start = Some((i, j, d));
+                }
+            }
+        }
+        let Some((si, sj, _)) = start else {
+            panic!("town {} paved nothing at all", town.index)
+        };
+        let mut stack = vec![(si, sj)];
+        if let Some(k) = cell(si as f64 * step, sj as f64 * step) {
+            seen[k] = true;
+        }
+        while let Some((i, j)) = stack.pop() {
+            for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (a, b) = (i + di, j + dj);
+                let (x, z) = (a as f64 * step, b as f64 * step);
+                let Some(k) = cell(x, z) else { continue };
+                if seen[k] || !on_paving(town, x, z) {
+                    continue;
+                }
+                seen[k] = true;
+                stack.push((a, b));
+            }
+        }
+        // Every lot has reachable paving within half a block of its own
+        // edge, which is what having a road at your door means.
+        let mut stranded = 0;
+        for lot in &town.lots {
+            let near = (-3..=3)
+                .flat_map(|a| (-3..=3).map(move |b| (a, b)))
+                .any(|(a, b)| {
+                    let (x, z) = (lot.x + a as f64 * step, lot.z + b as f64 * step);
+                    cell(x, z).is_some_and(|k| seen[k])
+                });
+            stranded += usize::from(!near);
+        }
+        println!(
+            "town {} of {:.0} m: {} lots, {} pieces, {stranded} stranded",
+            town.index,
+            town.radius,
+            town.lots.len(),
+            town.pieces.len()
+        );
+        assert_eq!(stranded, 0, "town {} strands {stranded} houses", town.index);
+    }
+}
+
+/// A round site is an ARC OF NO LENGTH, which is what lets one type
+/// serve a town's disc and a road's corridor.
+#[test]
+fn a_round_site_is_an_arc_of_no_length() {
+    let site = Site::round(DVec3::new(0.3, 0.4, 0.87).normalize(), 42.0, 80.0);
+    for probe in [DVec3::X, DVec3::Y, DVec3::Z, site.dir, -site.dir] {
+        assert_eq!(site.along(probe), 0.0, "a disc has nowhere to be along");
+        let (at, h) = site.nearest(probe);
+        assert_eq!(at, site.dir);
+        assert_eq!(h, 42.0);
+    }
+    assert_eq!(site.reach(), 0.0);
+    assert_eq!(site.grade(1_000_000.0), 0.0);
+}
+
+/// An arc's nearest point is ON it, its ends CLAMP, and its level ramps
+/// from one to the other: what a corridor cut along a road is made of.
+#[test]
+fn an_arcs_nearest_point_is_on_it_and_its_level_ramps() {
+    let radius = 1_000_000.0;
+    let a = DVec3::new(0.0, 0.1, 1.0).normalize();
+    // A kilometre along, which is a road's own piece at this scale.
+    let b = {
+        let (east, _) = frame_at(a);
+        (a + east * (4_000.0 / radius)).normalize()
+    };
+    let site = Site::arc((a, 100.0), (b, 140.0), 12.0);
+    assert!(
+        (site.along(a) - 0.0).abs() < 1e-9,
+        "the start is nought along"
+    );
+    assert!((site.along(b) - 1.0).abs() < 1e-9, "the end is one along");
+    // The middle of the arc is half along and half way up the ramp.
+    let mid = (a + b).normalize();
+    assert!((site.along(mid) - 0.5).abs() < 1e-6, "{}", site.along(mid));
+    let (at, h) = site.nearest(mid);
+    assert!(at.distance(mid) < 1e-9, "the middle is already on the arc");
+    assert!((h - 120.0).abs() < 1e-6, "the level ramps: {h}");
+    // Off to one side, the nearest point is still ON the arc and the
+    // level is the one at that point rather than at either end.
+    let (_, north) = frame_at(mid);
+    let off = (mid + north * (30.0 / radius)).normalize();
+    let (at, h) = site.nearest(off);
+    let pole = a.cross(b).normalize();
+    assert!(
+        at.dot(pole).abs() < 1e-9,
+        "the nearest point is on the circle"
+    );
+    assert!((h - 120.0).abs() < 0.5, "abreast of the middle: {h}");
+    // And past either end it CLAMPS, so a corridor does not reach round
+    // the planet.
+    let (east, _) = frame_at(a);
+    let behind = (a - east * (9_000.0 / radius)).normalize();
+    assert_eq!(site.along(behind), 0.0);
+    assert_eq!(site.nearest(behind), (a, 100.0));
+    let beyond = (b + east * (9_000.0 / radius)).normalize();
+    assert_eq!(site.along(beyond), 1.0);
+    assert_eq!(site.nearest(beyond), (b, 140.0));
+    // Its grade is what it climbs: 40 m over 4 km.
+    assert!(
+        (site.grade(radius) - 0.01).abs() < 1e-4,
+        "{}",
+        site.grade(radius)
+    );
+}
+
+/// A town's own outline never moves faster than the bound its skirt is
+/// widened by, which is what keeps the planet's slope bound where it was.
+///
+/// The bound is what `field::site_skirt` reads, so a town whose edge
+/// swung faster than this would fade to the relief over a band steeper
+/// than `Planet::steepest` allows, and a chunk with surface in it would
+/// be ruled empty: a hole in the world. Measured over every bearing of a
+/// thousand towns of every size, stretch and seed rather than reasoned
+/// about, because the lobes are noise and a bound on noise reasoned from
+/// its own gradient is four times what it ever reaches.
+#[test]
+fn the_outline_never_moves_faster_than_the_bound() {
+    const STEP: f64 = 1e-5;
+    let mut worst = 0.0f64;
+    for k in 0..1000u32 {
+        let seed = super::town_seed(7, k as usize);
+        let radius = 20.0 + (k % 23) as f64 * 11.0;
+        let turn = k as f64 * 0.7;
+        let along = if k % 5 == 0 {
+            DVec2::ZERO
+        } else {
+            DVec2::new(turn.cos(), turn.sin())
+        };
+        let bearing = |a: f64| DVec2::new(a.cos(), a.sin());
+        for t in 0..2000 {
+            let a = t as f64 / 2000.0 * std::f64::consts::TAU;
+            let here = super::edge(bearing(a), radius, along, seed);
+            let next = super::edge(bearing(a + STEP), radius, along, seed);
+            // Metres of EDGE per metre of ARC: turning the bearing by
+            // `STEP` walks the outline's own point by `edge * STEP`.
+            worst = worst.max((next - here).abs() / (STEP * here.min(next)));
+        }
+    }
+    println!("the outline moves at most {worst:.3} m of edge a metre of arc");
+    assert!(
+        worst < super::WOBBLE,
+        "an outline moving at {worst:.3} a metre needs a skirt wider than WOBBLE {:.3} allows",
+        super::WOBBLE
+    );
+}
+
+/// A town's levelled ground FOLLOWS its outline, and every lot stands
+/// on it.
+///
+/// The first cut levelled `radius * OUTLINE + APRON` right round every
+/// town, which is a DISC, and a town is not one: it is stretched by
+/// `STRETCH` along its own shore and squeezed by the same across it, so
+/// along the squeezed axis the disc reaches more than twice as far as
+/// the town ever does. What that leaves on the ground is a flat apron
+/// wider than the town standing on it, which is what the owner read off
+/// the climb as big flat discs.
+///
+/// Both halves matter and only together: levelling less than the town
+/// is a building on bare relief with its base at the town's level, which
+/// is the buried suburb this file already has a test for.
+#[test]
+fn a_towns_plateau_follows_its_outline_and_not_a_disc() {
+    let planet = planet();
+    let towns = plan(&planet, 996.0, 60.0, 3, 7);
+    let t = &towns[0];
+    let mut here = planet.clone();
+    here.sites = vec![site_of(t)].into();
+    let (east, north) = frame_at(t.dir);
+    let at = |x: f64, z: f64| (t.dir * planet.radius + east * x + north * z).normalize();
+    // `keep` is how much of the bare relief is left at a direction, so
+    // nought is ground the site levels outright.
+    for l in &t.lots {
+        let keep = here.surface_blend(at(l.x, l.z)).1;
+        assert!(
+            keep <= 0.0,
+            "a lot {:.0} m out stands on {keep:.3} of bare relief",
+            l.x.hypot(l.z)
+        );
+    }
+    let disc = t.radius * OUTLINE + APRON;
+    let (mut flat, mut all) = (0.0f64, 0.0f64);
+    let (mut widest, mut narrowest) = (0.0f64, f64::MAX);
+    const RINGS: usize = 200;
+    const BEARINGS: usize = 360;
+    for k in 0..BEARINGS {
+        let a = k as f64 / BEARINGS as f64 * std::f64::consts::TAU;
+        let mut reach = 0.0f64;
+        for i in 0..RINGS {
+            // Weighted by `r`, because a ring's own area is `r dr dth`.
+            let r = (i as f64 + 0.5) / RINGS as f64 * disc;
+            all += r;
+            if here.surface_blend(at(r * a.cos(), r * a.sin())).1 <= 0.0 {
+                flat += r;
+                reach = r;
+            }
+        }
+        widest = widest.max(reach);
+        narrowest = narrowest.min(reach);
+    }
+    let share = flat / all;
+    println!(
+        "the port levels {:.0}% of the disc's own area, {narrowest:.0} m out at its narrowest and {widest:.0} at its widest, against a disc of {disc:.0}",
+        share * 100.0
+    );
+    assert!(
+        share < 0.7,
+        "the plateau is {:.0}% of the disc: still a disc",
+        share * 100.0
+    );
+    assert!(
+        widest > narrowest * 1.5,
+        "the plateau runs {widest:.0} m one way and {narrowest:.0} the other: a disc"
+    );
+}
+
+/// How far a building's own SOLID boxes reach from the middle of its lot,
+/// metres east and north: what stands in the road, rather than what hangs
+/// over it. An eave, a parapet and a pane are `Model::trim` and a body
+/// passes through them, which is this crate's own rule about what a box
+/// is for.
+fn footprint(m: &crate::model::Model) -> DVec2 {
+    let mut half = DVec2::ZERO;
+    for s in &m.solids {
+        let a = s.axes();
+        let (x, y) = (
+            (a[0].x * s.half.x).abs() + (a[1].x * s.half.y).abs(),
+            (a[0].y * s.half.x).abs() + (a[1].y * s.half.y).abs(),
+        );
+        half.x = half.x.max(s.centre.x.abs() + x);
+        half.y = half.y.max(s.centre.y.abs() + y);
+    }
+    half
+}
+
+/// How far a lot's footprint reaches INTO the paving a town laid, metres:
+/// the penetration of two boxes, which is the smaller of their two
+/// overlaps, and nought where the building clears every piece.
+fn into_street(town: &Town, lot: &Lot, half: DVec2) -> f64 {
+    let mut worst: f64 = 0.0;
+    for p in &town.pieces {
+        let dx = (half.x + p.w * 0.5) - (lot.x - p.x).abs();
+        let dz = (half.y + p.d * 0.5) - (lot.z - p.z).abs();
+        if dx > 0.0 && dz > 0.0 {
+            worst = worst.max(dx.min(dz));
+        }
+    }
+    worst
+}
+
+/// A wall is one oriented box that is DRAWN and COLLIDED, so a wall
+/// standing on a pavement is a wall a body walks into in the middle of
+/// the road. A block is `BLOCK` across and the street's own inner kerb is
+/// exactly `BLOCK / 2` from its middle, so what a building may cover is
+/// its own block and nothing past it.
+#[test]
+fn a_building_stands_on_its_own_block_and_never_in_the_street() {
+    let planet = planet();
+    let towns = plan(&planet, 996.0, 60.0, 4, 7);
+    assert!(!towns.is_empty());
+    for town in &towns {
+        let (mut worst, mut where_) = (0.0f64, None);
+        let mut over = 0usize;
+        for lot in &town.lots {
+            let m = crate::model::building(
+                lot.kind,
+                super::BLOCK,
+                super::BLOCK,
+                lot.storeys,
+                town.seed ^ lot.id,
+            );
+            let into = into_street(town, lot, footprint(&m));
+            if into > 0.01 {
+                over += 1;
+            }
+            if into > worst {
+                worst = into;
+                where_ = Some((lot.kind, lot.x, lot.z));
+            }
+        }
+        println!(
+            "town {} of {:.0} m: {} lots, {over} in the street, worst {worst:.2} m at {where_:?}",
+            town.index,
+            town.radius,
+            town.lots.len()
+        );
+        assert!(
+            worst <= 0.01,
+            "town {} stands a building {worst:.2} m into its own street",
+            town.index
+        );
+    }
 }

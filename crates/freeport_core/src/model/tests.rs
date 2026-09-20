@@ -366,7 +366,7 @@ fn a_towns_fabric_is_one_mesh_in_its_own_frame() {
         overhang: 0.0,
         ledge: 0.0,
         seed: 11,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
     assert!(!towns.is_empty(), "the ball grew no town");
@@ -469,7 +469,7 @@ fn a_walker_stands_on_the_kerb_and_steps_up_onto_it() {
         overhang: 0.0,
         ledge: 0.0,
         seed: 11,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
     let town = towns[0].clone();
@@ -535,7 +535,7 @@ fn a_walker_walks_a_street_and_is_stopped_by_a_wall() {
         overhang: 0.0,
         ledge: 0.0,
         seed: 11,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
     let town = towns[0].clone();
@@ -575,4 +575,96 @@ fn a_walker_walks_a_street_and_is_stopped_by_a_wall() {
         lot.kind.name()
     );
     assert!(w.on_ground, "the walker is airborne against a wall");
+}
+
+/// A town is not ONE GREY. Every house is wood, brick or vinyl and every
+/// office is brick, concrete, marble, glass or stone, which is the
+/// owner's own list; and a building's skin is a function of its SEED
+/// alone, so a town built as the eye arrives and dropped as it leaves is
+/// the same town when you drive back into it.
+#[test]
+fn a_house_and_an_office_are_built_of_different_trades() {
+    use crate::field::{BRICK, CONCRETE, CURTAIN, MARBLE, STONE, VINYL, WOOD};
+    let houses = [WOOD, BRICK, VINYL];
+    let offices = [BRICK, CONCRETE, MARBLE, CURTAIN, STONE];
+    let mut seen: Vec<(Kind, Vec<u8>)> = Vec::new();
+    for kind in Kind::all() {
+        let mut had: Vec<u8> = Vec::new();
+        for seed in 0..600u32 {
+            let skin = kind.skin(seed);
+            assert_eq!(
+                skin,
+                kind.skin(seed),
+                "{} is not a function of its seed",
+                kind.name()
+            );
+            let allowed: &[u8] = match kind {
+                Kind::House | Kind::Bungalow => &houses,
+                Kind::Block | Kind::Tower => &offices,
+                Kind::Hangar => &[CONCRETE],
+            };
+            assert!(
+                allowed.contains(&skin),
+                "a {} came out of trade {skin}",
+                kind.name()
+            );
+            if !had.contains(&skin) {
+                had.push(skin);
+            }
+        }
+        had.sort_unstable();
+        seen.push((kind, had));
+    }
+    for (kind, had) in &seen {
+        let want = match kind {
+            Kind::House | Kind::Bungalow => 3,
+            Kind::Block | Kind::Tower => 5,
+            Kind::Hangar => 1,
+        };
+        assert_eq!(
+            had.len(),
+            want,
+            "{} used {had:?} of {want} trades",
+            kind.name()
+        );
+    }
+    // And a house is never built of an office's stone, which is the
+    // whole of what the two lists are for.
+    let house = &seen
+        .iter()
+        .find(|(k, _)| *k == Kind::House)
+        .expect("a house")
+        .1;
+    assert!(!house.contains(&MARBLE) && !house.contains(&STONE) && !house.contains(&CURTAIN));
+}
+
+/// The walls wear the skin and the FLOOR does not: a slab is poured
+/// concrete whatever is hung off the outside of the building.
+#[test]
+fn a_walls_skin_is_on_the_wall_and_not_on_the_floor() {
+    use crate::field::{CONCRETE, WOOD};
+    // A seed whose house comes out timber, found rather than assumed.
+    let seed = (0..600u32)
+        .find(|s| Kind::House.skin(*s) == WOOD)
+        .expect("some seed builds a timber house");
+    let m = building(Kind::House, BLOCK, BLOCK, 1, seed);
+    let mut wall = 0;
+    let mut floor = 0;
+    for b in &m.solids {
+        if b.material == WOOD {
+            wall += 1;
+        }
+        if b.material == CONCRETE {
+            floor += 1;
+            // The one concrete box in a house is its slab, which is the
+            // widest thing in it and sits at the bottom.
+            assert!(
+                b.half.z < 0.5,
+                "a concrete box {} high is not a floor",
+                b.half.z
+            );
+        }
+    }
+    assert!(wall >= 4, "{wall} timber boxes is not four walls");
+    assert_eq!(floor, 1, "{floor} concrete boxes in a timber house");
 }

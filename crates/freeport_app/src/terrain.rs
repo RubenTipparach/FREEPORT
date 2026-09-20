@@ -16,6 +16,28 @@ use bevy::math::DVec3;
 use bevy::mesh::PrimitiveTopology;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+
+/// The terrain material the ground and everything built on it wear, and
+/// the one a ROAD wears, kept as a resource so a town raised mid flight
+/// can reach them.
+///
+/// TWO handles and one shader: the tarmac's is the same material with a
+/// DEPTH BIAS on it, because a road drawn in the corridor the mesher cut
+/// for it is a surface a hair over another surface, and a hair is what a
+/// depth buffer argues about. It is SMALL on purpose. A constant bias
+/// buys clearance that grows as the square of the distance under an
+/// infinite reverse Z projection, so a value that is nothing underfoot
+/// is centimetres a few hundred metres out, which is all the near road
+/// needs: past that the ground PAINTS the road itself
+/// (`field::PAINT_FROM`). A bias big enough to beat a HILL would show
+/// the road through it, and a hill occluding a road is what a hill is
+/// for.
+#[derive(bevy::prelude::Resource)]
+pub struct Ground3d {
+    pub ground: Handle<TerrainMaterial>,
+    pub tarmac: Handle<TerrainMaterial>,
+}
+
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
 use freeport_core::biome::{self, Climate};
@@ -24,13 +46,29 @@ use freeport_core::town::Frame;
 use std::path::PathBuf;
 
 /// The sets, in the order the shader's layers name them.
-pub const SETS: [&str; 6] = [
+///
+/// The last five are what a BUILDING is made of, and they are the
+/// owner's own list of trades: a house out of wood, red brick or vinyl
+/// and an office out of red brick, concrete, marble, glass or stone
+/// blocks. They cost one array layer each and NOT a draw call, a shader
+/// or a material, because `terrain.wgsl` picks its layer off the
+/// triangle's own material byte and skips every set whose weight is
+/// nought (`tri` returns early and `textureSampleGrad` carries the
+/// derivative past the branch), so a wall of brick pays for brick and
+/// nothing else on the list.
+pub const SETS: [&str; 12] = [
     "basalt",
     "dunes",
     "grass",
     "concrete",
     "hull_plate",
     "asphalt",
+    "wood",
+    "brick",
+    "vinyl",
+    "marble",
+    "stone",
+    "glazing",
 ];
 /// Metres a tile, on the ground and on concrete. The ground's is what a
 /// strand of the hay is long: at four metres a blade was a metre and the
@@ -43,6 +81,12 @@ pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, Terrain>;
 /// Town frames the shader may be handed: a fixed uniform array, because a
 /// shader has no other kind.
 pub const FRAMES: usize = 16;
+
+/// How hard a town's lamps and its lit windows burn at full night, as a
+/// share of what they were drawn at before there was a night: one. By
+/// day they go to nought, because a pane glowing at noon reads as a
+/// shading defect and a street lamp lit at noon reads as a waste.
+const LAMPS_AT_NIGHT: f32 = 1.0;
 
 /// What the shader is handed beyond the standard material.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
@@ -77,6 +121,15 @@ pub struct Terrain {
     /// Body surface colour; w blends from the authored texture colours.
     #[uniform(100)]
     pub palette: Vec4,
+    /// Where the sun is in the world frame, xyz, and how hard a lamp
+    /// burns at full night in w. `sky::drift_sky` hands it down, and the
+    /// fragment measures the terminator on the body's own RADIAL by
+    /// transcribing `freeport_core::day::daylight`, which is what
+    /// `distant.wgsl` and `water.wgsl` already do: one rule in the core
+    /// and three transcriptions, so the night falls in one place on the
+    /// ground, on the sea and on the body seen from orbit.
+    #[uniform(100)]
+    pub sun: Vec4,
     #[texture(101, dimension = "2d_array")]
     #[sampler(102)]
     pub albedo: Handle<Image>,
@@ -264,12 +317,20 @@ pub fn terrain_maps(images: &mut Assets<Image>) -> [Handle<Image>; 3] {
     ]
 }
 
+/// How hard the tarmac is pushed toward the camera in the depth buffer.
+///
+/// Small, because the near road only has to beat the two millimetres a
+/// dual contoured plane is held to and the centimetre a corridor's own
+/// mitre stands proud at a bend, and because a bias that beat a HILL
+/// would draw the road through it.
+const TARMAC_BIAS: f32 = 8.0;
+
 pub fn terrain_material(
     images: &mut Assets<Image>,
     materials: &mut Assets<TerrainMaterial>,
     frames: &[Frame],
     sea: f32,
-) -> Handle<TerrainMaterial> {
+) -> Ground3d {
     let dir = textures_dir();
     match &dir {
         Some(d) => info!("terrain sets from {}", d.display()),
@@ -277,10 +338,11 @@ pub fn terrain_material(
     }
     let (lanes, count) = frame_lanes(frames);
     let [albedo, normal, orm] = terrain_maps(images);
-    materials.add(ExtendedMaterial {
+    let of = |bias: f32| ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE,
             perceptual_roughness: 0.9,
+            depth_bias: bias,
             ..default()
         },
         extension: Terrain {
@@ -290,11 +352,16 @@ pub fn terrain_material(
             fog: Vec4::ZERO,
             haze: Vec4::ZERO,
             palette: Vec4::ZERO,
-            albedo,
-            normal,
-            orm,
+            sun: Vec4::new(0.0, 1.0, 0.0, LAMPS_AT_NIGHT),
+            albedo: albedo.clone(),
+            normal: normal.clone(),
+            orm: orm.clone(),
         },
-    })
+    };
+    Ground3d {
+        ground: materials.add(of(0.0)),
+        tarmac: materials.add(of(TARMAC_BIAS)),
+    }
 }
 
 /// A corner whose normal is further than this from its triangle's face is

@@ -137,6 +137,49 @@ pub struct Rider {
     ride: Ride,
 }
 
+/// A WHEEL of a car: its radius, so it can be turned by how far the car
+/// it hangs off has actually come.
+///
+/// A component and a system of its own rather than a `Ride`, because
+/// there are two things that move a car (the rails and a driver) and a
+/// wheel does not care which: what it reads is `Travelled` on its own
+/// parent. One rule and one code path, which is this project's own
+/// answer to two callers that would otherwise each pose their own.
+#[derive(Component, Clone, Copy)]
+pub struct Wheel {
+    pub radius: f32,
+    pub at: Vec3,
+}
+
+/// How far the thing this is on has come, metres. Written by whatever
+/// moves it and read by `spin_wheels`.
+#[derive(Component, Clone, Copy, Default)]
+pub struct Travelled(pub f64);
+
+/// Turn every wheel by the ground that has gone past it.
+///
+/// `figure::roll` is `along / radius`, which is what a wheel that is not
+/// sliding does by definition, and it is measured in METRES like the
+/// gait, so a car that has stopped has stopped its wheels and nothing
+/// here needs a clock of its own.
+pub fn spin_wheels(
+    cars: Query<(&Travelled, &Children)>,
+    mut wheels: Query<(&Wheel, &mut Transform)>,
+) {
+    for (gone, kids) in &cars {
+        for kid in kids.iter() {
+            let Ok((wheel, mut tf)) = wheels.get_mut(kid) else {
+                continue;
+            };
+            tf.translation = wheel.at;
+            tf.rotation = Quat::from_rotation_x(freeport_core::figure::roll(
+                gone.0,
+                wheel.radius as f64,
+            ) as f32);
+        }
+    }
+}
+
 /// What the gait does to this entity.
 enum Ride {
     /// The whole figure: it takes the world place and the heading.
@@ -158,6 +201,8 @@ pub struct Crowds {
     folk: Vec<[Handle<Mesh>; 3]>,
     /// Per tint: the car, less its lamps.
     cars: Vec<Handle<Mesh>>,
+    /// The four wheels, one mesh each with its pivot and its radius.
+    wheels: Vec<(Handle<Mesh>, Vec3, f32)>,
     /// The lamps of a car, a mesh and a material a KIND, which take no
     /// tint and are shared.
     lamps: [(Handle<Mesh>, Handle<StandardMaterial>); LAMPS.len()],
@@ -190,9 +235,15 @@ impl Crowds {
         here: DVec3,
         reach: f64,
         now: f64,
+        built: &[usize],
     ) -> Vec<((usize, usize), usize, DVec3, DVec3)> {
         let mut out = Vec::new();
         for (t, (town, traffic)) in self.towns.iter().enumerate() {
+            // Only a BUILT town has cars on it, for the same reason it
+            // has townsmen: a car driving a street nobody laid.
+            if built.binary_search(&t).is_err() {
+                continue;
+            }
             for (a, agent) in traffic.agents.iter().enumerate() {
                 if agent.kind != Kind::Car {
                     continue;
@@ -221,7 +272,7 @@ impl Crowds {
         tint: usize,
         transform: Transform,
         marker: impl Component,
-    ) {
+    ) -> Entity {
         let mut car = commands.spawn((
             Mesh3d(self.cars[tint].clone()),
             MeshMaterial3d(self.paint.clone()),
@@ -236,6 +287,18 @@ impl Crowds {
                 bevy::light::NotShadowCaster,
             ));
         }
+        for (mesh, at, radius) in &self.wheels {
+            car.with_child((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(self.paint.clone()),
+                Transform::from_translation(*at),
+                Wheel {
+                    radius: *radius,
+                    at: *at,
+                },
+            ));
+        }
+        car.id()
     }
 
     /// Whether these crowds belong to the body that is active.
@@ -288,6 +351,16 @@ pub fn turn_out(
         cars: (0..TINTS)
             .map(|k| meshes.add(to_mesh(&car.parts[0].mesh, k, |m| !LAMPS.contains(&m))))
             .collect(),
+        wheels: car.parts[1..]
+            .iter()
+            .map(|p| {
+                let r = match p.swing {
+                    figure::Swing::Wheel { radius } => radius as f32,
+                    _ => 0.0,
+                };
+                (meshes.add(to_mesh(&p.mesh, 0, |_| true)), p.at.as_vec3(), r)
+            })
+            .collect(),
         // The emissive is the PALETTE's own row times the kind's glow, so
         // the COLOUR of a lamp is written once and its BRIGHTNESS once:
         // the first cut spelled the head lamp's warm white out a second
@@ -308,7 +381,7 @@ pub fn turn_out(
         }),
         legs: std::array::from_fn(|k| match person.parts[k + 1].swing {
             figure::Swing::Leg { phase } => (person.parts[k + 1].at.as_vec3(), phase),
-            figure::Swing::Still => (Vec3::ZERO, 0.0),
+            _ => (Vec3::ZERO, 0.0),
         }),
         paint: materials.add(StandardMaterial {
             base_color: Color::WHITE,
@@ -391,6 +464,7 @@ pub fn drive_traffic(
     here: Here,
     crowds: Res<Crowds>,
     thefts: Res<crate::drive::Thefts>,
+    fabric: Res<crate::world::Fabric>,
     mut riding: Query<(Entity, &Rider, &mut Transform)>,
 ) {
     let (eye, frame, ground, time, planets) = (
@@ -426,7 +500,19 @@ pub fn drive_traffic(
     // have got to, which is a car jumping across the street the moment
     // its driver walks away from it.
     let stolen = thefts.stolen();
-    let want = near(&crowds, eye, centre, radius, now, &have, &stolen);
+    let built = fabric.standing();
+    let want = near(
+        &crowds,
+        eye,
+        centre,
+        radius,
+        now,
+        Sets {
+            out: &have,
+            stolen: &stolen,
+            built: &built,
+        },
+    );
     for (e, rider, mut tf) in &mut riding {
         let key = (rider.town, rider.agent);
         if want.binary_search(&key).is_err() {
@@ -441,6 +527,8 @@ pub fn drive_traffic(
                 let (at, turn) = pose(town, radius, traffic, rider.agent, now);
                 tf.translation = frame.0.local(WorldPos(centre + at));
                 tf.rotation = turn;
+                let spot = traffic.at(&traffic.agents[rider.agent], now);
+                commands.entity(e).insert(Travelled(spot.along));
             }
             Ride::Limb { phase, at } => {
                 let spot = traffic.at(&traffic.agents[rider.agent], now);
@@ -460,18 +548,35 @@ pub fn drive_traffic(
 /// Which agents are near enough to be worth an entity: the nearest
 /// `MOST_FOLK` and `MOST_CARS` within `REACH`, sorted so a lookup is a
 /// binary search.
+/// The three sorted sets `near` reads: who is already out, which agents
+/// have been STOLEN and so are off the rails for good, and which towns
+/// are BUILT. One thing, because they are all "what the world already
+/// decided" and three more arguments took this over Bevy's own limit.
+struct Sets<'a> {
+    out: &'a [(usize, usize)],
+    stolen: &'a [(usize, usize)],
+    built: &'a [usize],
+}
+
 fn near(
     crowds: &Crowds,
     eye: &Eye,
     centre: DVec3,
     radius: f64,
     now: f64,
-    out: &[(usize, usize)],
-    stolen: &[(usize, usize)],
+    sets: Sets<'_>,
 ) -> Vec<(usize, usize)> {
+    let (out, stolen, built) = (sets.out, sets.stolen, sets.built);
     let mut folk: Vec<(f64, usize, usize)> = Vec::new();
     let mut cars: Vec<(f64, usize, usize)> = Vec::new();
     for (t, (town, traffic)) in crowds.towns.iter().enumerate() {
+        // Nobody is out on a town nobody has BUILT: a townsman walking a
+        // street that has not been laid stands on a bare plateau. The
+        // built set follows the eye (`city::stream`), so this is asked
+        // every frame rather than baked in at startup.
+        if built.binary_search(&t).is_err() {
+            continue;
+        }
         // A whole TOWN first, because on foot the eye is inside one of
         // them and every other is a hundred kilometres off: this is the
         // chunk rule (`Planet::around`) at the crowd's own scale.
@@ -540,7 +645,9 @@ fn spawn(
         ride,
     };
     match agent.kind {
-        Kind::Car => crowds.spawn_car(commands, tint, transform, rider(Ride::Whole)),
+        Kind::Car => {
+            crowds.spawn_car(commands, tint, transform, rider(Ride::Whole));
+        }
         Kind::Foot => {
             let mut body = commands.spawn((
                 Mesh3d(crowds.folk[tint][0].clone()),

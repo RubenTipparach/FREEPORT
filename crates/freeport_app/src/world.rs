@@ -15,42 +15,158 @@ use bevy::prelude::*;
 use freeport_core::dc::DcMesh;
 use freeport_core::field::{Block, Built, Density, Planet};
 use freeport_core::model;
-use freeport_core::road::Road;
+use freeport_core::road::{self, Road};
 use freeport_core::town::{self, lot_frame, Frame, Town};
 use freeport_core::walker::Bounds;
 use freeport_core::water::{Sea, Water};
 use std::sync::Arc;
 use std::time::Instant;
 
-/// A town's boxes, contiguous in `World::blocks`, and the box round all of
-/// them, so a walker far from every town tests one box a town and never a
-/// building.
-#[derive(Clone, Debug)]
-pub(crate) struct Group {
-    pub lo: DVec3,
-    pub hi: DVec3,
-    pub range: std::ops::Range<usize>,
-}
-
 /// The field the harness stands on: the planet, what is built on it, and
 /// where the walker may look for the ground.
 #[derive(Clone)]
 pub(crate) struct World {
     pub planet: Planet,
-    /// Every box every model was drawn from, a town at a time.
-    pub blocks: Vec<Block>,
-    pub groups: Vec<Group>,
-    /// Every lamp in them, in the world frame, with its reach.
-    pub lamps: Vec<(DVec3, f64)>,
     pub towns: Vec<Town>,
-    /// The ones of them whose buildings are actually BUILT, which is the
-    /// only ground a crowd is turned out on: a townsman walking a street
-    /// nobody has laid the buildings of stands on a bare plateau.
-    pub built: Vec<Town>,
     /// The roads joining them, as the lines the atlas holds.
     pub roads: Vec<Road>,
+    /// What each of those roads is on the GROUND, in the same order.
+    pub routes: Vec<Route>,
     pub bounds: Bounds,
     pub sea: Sea,
+}
+
+/// A road's own GROUND: its refined centreline, the level the corridor
+/// was cut to under each point, and which of those points are outside
+/// every town's own levelling.
+///
+/// One struct and not three vectors beside each other, because the three
+/// are indexed together at every caller and a fourth would be the fourth
+/// place to get an index wrong. The CENTRELINE is kept rather than
+/// derived per stretch: it is a slerp off the atlas's waypoints and
+/// 190,168 of them are 4.5 MB, against recomputing a whole road's worth
+/// every time one stretch of it is laid.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Route {
+    pub line: Vec<DVec3>,
+    pub run: Vec<f64>,
+    pub open: Vec<bool>,
+    /// Which points are near enough a settlement to carry a lamp.
+    pub lit: Vec<bool>,
+    /// How many points at each END of the line are the SLIP that joins
+    /// the highway to that town's own streets, head first.
+    ///
+    /// It is what lets the harness measure the junction and a camera
+    /// frame it: without it the route's head is the crossing, so a walk
+    /// in from there starts ON the paving and reports nought however
+    /// much bare ground the road really ends in, which is the same
+    /// tautology `road::clear` and `MEET` were measured through twice.
+    pub slip: (usize, usize),
+    /// The sea's radius, which is what a vertex's height is measured off
+    /// for the shore band the ground shader reads.
+    pub sea: f64,
+}
+
+/// One BUILT town: the boxes its models were drawn from, the lamps in
+/// them and the entity drawing it.
+///
+/// Per town rather than one flat list with ranges into it, because what
+/// is built STREAMS: a town comes into range as you drive and another
+/// leaves, and a range into a shared vector cannot be taken out of the
+/// middle without moving every range after it.
+pub(crate) struct Raised {
+    /// Which of `World::towns` this is, which never moves.
+    pub town: usize,
+    pub blocks: Vec<Block>,
+    pub bounds: (DVec3, DVec3),
+    pub lamps: Vec<(DVec3, f64)>,
+    pub entity: Entity,
+}
+
+/// What is BUILT on the world right now.
+///
+/// It is not part of `World` because `World` is behind an `Arc` the
+/// mesher's workers hold: the PLANET never changes (every town on the
+/// body levels its own ground from the first frame, whether or not
+/// anybody has built it), and the buildings come and go with the eye.
+/// One BUILT stretch of road: which it is and the lamps on it. It
+/// carries no boxes, because tarmac stops nothing and a lamp post only
+/// draws, and no entity, because the entity carries `roads::Paved` and
+/// the query IS the record of what is standing.
+pub(crate) struct Verge {
+    pub which: (usize, usize),
+    /// Each lamp's own index ALONG THE ROAD, where it is and how far it
+    /// throws. The index is along the road and not along the stretch,
+    /// because a stretch streams and an index into one would name a
+    /// different lamp the moment a neighbour arrived.
+    pub lamps: Vec<(usize, DVec3, f64)>,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct Fabric {
+    pub towns: Vec<Raised>,
+    /// The stretches of road standing, which carry lamps of their own on
+    /// the approaches to a town.
+    pub verges: Vec<Verge>,
+}
+
+/// The GROUND and what is BUILT on it: one thing, because what a body
+/// stands on is one question and asking it as two arguments took three
+/// systems over Bevy's own parameter limit.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Surface<'w> {
+    pub ground: Res<'w, Ground>,
+    pub fabric: Res<'w, Fabric>,
+}
+
+impl Surface<'_> {
+    /// What a body within `reach` of a point stands on.
+    pub fn underfoot(&self, p: DVec3, reach: f64) -> Built<'_> {
+        self.fabric.underfoot(&self.ground.0.planet, p, reach)
+    }
+
+    /// The world the ground belongs to.
+    pub fn world(&self) -> &World {
+        &self.ground.0
+    }
+
+    /// Where that world's centre is.
+    pub fn centre(&self) -> DVec3 {
+        self.ground.1
+    }
+}
+
+impl Fabric {
+    /// The field within `reach` of a point: the ground and the boxes of
+    /// whatever is built near it, which is what makes a wall a wall to
+    /// the body that meets it.
+    pub fn underfoot<'a>(&'a self, planet: &'a Planet, p: DVec3, reach: f64) -> Built<'a> {
+        let (lo, hi) = (p - DVec3::splat(reach), p + DVec3::splat(reach));
+        let mut blocks = Vec::new();
+        for t in &self.towns {
+            if !(t.bounds.0.cmple(hi).all() && t.bounds.1.cmpge(lo).all()) {
+                continue;
+            }
+            for b in &t.blocks {
+                let (blo, bhi) = b.bounds();
+                if blo.cmple(hi).all() && bhi.cmpge(lo).all() {
+                    blocks.push(b);
+                }
+            }
+        }
+        Built {
+            ground: planet,
+            blocks,
+        }
+    }
+
+    /// Which planned towns are built, sorted, so a wanted set and a
+    /// standing set can be compared.
+    pub fn standing(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = self.towns.iter().map(|t| t.town).collect();
+        out.sort_unstable();
+        out
+    }
 }
 
 /// A town's geometry, ready to draw: one mesh in the town's own frame and
@@ -62,40 +178,12 @@ pub(crate) struct TownMesh {
 }
 
 impl World {
-    /// What a walker within `reach` of `p` stands on: the ground, and the
-    /// boxes of whatever is built near enough to be met.
-    pub fn underfoot(&self, p: DVec3, reach: f64) -> Built<'_> {
-        self.field_near(p, reach)
-    }
-
     /// What a CHUNK is contoured on: the planet alone. A building is a
     /// model and not a brush, so nothing built is in the field the mesher
     /// sees, and a chunk under a city costs exactly what a chunk in the
     /// wilderness does.
     pub fn ground(&self) -> Built<'_> {
         Built::bare(&self.planet)
-    }
-
-    /// The field within `reach` of a point: the ground and the boxes near
-    /// it, which is what makes a wall a wall to the body that meets it.
-    pub fn field_near(&self, p: DVec3, reach: f64) -> Built<'_> {
-        let (lo, hi) = (p - DVec3::splat(reach), p + DVec3::splat(reach));
-        let mut blocks = Vec::new();
-        for g in &self.groups {
-            if !(g.lo.cmple(hi).all() && g.hi.cmpge(lo).all()) {
-                continue;
-            }
-            for b in &self.blocks[g.range.clone()] {
-                let (blo, bhi) = b.bounds();
-                if blo.cmple(hi).all() && bhi.cmpge(lo).all() {
-                    blocks.push(b);
-                }
-            }
-        }
-        Built {
-            ground: &self.planet,
-            blocks,
-        }
     }
 
     /// The sea on that ground.
@@ -123,7 +211,7 @@ pub(crate) fn home_planet(octaves: u32) -> Planet {
         overhang: 3.0,
         ledge: 12.0,
         seed: SEED,
-        sites: vec![],
+        sites: vec![].into(),
     }
 }
 
@@ -161,7 +249,7 @@ pub(crate) fn bake_atlas(args: &Args) {
 
 /// Build it: the planet, its towns, the roads between them, and the
 /// models standing in them.
-pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
+pub(crate) fn build(args: &Args) -> World {
     let t0 = Instant::now();
     let mut planet = home_planet(args.octaves);
     // The BAKED plan if there is one, which is the point of baking it:
@@ -170,44 +258,77 @@ pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
     // that never changes. Planning here is the fallback, so a checkout
     // nobody has baked still runs and says so.
     let baked = crate::atlas::load(HOME, &planet, SEA, TOWN_RADIUS);
-    let (towns, roads) = match &baked {
-        Some(a) => (a.towns(), a.roads()),
+    let (towns, roads, runs) = match &baked {
+        Some(a) => (a.towns(), a.roads(), a.runs()),
         None => {
             warn!(
                 "no atlas for {HOME}: planning it here, which takes seconds.                  `--bake-atlas` writes one and this becomes a file read."
             );
             let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
-            (towns, Vec::new())
+            (towns, Vec::new(), Vec::new())
         }
     };
-    planet.sites = towns.iter().map(town::site_of).collect();
+    // The ground a town levels and the CORRIDOR a road is cut along, in
+    // one list, because the field reads one list. Both are planet wide
+    // from the first frame for the same reason: a chunk is meshed once,
+    // so ground that a road will stand on has to be levelled before the
+    // chunk over it is contoured, and `field::Sites` is the index that
+    // makes a body carrying hundreds of thousands of them cost a chunk
+    // what a body carrying eight towns did.
+    // The towns' own discs first, as an INDEX, because the corridors are
+    // cut against them: a road ends at a town and passes through the
+    // villages it grew, and inside a town's levelling the ground is the
+    // town's to hold and its streets are the town's to pave.
+    let discs: freeport_core::field::Sites = towns.iter().map(town::site_of).collect();
+    let mut sites: Vec<_> = discs.iter().copied().collect();
+    let mut routes = Vec::with_capacity(roads.len());
+    for (road, run) in roads.iter().zip(&runs) {
+        sites.extend(road::corridor(road, run, planet.radius, &discs));
+        let line = road::centreline(road, planet.radius);
+        let open = road::open(&line, planet.radius, &discs);
+        let lit = road::lit(&line, planet.radius, &discs);
+        let route = Route {
+            line,
+            run: run.clone(),
+            open,
+            lit,
+            slip: (0, 0),
+            sea: SEA,
+        };
+        routes.push(route);
+    }
+    let corridors = sites.len() - towns.len();
+    planet.sites = sites.into();
+    // And the SLIPS, one at each end of every road, which is what turns
+    // a highway that STOPS near a town into one that joins its streets.
+    //
+    // AFTER the sites are installed, and that ordering is the whole of
+    // it. A slip reads `town::surface_radius` to stand on the ground,
+    // and the ground is the field WITH the towns' plateaus and the
+    // roads' corridors cut into it: read off a planet whose `sites` are
+    // still empty it stands on the BARE relief instead, which near a
+    // town's mouth is metres under the corridor's own embankment. The
+    // first picture of one showed the slip's own SHADOW curving across
+    // an empty field with the tarmac nowhere in it, which is a road
+    // buried under the ground it was laid on.
+    for (route, road) in routes.iter_mut().zip(&roads) {
+        for town_of in [road.from, road.to] {
+            if let Some(town) = towns.get(town_of) {
+                splice_slip(route, &planet, town, planet.radius);
+            }
+            route.flip();
+        }
+    }
     let planned = t0.elapsed();
-    // Every town is planned, and the ones near where the world starts are
-    // built. The rest are sites: their ground is levelled and the body's
-    // chart paints them, which is what puts cities all over the planet.
-    let home = towns.first().map_or(DVec3::Y, |t| t.dir);
-    let mut order: Vec<&Town> = towns.iter().collect();
-    order.sort_by(|a, b| (a.dir - home).length().total_cmp(&(b.dir - home).length()));
-    let near: Vec<Town> = order
-        .into_iter()
-        .take(crate::TOWNS_BUILT)
-        .cloned()
-        .collect();
-    let raised = raise(&near);
     say_port(&towns);
     info!(
-        "{} towns {} in {:.0} ms with {} roads, {} of them built, {} buildings and {} pieces of street modelled in {:.0} ms: {} triangles, {} boxes, {} lamps",
+        "{} towns {} in {:.0} ms with {} roads cut into {} levelled corridor pieces; the nearest {} to the eye are BUILT and follow it",
         towns.len(),
         if baked.is_some() { "read" } else { "planned" },
         planned.as_secs_f64() * 1000.0,
         roads.len(),
-        near.len(),
-        raised.buildings,
-        raised.pieces,
-        (t0.elapsed() - planned).as_secs_f64() * 1000.0,
-        raised.meshes.iter().map(|m| m.meshes[0].triangles()).sum::<usize>(),
-        raised.blocks.len(),
-        raised.lamps.len()
+        corridors,
+        crate::TOWNS_BUILT,
     );
     let (floor, roof) = planet.band();
     let bounds = Bounds {
@@ -216,66 +337,46 @@ pub(crate) fn build(args: &Args) -> (World, Vec<TownMesh>) {
         top: roof + 40.0,
         sea: 0.0,
     };
-    (
-        World {
-            planet,
-            blocks: raised.blocks,
-            groups: raised.groups,
-            lamps: raised.lamps,
-            towns,
-            built: near,
-            roads,
-            bounds,
-            sea: Sea { radius: SEA },
-        },
-        raised.meshes,
-    )
+    World {
+        planet,
+        towns,
+        roads,
+        routes,
+        bounds,
+        sea: Sea { radius: SEA },
+    }
 }
 
-/// What the towns' models come to: one mesh a town in the town's own
-/// frame, every box and lamp in the world frame, and what they were built
-/// from.
-#[derive(Default)]
-struct Raised {
-    blocks: Vec<Block>,
-    groups: Vec<Group>,
-    lamps: Vec<(DVec3, f64)>,
-    meshes: Vec<TownMesh>,
-    buildings: usize,
-    pieces: usize,
+/// ONE town modelled: its three LODs of mesh in its own frame, and the
+/// boxes and lamps it puts in the world.
+///
+/// A town at a time rather than the whole list, because what is built
+/// STREAMS: raising one is what a frame can afford and raising all of
+/// them is not.
+pub(crate) struct Lifted {
+    pub mesh: TownMesh,
+    pub blocks: Vec<Block>,
+    pub lamps: Vec<(DVec3, f64)>,
+    pub buildings: usize,
+    pub pieces: usize,
 }
 
-/// Every town modelled.
-fn raise(towns: &[Town]) -> Raised {
-    let mut out = Raised::default();
-    let library = crate::buildings::Library::load();
-    for town in towns {
-        let f = model::fabric_with(town, RADIUS, |lot| library.model(lot, 0, SEED));
-        let start = out.blocks.len();
-        out.blocks.extend(f.blocks);
-        let here = &out.blocks[start..];
-        out.groups.push(Group {
-            lo: here
-                .iter()
-                .fold(DVec3::INFINITY, |lo, b| lo.min(b.bounds().0)),
-            hi: here
-                .iter()
-                .fold(DVec3::NEG_INFINITY, |hi, b| hi.max(b.bounds().1)),
-            range: start..out.blocks.len(),
-        });
-        out.lamps.extend(f.lamps);
-        out.buildings += f.buildings;
-        out.pieces += f.pieces;
-        out.meshes.push(TownMesh {
+pub(crate) fn raise_one(library: &crate::buildings::Library, town: &Town) -> Lifted {
+    let f = model::fabric_with(town, RADIUS, |lot| library.model(lot, 0, SEED));
+    Lifted {
+        mesh: TownMesh {
             frame: lot_frame(RADIUS, town, 0.0, 0.0),
             meshes: [
                 f.mesh,
                 model::fabric_with(town, RADIUS, |lot| library.model(lot, 1, SEED)).mesh,
                 model::fabric_with(town, RADIUS, |lot| library.model(lot, 2, SEED)).mesh,
             ],
-        });
+        },
+        blocks: f.blocks,
+        lamps: f.lamps,
+        buildings: f.buildings,
+        pieces: f.pieces,
     }
-    out
 }
 
 /// Where the port is, so a picture can be aimed at it: its middle, its
@@ -342,4 +443,74 @@ pub(crate) fn shore(world: &World, eye: DVec3) -> Option<DVec3> {
         }
     }
     None
+}
+
+impl Route {
+    /// The same road walked the other way, so one head splice serves
+    /// both ends.
+    fn flip(&mut self) {
+        self.line.reverse();
+        self.run.reverse();
+        self.open.reverse();
+        self.lit.reverse();
+        self.slip = (self.slip.1, self.slip.0);
+    }
+}
+
+/// Lay a SLIP from a road's own mouth into the town at its near end, and
+/// splice it onto the head of the route so the road RUNS to a crossing
+/// rather than stopping in a field short of one.
+///
+/// Spliced rather than drawn beside, because a route is what everything
+/// downstream reads: the stretches that stream, the lamps that light
+/// them and the `roads::Network` a car follows. A slip that was a mesh
+/// of its own would be tarmac a car could not drive onto, which is the
+/// same defect one level up.
+fn splice_slip(route: &mut Route, planet: &Planet, town: &freeport_core::town::Town, radius: f64) {
+    // The first point the corridor is actually CUT at, which is where
+    // the tarmac starts and where the town's own levelling gives out.
+    let Some(first) = route.open.iter().position(|o| *o) else {
+        return;
+    };
+    if first + 1 >= route.line.len() {
+        return;
+    }
+    let at = route.line[first];
+    // The road's own heading at the mouth, pointing IN toward the town,
+    // so the slip leaves the highway straight rather than kinking off it.
+    let along = (at - route.line[first + 1]).normalize_or(at);
+    let slip = road::slip(planet, town, at, along, radius);
+    if slip.len() < 2 {
+        return;
+    }
+    // The slip runs mouth to crossing, and a route runs town OUT, so it
+    // goes on the head the other way up.
+    let rest = first;
+    let head = slip.len();
+    let lit = route.lit.get(first).copied().unwrap_or(false);
+    route.line = slip
+        .iter()
+        .rev()
+        .map(|(d, _)| *d)
+        .chain(route.line[rest..].iter().copied())
+        .collect();
+    route.run = slip
+        .iter()
+        .rev()
+        .map(|(_, h)| *h)
+        .chain(route.run[rest..].iter().copied())
+        .collect();
+    // A slip is INSIDE the town's own levelling, so it cuts no corridor
+    // of its own; `open` is what `road::corridor` reads AND what the
+    // ribbon lays tarmac on, so the slip is marked open to be DRAWN
+    // while the corridor list was built before this splice and never
+    // sees it. One flag doing two jobs is the thing to watch here, and
+    // it is safe only because the sites are already fixed by now.
+    route.open = std::iter::repeat_n(true, head)
+        .chain(route.open[rest..].iter().copied())
+        .collect();
+    route.lit = std::iter::repeat_n(lit, head)
+        .chain(route.lit[rest..].iter().copied())
+        .collect();
+    route.slip.0 = head;
 }

@@ -11,7 +11,7 @@ fn world() -> (Planet, f64, Vec<Town>) {
         overhang: 0.0,
         ledge: 0.0,
         seed: 5,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let sea = planet.radius - 40.0;
     let towns = town::plan(&planet, sea, 80.0, 12, planet.seed);
@@ -28,6 +28,8 @@ fn atlas_of(planet: &Planet, towns: &[Town], roads: Vec<Line>) -> Atlas {
         radius: planet.radius,
         octaves: planet.octaves,
         town_radius: 80.0,
+        piece: freeport_core::road::PIECE,
+        embank: freeport_core::road::EMBANK,
         sea: SEA,
         probe: probe(planet),
         towns: towns
@@ -85,6 +87,7 @@ fn an_atlas_survives_being_written_and_read() {
         from: 0,
         to: 1,
         line: vec![[1.0, 0.0, 0.0, 12.5], [0.0, 1.0, 0.0, -3.25]],
+        run: vec![12.5, 9.0, 4.25, -3.25],
     }];
     let atlas = atlas_of(&planet, &towns, roads);
     let text = serde_json::to_string_pretty(&atlas).expect("an atlas serialises");

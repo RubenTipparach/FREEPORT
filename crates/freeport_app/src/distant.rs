@@ -77,11 +77,19 @@ impl Plugin for DistantPlugin {
 /// equirectangular projection of a sphere is.
 ///
 /// A thousand kilometre planet at 2,048 wide is a texel every three
-/// kilometres, which is finer than the coarsest ring of chunks and about
-/// where the streamed ground takes over anyway. Wider costs the bake: it
-/// is one `Planet::surface` a texel, and the surface is the whole biome
-/// model.
-pub const CHART_W: usize = 1024;
+/// kilometres, which is about the coarsest ring of chunks (4,096 m cells
+/// at fourteen levels) and so about where the streamed ground takes over
+/// anyway. Wider costs the bake: it is one `Planet::surface` a texel and
+/// the surface is the whole biome model, so four times the texels is four
+/// times the seconds.
+///
+/// The comment said 2,048 while the constant said 1,024, which is a
+/// doubling of blur nothing in the file admitted to: at 1,024 a texel is
+/// 6,136 m, and the picture from 400 km up handed a 460 m pixel a texel
+/// thirteen pixels wide. It also halves what the CITY and ROAD marks lie
+/// by, since both are measured in texels: a city goes from 13.5 km to
+/// 6.7 and a road from 5.5 to 2.8.
+pub const CHART_W: usize = 2048;
 pub const CHART_H: usize = CHART_W / 2;
 
 /// How bright a body's cities burn on its night side, in the linear
@@ -124,12 +132,40 @@ const MOST: u32 = 79;
 /// body's relief.
 ///
 /// It has to lose the depth test to the streamed chunks wherever they are
-/// drawn, and a chunk at the coarsest level is a 128 m cell whose surface
-/// stands its own error off the true one. A share of the relief is 80 m on
-/// the harness planet, which is under a thousandth of its radius and
-/// invisible from orbit, against the four kilometres the old sphere sat at
-/// (the bottom of the whole band) which is what made the join show.
+/// drawn, and a chunk at the coarsest level is a kilometres wide cell
+/// whose surface stands its own error off the true one. A share of the
+/// relief is 80 m on the harness planet, which is under a thousandth of
+/// its radius and invisible from orbit, against the four kilometres the
+/// old sphere sat at (the bottom of the whole band) which is what made
+/// the join show.
+///
+/// Eighty metres is only enough because the displacement is a LOWER
+/// ENVELOPE now: see `floor` below. Sampled at its own vertices the
+/// sphere stood KILOMETRES over the true ground between them, and the
+/// chart poked up through the coarse terrain all over a picture from a
+/// hundred and fifty kilometres up.
 const SINK: f64 = 0.01;
+
+/// How far round a vertex the LOWER ENVELOPE looks, as a share of the
+/// icosphere's own edge, and how many bearings it looks along.
+///
+/// An icosahedron's edge is 1.0515 radii, so at `MOST` subdivisions this
+/// sphere's vertices stand 13 km apart on the harness planet, and what a
+/// triangle strung between three of them does to a relief whose HILLS
+/// have a wavelength of 13 km is alias it: the chord cuts the tops off
+/// and stands over every hollow. Measured as a curvature, an interpolated
+/// chord over 13 km of that term is up to 3.3 km above the ground it
+/// spans, which is forty times the sink and is why the chart showed
+/// through the terrain rather than under it.
+///
+/// Taking the LOWEST ground a vertex can see instead makes the sphere an
+/// envelope UNDER the body rather than a surface through it, so it cannot
+/// poke through whatever the terrain does between two of its vertices.
+/// What it costs is the SILHOUETTE, which sits at the local low ground
+/// rather than at the ridge: on this body that is four kilometres of a
+/// thousand, which is 0.4% of the limb and nothing an eye can find.
+const ENVELOPE: f64 = 1.0515;
+const BEARINGS: usize = 8;
 
 /// The meshes a body can draw itself with, coarsest first.
 #[derive(Component)]
@@ -140,6 +176,26 @@ pub struct DistantLod {
     /// this repository's own rule about LOD.
     pub centre: DVec3,
     pub radius: f64,
+}
+
+/// The LOWEST ground within `reach` radians of a direction, as a radius.
+///
+/// A ring of bearings and the point itself, which is enough because what
+/// this is under is a TRIANGLE strung between three vertices this far
+/// apart: the deepest the chord can be wrong by is the lowest ground it
+/// spans, and a ring at the spacing finds that where a single sample at
+/// the vertex cannot see it at all.
+fn floor(planet: &Planet, dir: DVec3, reach: f64) -> f64 {
+    let (east, north) = freeport_core::town::frame_at(dir);
+    let (s, c) = reach.sin_cos();
+    (0..BEARINGS)
+        .map(|k| {
+            let a = k as f64 / BEARINGS as f64 * std::f64::consts::TAU;
+            (dir * c + (east * a.cos() + north * a.sin()) * s).normalize_or(dir)
+        })
+        .chain(std::iter::once(dir))
+        .map(|d| planet.radius + planet.surface(d).0)
+        .fold(f64::INFINITY, f64::min)
 }
 
 /// One body's sphere at one subdivision, displaced by its own relief.
@@ -158,6 +214,13 @@ pub fn sphere(planet: &Planet, sea: f64, subdivisions: u32) -> Mesh {
         return base;
     };
     let sink = planet.relief * SINK;
+    let reach = ENVELOPE / subdivisions.clamp(1, MOST) as f64;
+    // BARE, which is the chart's own rule (`Chart::bake_bare`) and for
+    // the same two reasons: a town is 185 m across against this sphere's
+    // 13 km vertices, so its levelling cannot move one; and asking a
+    // planet carrying 190,000 corridor sites about it would walk them at
+    // every one of the 560,000 samples this envelope takes.
+    let planet = &planet.bare();
     let mut positions = Vec::with_capacity(unit.len());
     let mut normals = Vec::with_capacity(unit.len());
     let mut uvs = Vec::with_capacity(unit.len());
@@ -166,7 +229,7 @@ pub fn sphere(planet: &Planet, sea: f64, subdivisions: u32) -> Mesh {
         // The sea is a floor: a sphere that followed the ocean floor down
         // would draw the sea bed rather than the sea, and the water is a
         // surface at one radius.
-        let ground = planet.radius + planet.surface(dir).0;
+        let ground = floor(planet, dir, reach);
         let r = ground.max(sea) - sink;
         positions.push((dir * r).as_vec3().to_array());
         normals.push(dir.as_vec3().to_array());
@@ -232,7 +295,15 @@ pub fn material(chart: Handle<Image>, slopes: Handle<Image>) -> DistantMaterial 
         extension: Distant {
             centre: Vec4::new(0.0, 0.0, 0.0, BEND),
             fog: Vec4::ZERO,
-            sea: Vec4::new(0.35, 0.0, 0.0, 0.0),
+            // The glint: how bright in NITS and how wide as a Blinn
+            // Phong power. It was 0.35 and nought, which were an F0 and
+            // an unused lane while the water was a reflective PBR
+            // material and the camera's environment map was doing the
+            // shining. A power of 90 is a patch about a dozen degrees
+            // across, which is the sun's own half degree spread by the
+            // waves, and 700 nits is a little over what the lit ground
+            // beside it comes back at.
+            sea: Vec4::new(700.0, 90.0, 0.0, 0.0),
             // Filled by `sky::drift_sky` every frame. Nought until then,
             // which reads as a sun along no axis at all and so as a body
             // wholly in its own day: a planet with no lights on rather

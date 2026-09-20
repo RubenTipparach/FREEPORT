@@ -50,6 +50,19 @@ fn smooth(t: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// The same fade between two ENDS: nought at `a`, one at `b` and the
+/// hermite in between, clamped outside. It lives here beside `smooth`,
+/// which is the same curve on a unit interval, because it was written out
+/// three times in this crate (`atmos`, `biome` and `field`) byte for byte
+/// and a fourth caller made it a rule rather than a coincidence. `a == b`
+/// is a step rather than a NaN.
+pub fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
+    if a == b {
+        return if t < a { 0.0 } else { 1.0 };
+    }
+    smooth(((t - a) / (b - a)).clamp(0.0, 1.0))
+}
+
 /// Value noise on the integer lattice, in 0..1, smoothstepped so the lattice
 /// does not show as diamonds.
 pub fn noise3(p: DVec3, seed: u32) -> f64 {

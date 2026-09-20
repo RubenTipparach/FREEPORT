@@ -103,6 +103,7 @@ fn harness(dt: f64) -> (App, Entity, Entity) {
         .init_resource::<Status>()
         .init_resource::<Frame>()
         .init_resource::<crate::drive::Thefts>()
+        .init_resource::<crate::world::Fabric>()
         .add_message::<MouseMotion>()
         .add_message::<MouseWheel>()
         .add_systems(Update, (fly, place_eye).chain());
@@ -219,12 +220,9 @@ fn ground() -> Ground {
                 octaves: 1,
                 ..default()
             },
-            blocks: vec![],
-            groups: vec![],
-            lamps: vec![],
             towns: vec![],
-            built: vec![],
             roads: vec![],
+            routes: vec![],
             bounds: Bounds {
                 radius: RADIUS,
                 floor: RADIUS - 2.0,

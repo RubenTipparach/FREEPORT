@@ -76,6 +76,37 @@ pub const STREET: u8 = 6;
 /// texture, no draw and no second shader.
 pub const PAINT: u8 = 7;
 
+/// What a building's own SKIN can be made of. A town used to be one grey:
+/// every house and every office wore `CONCRETE`, so a suburb and a
+/// downtown were the same wall at two heights, and the owner asked for
+/// the trades' own list instead. `model::Kind::skin` is what picks one,
+/// `tools/make_building_textures.py` bakes the set at the other end of
+/// each byte, and `terrain.wgsl` draws them in the same triplanar pass
+/// the ground and the concrete already go through: a wall costs no draw
+/// call, no second shader and no material of its own, because what a
+/// triangle is made of is one number on its own vertices.
+///
+/// Board and batten timber: a house.
+pub const WOOD: u8 = 8;
+/// Fired red brick in a running bond: a house or an office.
+pub const BRICK: u8 = 9;
+/// Vinyl lap siding, pale and near flat: a house.
+pub const VINYL: u8 = 10;
+/// Polished veined marble: an office that wants to be looked at.
+pub const MARBLE: u8 = 11;
+/// Dressed ashlar blocks: an office built to last.
+pub const STONE: u8 = 12;
+/// A glazed CURTAIN WALL: dark panes in a grid of aluminium mullions.
+///
+/// It is not `GLASS`, which is what a WINDOW is drawn with, and the
+/// difference was measured in a picture: a whole tower given the pane's
+/// material is a flat dark colour at a roughness of 0.08, which is a
+/// mirror, and the first render of one reflected the sky so exactly
+/// that the building vanished against it, leaving its own floor slabs
+/// and window frames hanging in the air. A facade is a GRID, and the
+/// grid is what makes it read as a building.
+pub const CURTAIN: u8 = 13;
+
 /// A ball of rock and nothing else.
 pub struct Sphere {
     pub radius: f64,
@@ -124,7 +155,7 @@ pub struct Planet {
     pub ledge: f64,
     pub seed: u32,
     /// Where the ground is levelled for a town.
-    pub sites: Vec<crate::town::Site>,
+    pub sites: Sites,
 }
 
 impl Default for Planet {
@@ -137,57 +168,152 @@ impl Default for Planet {
             overhang: 20.0,
             ledge: 60.0,
             seed: 7,
-            sites: Vec::new(),
+            sites: Sites::default(),
         }
     }
 }
 
-fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
-    let k = ((t - a) / (b - a)).clamp(0.0, 1.0);
-    k * k * (3.0 - 2.0 * k)
-}
+use crate::noise::smoothstep;
 
-/// A site's levelling blends out to the relief over a skirt this far
-/// inside and outside half its reach, metres.
+/// How wide a site's levelling takes to blend out to the relief, metres.
+/// Kept as two numbers because the slope bound below reads their sum and
+/// a skirt that narrowed would be a cliff the mesher could not close.
 const SKIRT_IN: f64 = 5.0;
 const SKIRT_OUT: f64 = 6.0;
+
+/// How wide a site's own skirt is: the blend from its level to the
+/// relief, metres.
+///
+/// A road's corridor is a capsule, so its boundary is everywhere square
+/// to the way out of it and a fade over a fixed width climbs at a
+/// smoothstep's one and a half over that width. A TOWN's outline is not
+/// a circle, so its boundary is tilted by up to `town::WOBBLE` and the
+/// same fade would climb `hypot(1, WOBBLE)` times as fast. It is that
+/// much wider instead, which leaves the planet's own slope bound (the
+/// `skirt` term of `steepest`, which divides by the NARROWEST skirt on
+/// the body) exactly where it was.
+pub fn site_skirt(site: &crate::town::Site) -> f64 {
+    let widen = match site.outline {
+        Some(_) => crate::town::WOBBLE.hypot(1.0),
+        None => 1.0,
+    };
+    (SKIRT_IN + SKIRT_OUT) * widen
+}
 
 /// The arc from a site's middle inside which the ground is level right
 /// across, and the arc past which it is the relief again, metres. The one
 /// place the skirt's two widths are read, so a shader handed this pair is
 /// applying the same rule `Planet::site_weight` does rather than a second
-/// copy of two constants (`field.wgsl`'s `site_weight` is that shader).
+/// copy of two constants.
+///
+/// **`site.r` is the radius the ground is FULLY level inside**, and it
+/// was half that. The first cut read `site.r * 0.5 - SKIRT_IN`, which is
+/// the right band for a `site.r` that means a DIAMETER, and `site_of`
+/// was handing it a radius: a town was levelled right across to about
+/// its own nominal radius while its lots reach `town::OUTLINE` (2.06) of
+/// one. Everything past that stood on bare relief with its base at the
+/// town's level, and the level is the LOWEST of the site's own survey,
+/// so the relief out there is HIGHER and the building is under it. The
+/// owner's picture was a suburb buried to its eaves with only the roofs
+/// and the driveways showing.
 pub fn site_band(site: &crate::town::Site) -> (f64, f64) {
-    (site.r * 0.5 - SKIRT_IN, site.r * 0.5 + SKIRT_OUT)
+    (site.r, site.r + site_skirt(site))
 }
 
 impl Planet {
     /// How much a site levels a direction: one right across it, nought
     /// past its apron.
     fn site_weight(&self, site: &crate::town::Site, dir: DVec3) -> f64 {
-        let (inner, outer) = site_band(site);
-        let chord = (dir - site.dir).length();
+        let (_, outer) = site_band(site);
+        // A cheap REJECT before the arc's own trigonometry. Every point
+        // of an arc is within its own chord of the end it starts at, so
+        // a direction further off than that plus the band cannot be in
+        // it, and a town's own chord is nought so its reject is exact.
+        //
+        // `nearest` costs an `atan2` and a `sin_cos`, and it is asked of
+        // every corridor piece a chunk keeps for every one of that
+        // chunk's seven thousand samples. That was affordable while a
+        // piece was 341 m and a body carried 187,000 of them; at 85 m it
+        // carries 747,000 and a chunk on a road keeps three or four
+        // where it kept one.
+        let far = site.reach() * 2.0 + outer / self.radius;
+        if (dir - site.dir).length_squared() > far * far {
+            return 0.0;
+        }
+        // To the NEAREST point of the arc, which is the site's own middle
+        // on a town and a point along the corridor on a road.
+        let chord = (dir - site.nearest(dir).0).length();
         if chord * self.radius >= outer {
             return 0.0;
         }
         let dist = 2.0 * (chord * 0.5).clamp(0.0, 1.0).asin() * self.radius;
-        1.0 - smoothstep(inner, outer, dist)
+        // How far the site levels THIS WAY, which on a town is its own
+        // outline and never a disc round it.
+        let inner = site.level_r(dir);
+        1.0 - smoothstep(inner, inner + site_skirt(site), dist)
     }
 
     /// The additive site height and the fraction of procedural relief left
     /// at a direction. Shared with GPU input preparation so levelling has
     /// one definition and is still evaluated in the world frame's f64.
     pub fn surface_blend(&self, dir: DVec3) -> (f64, f64) {
-        let (mut bias, mut keep) = (0.0, 1.0);
-        for site in &self.sites {
+        let (bias, keep, _) = self.levelling(dir);
+        (bias, keep)
+    }
+
+    /// The same, and how much of the levelling here may BUILD GROUND UP:
+    /// nought under a town, which may only cut, and one under a road's
+    /// corridor, which is built on cut and fill like any road.
+    ///
+    /// It is the same loop rather than a second one, because the two
+    /// answers come off the same weights and a caller that asked twice
+    /// would walk every site twice.
+    ///
+    /// **A point several sites cover outright takes the NEAREST one's
+    /// level**, and that is not a tie break, it is a road's own profile.
+    /// A corridor is a chain of arcs whose ends MEET, and an arc's band
+    /// is a capsule: its round end reaches `CORRIDOR` metres past its own
+    /// last station into its neighbour. Returning on the first site the
+    /// index reached gave a point seven metres past a station the level
+    /// AT that station rather than the ramp, so every station on a road
+    /// carried a fourteen metre landing and a one in ten grade stepped
+    /// 0.66 m at each of them. Which of the two arcs won was the latitude
+    /// sort's business, so the landings were not even consistent. The
+    /// point seven metres along the next arc stands ON that arc's axis
+    /// and seven metres off the last one's, so the nearest is the one
+    /// whose ramp it is, and the profile is continuous by construction.
+    pub fn levelling(&self, dir: DVec3) -> (f64, f64, f64) {
+        let (mut bias, mut keep, mut fill) = (0.0f64, 1.0f64, 0.0f64);
+        // The site that covers this point OUTRIGHT, and how far its own
+        // axis is: several can cover one point, so which one's level is
+        // the ground here has to be decided rather than taken from
+        // whichever the index happened to reach first.
+        let (mut covered, mut nearest) = (None, f64::MAX);
+        for site in self.sites_near(dir, 0.0) {
             let w = self.site_weight(site, dir);
-            if w >= 1.0 {
-                return (site.h, 0.0);
+            if w <= 0.0 {
+                continue;
             }
-            bias += (site.h - bias) * w;
+            // The level where the ARC is nearest, which ramps along a
+            // road's corridor and is constant across a town.
+            let (at, level) = site.nearest(dir);
+            if site.fills {
+                fill = fill.max(w);
+            }
+            if w >= 1.0 {
+                let away = (dir - at).length_squared();
+                if away < nearest {
+                    (nearest, covered) = (away, Some(level));
+                }
+                continue;
+            }
+            bias += (level - bias) * w;
             keep *= 1.0 - w;
         }
-        (bias, keep)
+        match covered {
+            Some(level) => (level, 0.0, fill),
+            None => (bias, keep, fill),
+        }
     }
 
     /// The relief at a direction, metres over the mean radius, sites
@@ -199,7 +325,7 @@ impl Planet {
     /// `sampling.wgsl` transcribes that function so the mesher's own
     /// samples and this one are the same ground.
     pub fn surface(&self, dir: DVec3) -> (f64, f64) {
-        let (bias, keep) = self.surface_blend(dir);
+        let (bias, keep, fill) = self.levelling(dir);
         // A site CUTS and never FILLS: it takes whichever of its own
         // blend and the bare ground is LOWER.
         //
@@ -219,8 +345,19 @@ impl Planet {
         // and not inside, measured at a slope of 350 against a bound of
         // 30. One rule at every weight, and the bound holds because the
         // min of two functions is never steeper than the steeper of them.
+        //
+        // A ROAD may fill, and `fill` is how much of the levelling here
+        // is a road's: nought takes the min as ever, one takes the ramp
+        // whether the ground under it is higher or lower, and the band
+        // between is continuous, so a corridor's own skirt rises out of
+        // a hollow rather than stepping out of it. A road laid on a
+        // corridor that could only cut floated 18.6 m over the ground in
+        // the worst place on this body, because the ramp between two
+        // stations runs over every dip between them; an embankment is
+        // the other half of a cutting.
         let bare = self.shape().height(dir);
-        ((bias + bare * keep).min(bare), keep)
+        let graded = bias + bare * keep;
+        (graded.min(bare) + (graded - graded.min(bare)) * fill, keep)
     }
 
     /// The terms this planet's relief is made of.
@@ -274,12 +411,15 @@ impl Planet {
         }
         let dir = centre / radius;
         let span = (2.0 * reach / near + 1e-12).min(2.0);
-        for site in &self.sites {
-            let distance = (dir - site.dir).length();
-            let (inner, outer) = site_band(site);
+        for site in self.sites_near(dir, span) {
+            let distance = (dir - site.nearest(dir).0).length();
+            let (_, outer) = site_band(site);
             if (distance - span) * self.radius >= outer {
                 continue;
             }
+            // The LEAST it levels anywhere this box reaches, because a
+            // town's own outline moves as you walk round it.
+            let inner = site.level_floor(dir, span * self.radius);
             let level_chord = 2.0 * (0.5 * inner / self.radius).sin();
             if inner > 0.0 && distance + span < level_chord {
                 // Wholly inside this site's LEVEL, where the ground is
@@ -297,8 +437,11 @@ impl Planet {
                 // a constant and the relief is never steeper than the
                 // relief, and a level site carves nothing (`keep` is
                 // nought there, so `at` adds no overhang).
+                // The HIGHER end of the arc, which is the upper bound
+                // on the surface all along it: a lower one would call a
+                // box air that the corridor's own ramp still reaches.
                 if let Some(false) = (Sphere {
-                    radius: self.radius + site.h,
+                    radius: self.radius + site.h.max(site.to_h),
                 })
                 .solid(lo, hi)
                 {
@@ -338,14 +481,51 @@ impl Planet {
     /// town.
     pub fn around(&self, dir: DVec3, span: f64) -> Planet {
         if self.sites.is_empty() {
-            return self.clone();
+            return self.bare();
         }
-        let mut local = self.clone();
-        local.sites.retain(|site| {
-            let (_, outer) = site_band(site);
-            (dir - site.dir).length() - span <= outer / self.radius
-        });
-        local
+        let kept: Vec<_> = self
+            .sites_near(dir, span)
+            .filter(|site| {
+                let (_, outer) = site_band(site);
+                (dir - site.nearest(dir).0).length() - span <= outer / self.radius
+            })
+            .copied()
+            .collect();
+        Planet {
+            sites: Sites::new(kept),
+            ..self.bare()
+        }
+    }
+
+    /// This body with NO sites on it, and nothing else copied that is not
+    /// a number.
+    ///
+    /// `..self.clone()` is what this replaces and it was the whole cost
+    /// of a road: struct update syntax evaluates the base FIRST, so
+    /// `Planet { sites, ..self.clone() }` clones every site on the body
+    /// and then throws the list away. With eight towns that is a hundred
+    /// bytes and nobody notices; with 190,168 levelled corridor pieces it
+    /// is 13 MB a call, and `around` is called once a CHUNK and once a
+    /// sample in the bake's own survey. Measured on the port: 71 ms a
+    /// chunk against 8, and a bake of 43 s against 24.
+    pub fn bare(&self) -> Planet {
+        Planet {
+            radius: self.radius,
+            relief: self.relief,
+            lumps: self.lumps,
+            octaves: self.octaves,
+            overhang: self.overhang,
+            ledge: self.ledge,
+            seed: self.seed,
+            sites: Sites::default(),
+        }
+    }
+
+    /// The sites whose latitude band can reach a direction: the index's
+    /// own window widened by however far the box being asked about
+    /// spans. Everything else on the body is never looked at.
+    fn sites_near(&self, dir: DVec3, span: f64) -> impl Iterator<Item = &crate::town::Site> {
+        self.sites.near(dir, span + self.sites.window(self.radius))
     }
 
     /// The radii the surface stays between: what the relief's own terms can
@@ -363,6 +543,11 @@ impl Planet {
 /// three axes.
 const NOISE_SLOPE: f64 = 2.598_076_211_353_316;
 
+/// How many sites' skirts the slope bound assumes can cross one point.
+/// See `steepest` for why it is not one any more, and why it is TWO
+/// rather than the count of roads that can meet at a town.
+const OVERLAP: f64 = 2.0;
+
 impl Planet {
     /// One from the radius, the relief's fractal (each octave doubles the
     /// frequency and halves the weight, so every octave contributes the
@@ -379,13 +564,36 @@ impl Planet {
         } else {
             0.0
         };
-        let level = self.sites.iter().map(|s| s.h.abs()).fold(0.0, f64::max);
         let skirt = if self.sites.is_empty() {
             0.0
         } else {
-            (level + self.relief * 0.5 + self.overhang * 0.5) * 1.5 / (SKIRT_IN + SKIRT_OUT)
+            // OVERLAP, because a road's corridor is a chain of arcs
+            // whose ends MEET, so their bands always overlap and
+            // `town::plan`'s old promise that no two skirts cross is
+            // gone. The blend's derivative is bounded by the sum of the
+            // overlapping sites' terms, so in principle the bound wants
+            // their count, which at a hub is the town's disc plus the
+            // first arc of every road that reaches it.
+            //
+            // It is TWO, because of what those sites AGREE about:
+            // `road::corridor` starts each arc on the level the last one
+            // ended at and ends the chain on the town's own level, so
+            // every pair that overlaps carries the same level where they
+            // overlap and the composed blend has no step in it to climb.
+            // What is left is the pair at a join, and two is the honest
+            // bound for that. Eight, which is the count, made the bound
+            // 81.6 against a measured worst of 5.7 and
+            // `the_slope_bound_holds_across_a_sites_skirt` says so: a
+            // bound too tight rules a chunk empty that has surface in it,
+            // which is a hole in the world, and one too loose costs a
+            // sample on every chunk of the body.
+            (self.sites.level() + self.relief * 0.5 + self.overhang * 0.5) * 1.5 * OVERLAP
+                / (SKIRT_IN + SKIRT_OUT)
         };
-        1.0 + relief + carve + skirt
+        // And the corridor's own grade ALONG itself, which a town does
+        // not have: a road climbs at up to `road::STEEPEST` and the
+        // ground under it climbs with it.
+        1.0 + relief + carve + skirt + self.sites.grade(self.radius)
     }
 }
 
@@ -460,7 +668,7 @@ impl Density for Built<'_> {
 
     fn material(&self, p: DVec3) -> u8 {
         if self.blocks.is_empty() {
-            TERRAIN
+            self.ground.material(p)
         } else {
             self.sample(p).1
         }
@@ -505,336 +713,7 @@ impl Block {
     }
 }
 
+mod sites;
+pub use sites::*;
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_bounds_reject_empty_boxes_inside_the_relief_band() {
-        let planet = Planet {
-            octaves: 18,
-            overhang: 3.0,
-            ledge: 12.0,
-            sites: vec![crate::town::Site {
-                dir: DVec3::Y,
-                h: 0.0,
-                r: 172.0,
-            }],
-            ..Planet::default()
-        };
-        for dir in [DVec3::Y, DVec3::X, DVec3::new(-0.6, 0.4, -0.7).normalize()] {
-            let surface = crate::town::surface_radius(&planet, dir);
-            for height in [-100.0, 100.0] {
-                let centre = dir * (surface + height);
-                let lo = centre - DVec3::splat(2.0);
-                let hi = centre + DVec3::splat(2.0);
-                assert_eq!(planet.solid(lo, hi), Some(height < 0.0));
-                for k in 0..5 {
-                    for j in 0..5 {
-                        for i in 0..5 {
-                            let p = lo + DVec3::new(i as f64, j as f64, k as f64);
-                            assert_eq!(planet.at(p) > 0.0, height < 0.0);
-                        }
-                    }
-                }
-            }
-            let centre = dir * surface;
-            assert_eq!(planet.solid(centre - DVec3::ONE, centre + DVec3::ONE), None);
-        }
-    }
-
-    #[test]
-    fn noise_is_in_range_and_deterministic() {
-        for i in 0..200 {
-            let p = DVec3::new(i as f64 * 0.37, i as f64 * -0.11, 3.0 + i as f64 * 0.05);
-            let a = noise3(p, 5);
-            assert!((0.0..=1.0).contains(&a));
-            assert_eq!(a, noise3(p, 5));
-            assert!((0.0..=1.0).contains(&fbm3(p, 5, 6)));
-        }
-        assert_ne!(
-            noise3(DVec3::new(0.5, 0.5, 0.5), 1),
-            noise3(DVec3::new(0.5, 0.5, 0.5), 2)
-        );
-    }
-
-    #[test]
-    fn a_float_hash_is_the_cores_to_a_hundred_millionth() {
-        // A GPU has no f64, so `field.wgsl` computes `mix3` exactly and then
-        // rounds it into a float's twenty four bits. That rounding is the
-        // whole of the divergence between the ground a shader draws and the
-        // ground the walker stands on, so it is measured rather than
-        // assumed: the bound in metres is this share of the relief.
-        let mut worst: f64 = 0.0;
-        for i in 0..40i64 {
-            for j in 0..40i64 {
-                for k in 0..40i64 {
-                    let a = hash3(i * 7 - 91, j * 13 - 17, k * 3 + 5, 11);
-                    let b = hash3_f32(i * 7 - 91, j * 13 - 17, k * 3 + 5, 11) as f64;
-                    worst = worst.max((a - b).abs());
-                }
-            }
-        }
-        // One part in 2^24, and a float cannot do better than half of that.
-        assert!(worst < 6.0e-8, "the float hash is {worst} off");
-        assert!(worst > 0.0, "a float held all thirty two bits?");
-    }
-
-    #[test]
-    fn noise_is_continuous_across_a_lattice_line() {
-        let a = noise3(DVec3::new(2.0 - 1e-9, 0.3, 0.7), 9);
-        let b = noise3(DVec3::new(2.0 + 1e-9, 0.3, 0.7), 9);
-        assert!((a - b).abs() < 1e-6);
-    }
-
-    #[test]
-    fn a_planet_is_rock_inside_and_air_outside() {
-        let planet = Planet::default();
-        let inside = DVec3::new(0.5 * planet.radius, 0.0, 0.0);
-        let outside = DVec3::new(0.0, planet.radius + planet.relief, 0.0);
-        assert!(planet.at(inside) > 0.0);
-        assert!(planet.at(outside) < 0.0);
-        assert!(planet.at(DVec3::ZERO) > 0.0);
-        let surface = planet.at(DVec3::new(0.0, 0.0, planet.radius));
-        assert!(surface.abs() <= planet.relief * 0.5 + planet.overhang);
-    }
-
-    #[test]
-    fn a_block_is_a_signed_distance_in_its_own_frame() {
-        let b = Block {
-            centre: DVec3::new(1.0, 2.0, 3.0),
-            half: DVec3::new(2.0, 1.0, 0.5),
-            axes: [DVec3::Z, DVec3::X, DVec3::Y],
-            material: CONCRETE,
-        };
-        assert_eq!(b.at(b.centre), 0.5);
-        // A metre past the up face (world y) is minus one.
-        assert!((b.at(b.centre + DVec3::Y * 1.5) + 1.0).abs() < 1e-12);
-        // Along the box's east (world z) the half extent is two.
-        assert!((b.at(b.centre + DVec3::Z * 2.0)).abs() < 1e-12);
-        assert!((b.at(b.centre + DVec3::new(0.0, 1.5, 3.0)) + 2.0f64.sqrt()).abs() < 1e-12);
-        let corners = b.corners();
-        assert!(corners.iter().all(|c| b.at(*c).abs() < 1e-12));
-        let ground = Sphere { radius: 1.0 };
-        let built = Built {
-            ground: &ground,
-            blocks: vec![&b],
-        };
-        assert_eq!(built.at(b.centre), 0.5);
-        assert_eq!(built.at(DVec3::ZERO), 1.0);
-        assert_eq!(built.material(b.centre), CONCRETE);
-        assert_eq!(built.material(DVec3::ZERO), TERRAIN);
-        assert_eq!(ground.material(DVec3::ZERO), TERRAIN);
-    }
-
-    #[test]
-    fn a_box_is_ruled_rock_or_air_only_where_the_band_allows() {
-        let planet = Planet {
-            radius: 100.0,
-            relief: 4.0,
-            lumps: 3.0,
-            octaves: 3,
-            overhang: 1.0,
-            ledge: 5.0,
-            seed: 1,
-            sites: vec![],
-        };
-        // The band's INVARIANT rather than its arithmetic: every direction's
-        // ground is inside it, and it is not so wide that ruling is
-        // pointless. The pair itself moved when the relief became a few
-        // composed terms rather than one fractal, and a pin on the pair
-        // would have read as a defect when what changed was the planet.
-        let (floor, top) = planet.band();
-        assert!(floor < planet.radius && top > planet.radius);
-        assert!(
-            top - floor < planet.relief * 2.0 + planet.overhang * 2.0,
-            "the band {floor} to {top} is wider than the relief can reach"
-        );
-        for i in 0..2000 {
-            let t = i as f64 * 0.618;
-            let d = DVec3::new(t.sin(), (t * 0.37).cos(), (t * 1.3).sin()).normalize();
-            let r = planet.radius + planet.surface(d).0;
-            assert!(
-                (floor..=top).contains(&r),
-                "ground at {r} is outside the band {floor} to {top}"
-            );
-        }
-        let deep = (
-            DVec3::new(-10.0, -10.0, -10.0),
-            DVec3::new(10.0, 10.0, 10.0),
-        );
-        assert_eq!(planet.solid(deep.0, deep.1), Some(true));
-        let high = (DVec3::new(0.0, 103.0, 0.0), DVec3::new(5.0, 110.0, 5.0));
-        assert_eq!(planet.solid(high.0, high.1), Some(false));
-        let crust = (DVec3::new(0.0, 95.0, 0.0), DVec3::new(5.0, 105.0, 5.0));
-        assert_eq!(planet.solid(crust.0, crust.1), None);
-        assert_eq!(box_radii(deep.0, deep.1), (0.0, (300.0f64).sqrt()));
-        let ball = Sphere { radius: 5.0 };
-        assert_eq!(
-            ball.solid(DVec3::splat(6.0), DVec3::splat(7.0)),
-            Some(false)
-        );
-        let slab = Block {
-            centre: DVec3::new(0.0, 104.0, 0.0),
-            half: DVec3::new(1.0, 1.0, 0.2),
-            axes: [DVec3::X, DVec3::Z, DVec3::Y],
-            material: CONCRETE,
-        };
-        let built = Built {
-            ground: &planet,
-            blocks: vec![&slab],
-        };
-        assert_eq!(built.solid(high.0, high.1), None, "a slab in the box");
-        // The slope bound holds: the field between two points a step apart
-        // never changes faster than it says.
-        let slope = planet.slope();
-        assert!(slope > 1.0 && slope < 20.0, "slope {slope}");
-        assert_eq!(built.slope(), slope);
-        assert_eq!(ball.slope(), 1.0);
-        let mut steepest: f64 = 0.0;
-        for i in 0..2000 {
-            let t = i as f64 * 0.37;
-            let p = DVec3::new(t.sin() * 100.0, t.cos() * 100.0, (t * 0.3).sin() * 30.0);
-            let step = DVec3::new(0.011, -0.007, 0.013);
-            steepest = steepest.max((planet.at(p + step) - planet.at(p)).abs() / step.length());
-        }
-        assert!(
-            steepest < slope,
-            "measured {steepest} against the bound {slope}"
-        );
-        assert_eq!(built.solid(deep.0, deep.1), Some(true));
-        let (lo, hi) = slab.bounds();
-        assert!((lo - DVec3::new(-1.0, 103.8, -1.0)).length() < 1e-12);
-        assert!((hi - DVec3::new(1.0, 104.2, 1.0)).length() < 1e-12);
-    }
-
-    #[test]
-    fn a_grid_carries_its_apron_and_a_gradient() {
-        let grid = sample(
-            &Sphere { radius: 5.0 },
-            DVec3::new(-8.0, -8.0, -8.0),
-            1.0,
-            16,
-        );
-        assert_eq!(grid.at(-1, -1, -1), (5.0 - (3.0f64 * 81.0).sqrt()) as f32);
-        assert_eq!(grid.at(8, 8, 8), 5.0);
-        let g = grid.gradient(12, 8, 8);
-        assert!(
-            g[0] < 0.0 && g[1].abs() < 1e-6 && g[2].abs() < 1e-6,
-            "{g:?}"
-        );
-        assert_eq!(grid.point(0, 0, 0), grid.corner);
-    }
-
-    #[test]
-    fn a_sites_band_is_level_inside_and_relief_outside() {
-        let mut planet = Planet {
-            radius: 2_000.0,
-            relief: 40.0,
-            lumps: 12.0,
-            octaves: 8,
-            overhang: 0.0,
-            ledge: 0.0,
-            seed: 3,
-            sites: vec![],
-        };
-        let dir = DVec3::new(0.2, 0.9, 0.3).normalize();
-        // Its level is UNDER the ground there, because a site cuts: one
-        // above it is a site that does nothing, which is the other half
-        // of this test.
-        let site = crate::town::Site {
-            dir,
-            h: -12.0,
-            r: 80.0,
-        };
-        let (inner, outer) = site_band(&site);
-        assert!(inner < outer, "the band runs inward to outward");
-        planet.sites = vec![site];
-        let (east, _) = crate::town::frame_at(dir);
-        // A point a hair inside the inner arc is the site's height and a
-        // point a hair outside the outer one is the relief alone, which is
-        // what a shader handed the pair has to reproduce.
-        let at = |m: f64| {
-            let a = m / planet.radius;
-            (dir * a.cos() + east * a.sin()).normalize()
-        };
-        assert_eq!(planet.surface(at(inner - 0.5)).0, planet.sites[0].h);
-        let bare = Planet {
-            sites: vec![],
-            ..planet.clone()
-        };
-        let far = at(outer + 0.5);
-        assert!(
-            (planet.surface(far).0 - bare.surface(far).0).abs() < 1e-12,
-            "the ground past the skirt is not the relief"
-        );
-        // And a site standing OVER the ground changes nothing anywhere,
-        // because a city flattens land and never adds it.
-        let high = Planet {
-            sites: vec![crate::town::Site {
-                dir,
-                h: 30.0,
-                r: 80.0,
-            }],
-            ..bare.clone()
-        };
-        for m in [
-            0.0,
-            inner * 0.5,
-            inner - 0.5,
-            (inner + outer) * 0.5,
-            outer + 0.5,
-        ] {
-            let d = at(m);
-            assert!(
-                (high.surface(d).0 - bare.surface(d).0).abs() < 1e-12,
-                "a site over the ground raised it {m} m out"
-            );
-        }
-    }
-
-    /// A site's own skirt is inside the bound the mesher rules chunks on.
-    ///
-    /// Its level CUTS, and cuts the STEEPEST a site can: at 30 m on a body
-    /// whose relief spans plus or minus twenty the site stood above every
-    /// scrap of ground it covers, and a site that only ever takes the
-    /// lower of itself and the land is then a site that does nothing at
-    /// all. What a bound has to cover is the worst case, so the level is
-    /// under the lowest ground here and the whole skirt is a cut.
-    #[test]
-    fn the_slope_bound_holds_across_a_sites_skirt() {
-        let mut planet = Planet {
-            radius: 2000.0,
-            relief: 40.0,
-            ..Default::default()
-        };
-        planet.sites = vec![crate::town::Site {
-            dir: DVec3::Z,
-            h: -25.0,
-            r: 100.0,
-        }];
-        let bound = planet.slope();
-        let mut worst = 0.0f64;
-        for i in 0..400 {
-            let dist = 35.0 + 35.0 * i as f64 / 400.0;
-            let a = dist / planet.radius;
-            let dir = DVec3::new(a.sin(), 0.0, a.cos());
-            for k in 0..5 {
-                let p = dir * (planet.radius - 20.0 + 15.0 * k as f64);
-                for d in [DVec3::X, DVec3::Y, DVec3::Z] {
-                    let h = 0.05;
-                    let g = (planet.at(p + d * h) - planet.at(p - d * h)).abs() / (2.0 * h);
-                    worst = worst.max(g);
-                }
-            }
-        }
-        assert!(
-            worst <= bound,
-            "the field climbs at {worst} against a bound of {bound}"
-        );
-        assert!(
-            bound < worst * 8.0 + 2.0,
-            "a bound of {bound} is slack against {worst}"
-        );
-    }
-}
+mod tests;

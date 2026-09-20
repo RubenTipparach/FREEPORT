@@ -16,15 +16,6 @@ use crate::field::{hash3, noise3, Density, Planet};
 use crate::model::Kind;
 use glam::{DVec2, DVec3};
 
-/// A place on the planet levelled for a town: its direction, its height
-/// over the mean radius, and how far across the levelling reaches.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Site {
-    pub dir: DVec3,
-    pub h: f64,
-    pub r: f64,
-}
-
 /// A lot: where on the town's grid, metres east and north of its middle,
 /// how big, how tall, and what kind of building stands on it.
 #[derive(Clone, Debug)]
@@ -53,6 +44,9 @@ pub struct Town {
     pub lots: Vec<Lot>,
     pub pieces: Vec<Piece>,
     pub index: usize,
+    /// The town's OWN seed, `town_seed` of the world's and its index:
+    /// what its lobes, its plazas and its skins are drawn off.
+    pub seed: u32,
 }
 
 /// A frame on the sphere: a direction, east and north there, and the
@@ -145,6 +139,24 @@ const STRETCH: f64 = 1.45;
 /// nominal radius: the lobes and the stretch together.
 pub const OUTLINE: f64 = (1.0 + REACH) * STRETCH;
 
+/// How fast that outline can MOVE as you walk round it, metres of edge
+/// per metre of arc.
+///
+/// It is the one thing a disc does not have and it is the price of an
+/// outline that is not one: a fade over a fixed width past a boundary
+/// that is not radial is steeper than the same fade past one that is,
+/// by `hypot(1, WOBBLE)`. `field::site_skirt` widens a town's skirt by
+/// exactly that, so the planet's own slope bound is untouched and no
+/// chunk is ruled on ground the levelling reaches into.
+///
+/// MEASURED over every bearing of a thousand towns of every size,
+/// stretch and seed rather than reasoned about
+/// (`the_outline_never_moves_faster_than_the_bound`): the worst is
+/// 1.571, and this is 2, which is the headroom a bound on noise wants.
+/// Reasoned from the lobes' own gradient instead it is 4.65, which is a
+/// fifty metre apron round every town for a swing no town ever takes.
+pub(crate) const WOBBLE: f64 = 2.0;
+
 /// Where a town stops being one thing and starts being another, in the
 /// same demand the outline is cut from: over `CORE_AT` is downtown and
 /// over `TOWN_AT` is the town proper, and everything out to nought is
@@ -157,10 +169,24 @@ const TOWN_AT: f64 = 0.38;
 /// at one it is the same grid as downtown with shorter buildings on it,
 /// which is what this was.
 const SUBURB_FILL: f64 = 0.55;
-/// How far a suburban house stands off the middle of its own block,
-/// metres either way, against a town house's own small jitter. A setback
-/// and a garden are the other thing that says suburb.
+/// How far a suburban house WANTS to stand off the middle of its own
+/// block, metres either way, against a town house's own small jitter. A
+/// setback and a garden are the other thing that says suburb.
+///
+/// What it GETS is whatever its own block leaves once the building is on
+/// it, which is `Kind::covers`: a block is `BLOCK` across and the
+/// street's inner kerb stands exactly `BLOCK / 2` from its middle, so a
+/// building covering its whole block may not move at all. Every variant
+/// in the baked library is `BLOCK` square today, so this is nought on
+/// the ground and is the number that comes back the day a house is baked
+/// smaller. A wall is one oriented box that is DRAWN and COLLIDED, so a
+/// setback taken off a block it does not fit on is a wall standing in
+/// the middle of the road, which is what the owner photographed.
 const SUBURB_SETBACK: f64 = 4.5;
+/// How far a town house stands off the middle of its own block, metres
+/// either way: enough that a terrace is not a ruler and no more, and
+/// bounded by the same block.
+const TOWN_JITTER: f64 = 1.0;
 
 /// East and north at a direction on the sphere.
 pub fn frame_at(dir: DVec3) -> (DVec3, DVec3) {
@@ -223,13 +249,17 @@ pub fn lot_frame(planet_radius: f64, town: &Town, x: f64, z: f64) -> Frame {
     }
 }
 
-/// The site a town levels.
+/// The site a town levels: the ground it stands on, right across its own
+/// OUTLINE and an apron past that.
+///
+/// `OUTLINE` and not one radius. A town reaches 2.06 of its nominal
+/// radius (the lobes times the stretch) and `lay` emits lots all the way
+/// out there, so a site written against the radius alone levelled about
+/// the middle half of the town and left the suburbs on bare relief. The
+/// apron covers the half block and half street a lot's own corner stands
+/// past its centre.
 pub fn site_of(town: &Town) -> Site {
-    Site {
-        dir: town.dir,
-        h: town.h,
-        r: town.radius * 2.0 + APRON,
-    }
+    Site::town(town.dir, town.h, town.radius, town.along, town.seed)
 }
 
 /// The order qualifying sites are taken in: the PORT first, which is the
@@ -317,7 +347,12 @@ struct Ground {
 /// level across its middle and falls off a cliff at its rim is a site
 /// whose town stands on a pedestal.
 const BEARINGS: usize = 12;
-const RINGS: [f64; 4] = [0.3, 0.6, 0.85, 1.05];
+/// The rings the survey walks, as shares of the town's own OUTLINE, so
+/// the level it settles on is the lowest of the ground the town ACTUALLY
+/// covers. They were shares of the nominal radius out to 1.05, which is
+/// half a town: the level was the lowest of the middle and the ground
+/// the suburbs stood on had never been looked at.
+const RINGS: [f64; 4] = [0.25 * OUTLINE, 0.5 * OUTLINE, 0.75 * OUTLINE, OUTLINE];
 
 /// What the ground does across a site, in `BEARINGS` times `RINGS`
 /// samples plus the middle: forty nine marches.
@@ -420,7 +455,7 @@ pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) ->
         // neighbour as a city stands off its own.
         if placed
             .iter()
-            .any(|p| p.dir.dot(dir) > ((p.radius + radius + BETWEEN) / big_r).cos())
+            .any(|p| p.dir.dot(dir) > (((p.radius + radius) * OUTLINE + BETWEEN) / big_r).cos())
         {
             continue;
         }
@@ -465,7 +500,11 @@ pub(crate) fn settle(
     radius: f64,
 ) -> Option<Placement> {
     let ground = site_ground(planet, sea, dir, h, radius);
-    if ground.fall > radius * LEVEL {
+    // The bound is a SLOPE across whatever the survey walked, so
+    // widening the rings to the town's own outline asks for the same
+    // steepness over more ground rather than silently asking for a
+    // flatter world. `LEVEL` was a fall over the old 1.05 radii.
+    if ground.fall > radius * OUTLINE * (LEVEL / 1.05) {
         return None;
     }
     // And the level it will actually STAND at has to be inside the
@@ -541,19 +580,44 @@ pub(crate) fn lay_all_from(
 /// hundred and sixty sites read as one stamp used a hundred and sixty
 /// times, which is exactly what the owner was looking at.
 fn demand(x: f64, z: f64, radius: f64, along: DVec2, seed: u32) -> f64 {
+    let p = DVec2::new(x, z);
+    let d = p.length();
+    // Dead on the middle, and never a NaN out of a zero length divide.
+    if d <= 0.0 || !d.is_finite() {
+        return 1.0;
+    }
+    1.0 - d / edge(p / d, radius, along, seed)
+}
+
+/// How far a town reaches along a BEARING out of its own middle, metres.
+///
+/// The stretch and the lobes, in one function, because this is the one
+/// place a town's edge is decided: `demand` reads it to say where the
+/// town stops and `Site::level_r` reads it to say how far the ground is
+/// levelled, and a town whose plateau and whose lots came off two
+/// answers is the disc the owner was looking at.
+///
+/// The lobes are read at the NOMINAL edge rather than at the query
+/// point, which is what makes this a function of the bearing alone: a
+/// ray out of the middle of a town then crosses the outline exactly
+/// once, so there is an edge to level up to rather than a level set
+/// somebody has to root find.
+fn edge(b: DVec2, radius: f64, along: DVec2, seed: u32) -> f64 {
     // Stretched ALONG the shore and squeezed across it, at the same area:
     // a coastal town runs up and down its own beach, because the water
     // stops it one way and the hill behind it stops it the other. A town
     // with no slope under it gets no stretch and stays round.
     let (u, v) = if along.length_squared() < 0.5 {
-        (x, z)
+        (b.x, b.y)
     } else {
-        (x * along.x + z * along.y, z * along.x - x * along.y)
+        (b.x * along.x + b.y * along.y, b.y * along.x - b.x * along.y)
     };
-    let r = (u / STRETCH).hypot(v * STRETCH) / radius.max(f64::MIN_POSITIVE);
-    let p = DVec3::new(x / (radius * LOBE), 3.5, z / (radius * LOBE));
+    let s = (u / STRETCH).hypot(v * STRETCH);
+    let nominal = radius / s.max(f64::MIN_POSITIVE);
+    let at = b * nominal;
+    let p = DVec3::new(at.x / (radius * LOBE), 3.5, at.y / (radius * LOBE));
     let lobe = (noise3(p, seed) - 0.5) + (noise3(p * 2.7, seed ^ 0x5B2D) - 0.5) * 0.5;
-    1.0 - r + lobe * REACH
+    nominal * (1.0 + lobe * REACH)
 }
 
 /// What a block of a town's grid IS. The zones are the demand's own
@@ -614,6 +678,7 @@ pub fn lay(dir: DVec3, h: f64, radius: f64, along: DVec2, index: usize, seed: u3
         lots,
         pieces,
         index,
+        seed,
     }
 }
 
@@ -658,16 +723,30 @@ fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> (Vec<Lot>, Vec<u8>) {
                 _ => 1 + ((hash(i, j, 3) * 0.4 + want * want) * 7.0).floor() as u32,
             };
             let (kind, storeys) = choose(tall, hash(i, j, 6));
-            let jitter = if zone == Zone::Suburb {
-                SUBURB_SETBACK * 2.0
+            // A lot may move within its own BLOCK and no further,
+            // because the street's inner kerb is `BLOCK / 2` from the
+            // block's middle and what stands past it is a wall in the
+            // road. The room is what the building does not cover, and
+            // the zone says how much of that room it wants.
+            let room = BLOCK * 0.5 * (1.0 - kind.covers()).max(0.0);
+            let want = if zone == Zone::Suburb {
+                SUBURB_SETBACK
             } else {
-                BLOCK - 8.0
+                TOWN_JITTER
             };
-            built[(i + n) as usize * wide + (j + n) as usize] = if zone == Zone::Suburb {
+            let jitter = 2.0 * want.min(room);
+            built[(i + n) as usize * wide + (j + n) as usize] |= if zone == Zone::Suburb {
                 faces(i, j)
             } else {
                 fronts::ALL
             };
+            // And the road to it is paved all the way IN. A frontage on
+            // its own is a driveway: it paves the one street beside the
+            // block and stops, so a lone suburban house stood at an
+            // isolated rectangle of tarmac that joined nothing.
+            home_run(i, j, |k, m, side| {
+                built[(k + n) as usize * wide + (m + n) as usize] |= side;
+            });
             lots.push(Lot {
                 x: cx + (hash(i, j, 4) - 0.5) * jitter,
                 z: cz + (hash(i, j, 5) - 0.5) * jitter,
@@ -721,9 +800,12 @@ pub fn ground_at(planet: &dyn Density, dir: DVec3, near: f64, far: f64) -> f64 {
     0.5 * (lo + hi)
 }
 
+mod site;
+pub use site::*;
+
 mod street;
 pub use street::*;
-use street::{faces, streets_of};
+use street::{faces, home_run, streets_of};
 
 #[cfg(test)]
 mod tests;

@@ -12,6 +12,7 @@ pub mod atmos;
 pub mod audit;
 pub mod biome;
 pub mod chart;
+pub mod day;
 pub mod dc;
 pub mod driver;
 pub mod field;

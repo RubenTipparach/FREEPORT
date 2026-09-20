@@ -13,7 +13,7 @@ fn world() -> (Planet, f64, Vec<Town>) {
         overhang: 0.0,
         ledge: 0.0,
         seed: 5,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let sea = planet.radius - 40.0;
     let towns = town::plan(&planet, sea, 80.0, 12, 5);
@@ -229,4 +229,429 @@ fn villages_stand_along_the_roads() {
     for (i, v) in grown.iter().enumerate() {
         assert_eq!(v.index, towns.len() + i);
     }
+}
+
+/// A CORRIDOR follows the country rather than ramping straight through
+/// it: every piece is cut to the ground its own two ends stand on, and
+/// what it cuts is a verge rather than a canyon.
+#[test]
+fn a_corridor_follows_the_ground_and_stops_short_of_its_towns() {
+    let (planet, sea, towns) = world();
+    let levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let road = roads.first().expect("a road between two of them");
+    let run = survey(&levelled, road, sea - planet.radius + 2.0);
+    let line = centreline(road, planet.radius);
+    assert_eq!(run.len(), line.len(), "a height a point and no more");
+    // Every piece is about `PIECE` long, which is what the atlas's own
+    // ten kilometre waypoints are refined to.
+    for pair in line.windows(2) {
+        let run_m = pair[0].angle_between(pair[1]) * planet.radius;
+        assert!(
+            run_m <= PIECE + 1e-6,
+            "a piece {run_m:.0} m long against a {PIECE} m limit"
+        );
+    }
+    // What it CUTS is the gap between the levelled corridor and the bare
+    // ground, and it is a verge rather than a canyon.
+    let mut worst = 0.0f64;
+    for (dir, h) in line.iter().zip(&run) {
+        let bare = crate::town::surface_radius(&levelled.around(*dir, 1e-9), *dir) - planet.radius;
+        worst = worst.max((bare - h).abs());
+    }
+    assert!(
+        worst < 40.0,
+        "the corridor cuts {worst:.1} m into its own ground"
+    );
+    // And it stops short of both towns, so a town's disc owns its ground.
+    let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
+    let sites = corridor(road, &run, planet.radius, &discs);
+    let town = crate::town::site_of(&towns[road.from]);
+    assert!(
+        !sites.is_empty(),
+        "a road with no corridor is a road on data"
+    );
+    let centre = towns[road.from].dir;
+    for site in &sites {
+        for end in [site.dir, site.to] {
+            // Outside the town's own levelling AT THAT BEARING, which
+            // is what owns the ground there. Against the town's WIDEST
+            // instead, a road out along the squeezed axis stopped three
+            // hundred metres short of anything the town had levelled
+            // and the tarmac ended in a field.
+            let skip = town.level_r(end) + crate::field::site_skirt(&town);
+            assert!(
+                end.angle_between(centre) * planet.radius > skip,
+                "a corridor piece reaches inside the town it serves"
+            );
+        }
+    }
+    // Consecutive pieces MEET, which is what lets the field's slope
+    // bound assume two overlapping skirts rather than a count.
+    for pair in sites.windows(2) {
+        assert_eq!(pair[0].to, pair[1].dir, "a gap between two pieces");
+        assert_eq!(pair[0].to_h, pair[1].h, "a step between two pieces");
+    }
+}
+
+/// The corridor's own GRADE is the one the route was allowed, between
+/// the pieces the router never looked at as well as between its own
+/// waypoints.
+#[test]
+fn a_corridor_is_never_steeper_than_a_road_is_built() {
+    let (planet, sea, towns) = world();
+    let levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    for road in connect(&levelled, sea, &towns, SPACING).iter().take(6) {
+        let run = survey(&levelled, road, sea - planet.radius + 2.0);
+        let line = centreline(road, planet.radius);
+        for (pair, h) in line.windows(2).zip(run.windows(2)) {
+            let along = pair[0].angle_between(pair[1]) * planet.radius;
+            let grade = (h[1] - h[0]).abs() / along.max(1e-9);
+            assert!(
+                grade <= 0.1 + 1e-9,
+                "the corridor climbs at one in {:.1}",
+                1.0 / grade
+            );
+        }
+    }
+}
+
+/// THE TARMAC IS ON THE GROUND. Every vertex of every stretch stands
+/// `ribbon::LIFT` over the surface the corridor levelled under it, which
+/// is what makes a road a road and not a ribbon floating over a hill:
+/// the levelling and the tarmac read the same survey, so they cannot
+/// drift.
+#[test]
+fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
+    use crate::road::ribbon;
+    let (planet, sea, towns) = world();
+    let mut levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let road = roads.first().expect("a road");
+    let run = survey(&levelled, road, sea - planet.radius + DRY);
+    let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
+    let mut sites: Vec<_> = discs.iter().copied().collect();
+    sites.extend(corridor(road, &run, planet.radius, &discs));
+    levelled.sites = sites.into();
+
+    let line = centreline(road, planet.radius);
+    let open = open(&line, planet.radius, &discs);
+    let lamps = lit(&line, planet.radius, &discs);
+    let (mut over_most, mut under_most) = (0.0f64, 0.0f64);
+    let mut vertices = 0;
+    for k in 0..ribbon::count(line.len()) {
+        let at = ribbon::span(k, line.len());
+        let (l, r, o, t) = (
+            &line[at.clone()],
+            &run[at.clone()],
+            &open[at.clone()],
+            &lamps[at],
+        );
+        if l.len() < 2 {
+            continue;
+        }
+        let frame = ribbon::frame(l, r, planet.radius);
+        let whole = vec![(0.0, 1.0); l.len().saturating_sub(1)];
+        let m = ribbon::stretch(&frame, l, r, o, t, planet.radius);
+        assert!(m.solids.is_empty(), "tarmac collides with nothing");
+        // The road SURFACE alone: a lamp post stands seven metres up and
+        // is not tarmac, which is what the material byte is for.
+        let surface: Vec<_> = m
+            .mesh
+            .materials
+            .iter()
+            .enumerate()
+            .filter(|(_, mat)| **mat == crate::field::STREET || **mat == crate::field::PAINT)
+            .flat_map(|(t, _)| m.mesh.positions[t * 3..t * 3 + 3].to_vec())
+            .collect();
+        for p in &surface {
+            let world = frame.world(glam::Vec3::from(*p).as_dvec3());
+            let dir = world.normalize();
+            // The ground the field actually holds under this vertex.
+            let ground = planet.radius + levelled.surface(dir).0;
+            let over = world.length() - ground;
+            over_most = over_most.max(over);
+            under_most = under_most.min(over);
+            vertices += 1;
+        }
+    }
+    assert!(vertices > 100, "{vertices} vertices is not a road");
+    // ON the ground. `MITRE` is the error the cross section's own mitre
+    // makes at a bend, measured on this road at 0.103 m: the outer
+    // corner of a piece sits a little along the ramp from the station it
+    // belongs to, and the ramp is at a different height there. Nothing
+    // floats more than the surfacing plus that, so the tarmac is laid on
+    // the ground and not over it; and the shoulder is under the ground
+    // even at its worst, so there is no crack for the field to show
+    // through.
+    const MITRE: f64 = 0.12;
+    assert!(
+        over_most <= ribbon::LIFT + MITRE,
+        "the tarmac floats {over_most:.3} m over its own ground"
+    );
+    assert!(
+        under_most < -MITRE && under_most > -0.35,
+        "the shoulder's own edge reaches {under_most:.3} m, which is not buried"
+    );
+}
+
+/// A straight run of lit road, for measuring what is PAINTED on it and
+/// what stands beside it. Everything open, everything lit, flat ground.
+fn lit_run(radius: f64, points: usize) -> (crate::model::Model, Vec<DVec3>) {
+    use crate::road::ribbon;
+    let line: Vec<DVec3> = (0..points)
+        .map(|i| {
+            let a = i as f64 * PIECE / radius;
+            DVec3::new(a.sin(), 0.0, a.cos())
+        })
+        .collect();
+    let (run, open, on) = (vec![0.0; points], vec![true; points], vec![true; points]);
+    let frame = ribbon::frame(&line, &run, radius);
+    let whole = vec![(0.0, 1.0); points.saturating_sub(1)];
+    let model = ribbon::stretch(&frame, &line, &run, &open, &on, radius);
+    let local = line
+        .iter()
+        .map(|d| frame.local(*d * (radius + ribbon::LIFT)))
+        .collect();
+    (model, local)
+}
+
+/// How far a point stands to the side of a road's local centreline, and
+/// how far along it: the road is straight here, so its own direction is
+/// end to end and the across is square to that in the tangent plane.
+fn off_road(local: &[DVec3], p: DVec3) -> (f64, f64) {
+    let along = (local[local.len() - 1] - local[0]).normalize_or(DVec3::Y);
+    let across = DVec3::new(along.y, -along.x, 0.0).normalize_or(DVec3::X);
+    ((p - local[0]).dot(along), (p - local[0]).dot(across))
+}
+
+/// THE CENTRELINE IS DASHED, in three metre dashes and not in three
+/// hundred and forty one metre ones.
+///
+/// A dash was asked once a PIECE, so it came out as a whole piece of
+/// solid paint and then two whole pieces of nothing: the first picture
+/// of a road showed two edge lines and no middle at all, because the
+/// piece the camera stood on had fallen in a gap. What this measures is
+/// that a third of the centreline is paint and that no single mark is
+/// longer than one dash.
+#[test]
+fn the_centreline_is_dashed_in_dashes_and_not_in_pieces() {
+    use crate::road::ribbon;
+    const RADIUS: f64 = 1_000_000.0;
+    let (m, local) = lit_run(RADIUS, ribbon::STRETCH + 1);
+    let (mut painted, mut longest) = (0.0, 0.0f64);
+    for (t, mat) in m.mesh.materials.iter().enumerate() {
+        if *mat != crate::field::PAINT {
+            continue;
+        }
+        let p: Vec<DVec3> = (0..3)
+            .map(|i| glam::Vec3::from(m.mesh.positions[t * 3 + i]).as_dvec3())
+            .collect();
+        let (at, off): (Vec<f64>, Vec<f64>) = p.iter().map(|q| off_road(&local, *q)).unzip();
+        // The EDGE lines stand a metre out; only the middle is dashed.
+        if off.iter().any(|o| o.abs() > 0.5) {
+            continue;
+        }
+        painted += (p[1] - p[0]).cross(p[2] - p[0]).length() * 0.5;
+        longest = longest.max(
+            at.iter().copied().fold(f64::MIN, f64::max)
+                - at.iter().copied().fold(f64::MAX, f64::min),
+        );
+    }
+    let length = (local[local.len() - 1] - local[0]).length();
+    let share = painted / ribbon::PAINT_W / length;
+    let want = ribbon::DASH / (ribbon::DASH + ribbon::GAP);
+    assert!(
+        (share - want).abs() < 0.02,
+        "{:.1}% of the centreline is paint and {:.1}% should be",
+        share * 100.0,
+        want * 100.0
+    );
+    assert!(
+        longest <= ribbon::DASH + 0.05,
+        "the longest mark on the centreline is {longest:.1} m against a dash of {:.1}",
+        ribbon::DASH
+    );
+}
+
+/// THE LAMPS ON A LIT APPROACH STAND A STRIDE APART AND ALTERNATE SIDES,
+/// rather than one a kilometre all down one side.
+///
+/// They were placed one every third PIECE, which is the dashes' own
+/// mistake: the port's lit approach is about a kilometre of open road
+/// and it carried exactly one light, standing where the camera was, so
+/// the night picture of a road had nothing on it at all.
+#[test]
+fn the_lamps_on_an_approach_are_staggered_a_stride_apart() {
+    use crate::road::ribbon;
+    const RADIUS: f64 = 1_000_000.0;
+    let (m, local) = lit_run(RADIUS, ribbon::STRETCH + 1);
+    let mut posts: Vec<(f64, f64)> = m.lamps.iter().map(|p| off_road(&local, *p)).collect();
+    posts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let length = (local[local.len() - 1] - local[0]).length();
+    assert!(
+        posts.len() as f64 > length / ribbon::LAMP_EVERY - 2.0,
+        "{} lamps over {length:.0} m is not an approach lit every {:.0} m",
+        posts.len(),
+        ribbon::LAMP_EVERY
+    );
+    for pair in posts.windows(2) {
+        let gap = pair[1].0 - pair[0].0;
+        assert!(
+            (gap - ribbon::LAMP_EVERY).abs() < 1.0,
+            "two lamps stand {gap:.1} m apart"
+        );
+        assert!(
+            pair[0].1 * pair[1].1 < 0.0,
+            "two lamps in a row stand on the same side, at {:.2} and {:.2}",
+            pair[0].1,
+            pair[1].1
+        );
+    }
+}
+
+/// A road RIDES over the ground rather than cutting into it, which is
+/// what keeps the terrain off the top of it.
+///
+/// A CUT is a feature the terrain's own LOD cannot hold: the corridor is
+/// `CORRIDOR` (7 m) either side of the centreline and the rings put a
+/// cell of about a sixty fourth of its own distance under the eye, so
+/// past a couple of hundred metres the mesher has no sample inside the
+/// cutting, draws the hill that was there before the road, and the
+/// ground closes over the tarmac. A FILL the mesher loses leaves the
+/// road standing a little proud of the ground, which is an embankment.
+/// So what this holds is the CUT, and the fill is only reported.
+#[test]
+fn a_road_rides_over_the_ground_rather_than_cutting_into_it() {
+    let (planet, sea, towns) = world();
+    let levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let dry = sea - planet.radius + 2.0;
+    let (mut cut, mut fill, mut n) = (0.0f64, 0.0f64, 0usize);
+    for road in roads.iter().take(6) {
+        let run = survey(&levelled, road, dry);
+        let line = centreline(road, planet.radius);
+        if run.len() != line.len() {
+            continue;
+        }
+        // ALONG the chord between every pair of stations, because that
+        // is what the tarmac is laid on and what the corridor levels to,
+        // and the ground between two stations is exactly what a station
+        // sample by itself could not see.
+        const STEPS: usize = 8;
+        for (w, h) in line.windows(2).zip(run.windows(2)) {
+            for k in 0..=STEPS {
+                let dir = crate::road::step(w[0], w[1], k, STEPS);
+                let bare =
+                    crate::town::surface_radius(&levelled.around(dir, 1e-9), dir) - planet.radius;
+                let here = h[0] + (h[1] - h[0]) * (k as f64 / STEPS as f64);
+                cut = cut.max(bare - here);
+                fill = fill.max(here - bare);
+                n += 1;
+            }
+        }
+    }
+    println!(
+        "over {n} points a road stands {fill:.2} m over its own ground at most and {cut:.2} m under it"
+    );
+    assert!(
+        cut < 1.0,
+        "a road cuts {cut:.2} m into its own ground, which a coarse chunk cannot hold and the terrain then closes over"
+    );
+}
+
+/// A highway JOINS a town: its slip reaches a crossing the town paved,
+/// and it lands on the ground the whole way.
+///
+/// What this replaces measured the run in, which was a MASK: the tarmac
+/// carried on past `open` and stopped `MEET` from the nearest piece in
+/// whatever direction that happened to be. It passed at 0.51 m for as
+/// long as the pieces it described were never drawn, and it could not
+/// have failed, because `road::clear` stops the tarmac at `MEET` and the
+/// test then measured the distance to the nearest piece. The moment
+/// `ribbon::stretch` stopped throwing those pieces away, the tarmac they
+/// drew floated 1.790 m over the town's own plateau.
+///
+/// So a slip is GEOMETRY that reads the ground, and the two halves of
+/// that are what this holds: it ENDS on a crossing, and no point of it
+/// stands off the ground the field actually makes there.
+#[test]
+fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
+    let (planet, sea, towns) = world();
+    let levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
+    let (mut worst_gap, mut worst_float) = (0.0f64, 0.0f64);
+    let mut seen = 0;
+    let mut worst_sunk = f64::NEG_INFINITY;
+    for road in roads.iter().take(6) {
+        let line = centreline(road, planet.radius);
+        let open = crate::road::open(&line, planet.radius, &discs);
+        let Some(first) = open.iter().position(|o| *o) else {
+            continue;
+        };
+        let town = &towns[road.from];
+        let at = line[first];
+        let along = (at - line[(first + 1).min(line.len() - 1)]).normalize_or(at);
+        let slip = crate::road::slip(&levelled, town, at, along, planet.radius);
+        if slip.len() < 2 {
+            continue;
+        }
+        // It ENDS on a crossing the town actually paved.
+        let (end, _) = slip[slip.len() - 1];
+        let gap = town
+            .pieces
+            .iter()
+            .map(|p| {
+                let dir =
+                    (town.dir * planet.radius + town.east * p.x + town.north * p.z).normalize();
+                dir.angle_between(end) * planet.radius - p.w.max(p.d) * 0.5
+            })
+            .fold(f64::INFINITY, f64::min)
+            .max(0.0);
+        worst_gap = worst_gap.max(gap);
+        // And it RIDES its own ground: over it everywhere, by the
+        // street's own five centimetres at the crossing and no more
+        // than the highway's embankment out at the mouth. Under it
+        // ANYWHERE is the defect the pictures showed, which is a road
+        // drawn below the hill it was laid on.
+        for (dir, h) in &slip {
+            let ground = crate::town::surface_radius(&levelled, *dir) - planet.radius;
+            let over = h + ribbon::LIFT - ground;
+            worst_float = worst_float.max(over);
+            worst_sunk = worst_sunk.max(-over);
+        }
+        seen += 1;
+    }
+    println!(
+        "{seen} slips end {worst_gap:.2} m from a crossing and stand {worst_float:.3} m over their own ground, {worst_sunk:.3} m under it at the worst"
+    );
+    assert!(seen > 0, "no road laid a slip at all");
+    assert!(
+        worst_gap < 2.0,
+        "a slip ends {worst_gap:.2} m short of the crossing it is supposed to join"
+    );
+    assert!(
+        worst_sunk <= 0.0,
+        "a slip stands {worst_sunk:.3} m INTO the ground it is laid on"
+    );
+    assert!(
+        worst_float <= ribbon::LIFT + crate::road::EMBANK + 1e-9,
+        "a slip stands {worst_float:.3} m over its own ground, past the highway's own embankment"
+    );
 }

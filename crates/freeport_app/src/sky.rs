@@ -122,8 +122,39 @@ pub struct Weather {
     pub air: Air,
     /// The sea's radius, which is where the ground fog is thickest.
     pub sea: f64,
-    /// Where the sun is, as a direction in the world frame.
+    /// Where the sun is NOW, as a direction in the world frame. It is
+    /// derived from `noon` and `now` once a frame by `turn_sun` and is
+    /// what the light, the dome, the fog, the sea, the lamps and the
+    /// bodies drawn from far off all read, so they cannot point six ways.
     pub sun: DVec3,
+    /// Where the sun stood when this body's clock read nought.
+    pub noon: DVec3,
+    /// Seconds into the body's own day when the app's own clock read
+    /// nought, which is what `--hour` sets.
+    pub start: f64,
+    /// Seconds into the body's own day. It only ever grows; `day::hour`
+    /// is what turns it into a place on the dial.
+    pub now: f64,
+    /// How long one of this body's days is, seconds.
+    pub day: f64,
+    /// Where the EYE is on this body, as a direction: which of its hours
+    /// the lamps are lit by, and what `turn_sun` measures the clock at.
+    pub here: DVec3,
+}
+
+impl Weather {
+    /// What o'clock it is where the eye stands.
+    pub fn oclock(&self) -> f64 {
+        freeport_core::day::oclock(self.sun, self.here)
+    }
+
+    /// How hard the lamps are burning where the eye stands, one at night
+    /// and nought by day. The CPU's answer, read by `lamps.rs`; the
+    /// fragment shaders transcribe `day::daylight` and get the same one
+    /// per fragment.
+    pub fn lamplight(&self) -> f64 {
+        freeport_core::day::lamplight(self.sun, self.here)
+    }
 }
 
 /// A handle held so `atmos.wgsl` is LOADED and not merely registered: an
@@ -146,6 +177,7 @@ impl Plugin for SkyPlugin {
             .resource::<AssetServer>()
             .load("embedded://freeport_app/atmos.wgsl");
         app.insert_resource(Lib(lib));
+        app.init_resource::<Baking>();
         app.add_plugins((
             MaterialPlugin::<Sky>::default(),
             environment::StaticEnvironmentPlugin,
@@ -179,13 +211,162 @@ pub fn spawn_dome(
     // metre and four decimals of it print as nought, which is a line that
     // says nothing exactly where the number moved.
     info!(
-        "sky: air from {:.0} m to {:.0} m, the sun at {:.2}, fog e folding over {:.0} m and gone by {:.0} m up",
+        "sky: air from {:.0} m to {:.0} m, the sun at {:.2} ({:.2} o'clock, a day is {:.0} min), fog e folding over {:.0} m and gone by {:.0} m up",
         weather.air.ground,
         weather.air.top,
         weather.sun,
+        weather.oclock(),
+        weather.day / 60.0,
         1.0 / weather.air.fog.max(f64::MIN_POSITIVE),
         weather.air.fog_height
     );
+}
+
+/// What the sun is worth at its own noon, lux. It is scaled down to
+/// NOUGHT across the terminator by `turn_sun`, which is the one writer
+/// of it: `spawn_light` spawns the light dark and this decides how hard
+/// it burns, the same split `light_lamps` and `dim_lamps` keep.
+pub const SUN_LUX: f32 = 8_000.0;
+
+/// How far the sun may TURN before the sky that lights the world is
+/// baked again, radians. Half a degree is the sun's own width, which is
+/// the finest step there is any point taking: what the cubemap feeds is
+/// the ambient, a cosine average over a whole hemisphere, so it cannot
+/// hold a feature narrower than the source that made it. At four hours
+/// to a day the sun covers this in twenty seconds of play, and a bake is
+/// four to twenty milliseconds on a thread of its own, which is a
+/// thousandth of a core.
+const RE_BAKE: f64 = 0.0087;
+
+/// The sky being baked for a sun that has moved, on a thread of its own.
+///
+/// It is a THREAD and not the frame's own work because a bake is up to
+/// twenty milliseconds and a frame is sixteen: done in line it would be a
+/// visible hitch every twenty seconds, which is a worse picture than the
+/// stale ambient it is there to replace. A `JoinHandle` and not a channel
+/// because there is exactly ONE answer and no queue: `is_finished` is the
+/// poll and `join` on a finished thread returns without waiting, so this
+/// system never blocks the frame it runs on.
+#[derive(Resource, Default)]
+pub struct Baking {
+    /// The sun the cubemap on the camera was last baked FOR, which is
+    /// what says whether another bake is owed. It is written when the
+    /// worker is started rather than when it lands, so a slow bake is
+    /// never started twice.
+    asked: DVec3,
+    waiting: Option<std::thread::JoinHandle<Image>>,
+}
+
+/// The sun, turned. `Weather::now` is the body's own clock and everything
+/// that reads the sun reads this one number: the light that casts the
+/// shadows, the dome, the fog, the sea, the lamps and the bodies drawn
+/// from far off.
+///
+/// The BODY is held still and the sky turns, which is what `day.rs` says
+/// and why: every direction this game reasons about is written on a
+/// sphere that never moves, so spinning the planet would mean moving
+/// every chunk, every town and every lamp in the world once a frame for
+/// a picture identical to turning one vector.
+///
+/// The clock is `Time::elapsed_secs_f64` and an offset rather than a
+/// delta summed frame by frame, which is the SAME clock `traffic.rs`
+/// puts its townsmen on: two clocks is how a sun and the people under it
+/// come to disagree about what time it is.
+pub fn turn_sun(
+    time: Res<Time>,
+    eye: Res<crate::Eye>,
+    ground: Res<crate::Ground>,
+    mut weather: ResMut<Weather>,
+    mut light: Query<(&mut Transform, &mut DirectionalLight)>,
+) {
+    weather.now = weather.start + time.elapsed_secs_f64();
+    weather.sun = freeport_core::day::sun_at(weather.noon, weather.now, weather.day);
+    weather.here = (eye.0 .0 - ground.1).normalize_or(DVec3::Y);
+    let sun = weather.sun.as_vec3();
+    // The light shines the way the sun is NOT: Bevy's forward is negative
+    // z and a directional light travels along it. The up is the axis the
+    // sun is LEAST along, because a `looking_to` whose up is parallel to
+    // its direction has no frame to build and the sun passes over the
+    // pole twice a year on any body with a tilt.
+    let up = if sun.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
+    // AND IT GOES OUT ON THE NIGHT SIDE. A directional light shines on
+    // every surface whose normal faces it, and nothing in a cascade a
+    // few hundred metres deep can put a PLANET in the way: at midnight
+    // the sun stands under the ground and every wall facing it was lit
+    // from below, which is sunlight shining up through the world. The
+    // owner saw it and named where the answer is.
+    //
+    // It is tenebris's, and it is one line there too (`hex.vs.glsl`):
+    // `smoothstep(term_lo, term_hi, dot(radial, sun))` scales the sun's
+    // own diffuse, so which half of a planet is in its own night is
+    // decided on the RADIAL and not on the surface normal. That is
+    // `freeport_core::day::daylight`, which this crate already carries
+    // and which `distant.wgsl`, `water.wgsl` and `terrain.wgsl` already
+    // transcribe; the sun was the one thing not reading it.
+    //
+    // At the EYE's own radial, because Bevy's light loop is inside
+    // `apply_pbr_lighting` and there is nowhere to scale one light per
+    // fragment without writing the loop again. On the ground that is
+    // exact to a tenth of a degree, which is what a 1.8 km horizon
+    // subtends; from the air near the terminator it is one answer for a
+    // scene that spans several degrees of it, and from orbit the
+    // impostor does the same rule per fragment off its own chart.
+    //
+    // And it goes out AT the horizon and not a few degrees under it,
+    // which is the owner's second correction and is the physics: a
+    // directional light cannot cast a shadow from below nought degrees,
+    // because past a place's own horizon the planet is between it and
+    // the sun. `day::daylight` is nought there by construction now; the
+    // band it still has is ABOVE the horizon, where a low sun really is
+    // shining through forty airmasses and delivering a tenth of what it
+    // does overhead. What is left after a sunset is `day::twilight`,
+    // which is scattered light and belongs to the sky, the sea's mirror
+    // and the body seen from orbit rather than to this beam.
+    let lux = SUN_LUX * freeport_core::day::daylight(weather.sun, weather.here) as f32;
+    for (mut tf, mut lamp) in &mut light {
+        *tf = Transform::from_translation(Vec3::ZERO).looking_to(-sun, up);
+        lamp.illuminance = lux;
+    }
+}
+
+/// The sky baked into the cubemap again once the sun has moved, on a
+/// worker, and swapped in at the same handle when it lands.
+///
+/// Replacing the IMAGE is what regenerates the filtered light:
+/// `StaticEnvironment` caches Bevy's own filtering on the source
+/// texture's id (`sky/environment.rs`), so a new image is a new texture
+/// is a new filter, and nothing here has to know how that is done.
+pub fn rebake_env(
+    weather: Res<Weather>,
+    eye: Res<crate::Eye>,
+    ground: Res<crate::Ground>,
+    mut baking: ResMut<Baking>,
+    mut images: ResMut<Assets<Image>>,
+    lights: Query<&bevy::light::GeneratedEnvironmentMapLight>,
+) {
+    let Ok(light) = lights.single() else {
+        return;
+    };
+    if baking.waiting.as_ref().is_some_and(|j| !j.is_finished()) {
+        return;
+    }
+    if let Some(job) = baking.waiting.take() {
+        // A worker that panicked leaves the sky it baked LAST, which is a
+        // stale ambient rather than a black one: the picture is wrong by
+        // however far the sun has gone since, and never a hole.
+        if let Ok(image) = job.join() {
+            if let Err(e) = images.insert(&light.environment_map, image) {
+                warn!("the sky could not be baked again: {e}");
+            }
+        }
+        return;
+    }
+    if weather.sun.angle_between(baking.asked) < RE_BAKE {
+        return;
+    }
+    let (air, sun, here) = (weather.air, weather.sun, eye.0 .0 - ground.1);
+    baking.asked = sun;
+    baking.waiting = std::thread::spawn(move || bake_env(&air, sun, here)).into();
 }
 
 /// The materials the sky is painted onto: the ground, the sea and the
@@ -248,6 +429,12 @@ pub fn drift_sky(
         if let Some(m) = painted.ground.get_mut(id) {
             m.extension.fog = fog;
             m.extension.haze = haze;
+            // The SUN, so a street lamp and a lit pane burn at night and
+            // not at noon. The w is how hard they burn and is the
+            // material's, not the weather's, so it is read back rather
+            // than written over, which is what the sea and the bodies
+            // drawn from far off already do with theirs.
+            m.extension.sun = weather.sun.as_vec3().extend(m.extension.sun.w);
         }
     }
     let ids: Vec<_> = painted.water.ids().collect();
@@ -338,4 +525,116 @@ fn cube_dir(face: usize, u: f64, v: f64) -> DVec3 {
         _ => DVec3::new(-u, -v, -1.0),
     }
     .normalize()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freeport_core::day;
+
+    /// THE SUN GOES OUT ON THE NIGHT SIDE, and it goes out AT the
+    /// horizon, which is the owner's own correction twice over.
+    ///
+    /// The first half is tenebris's rule (`hex.vs.glsl`: the terminator
+    /// is measured on the RADIAL and it scales the sun's diffuse) and is
+    /// what stops a wall at midnight being lit from under the ground.
+    /// The second is the physics the first cut of it still had wrong: a
+    /// directional light cannot cast a shadow from below nought degrees,
+    /// because past a place's own horizon the planet is in the way, and
+    /// the band `day::daylight` fades over ran five and a half degrees
+    /// UNDER the horizon. The harness's sun was still burning at a fifth
+    /// of its strength with the sun set.
+    ///
+    /// It is driven through the real system, because the rule is the
+    /// core's and the wiring is where an app side bug would be, and over
+    /// a WHOLE DAY rather than at named hours: six and eighteen are only
+    /// sunrise and sunset on a place whose own latitude the sun is over,
+    /// and reading them as the terminator is what put this assertion's
+    /// first cut 952 lux past its own claim.
+    #[test]
+    fn a_wall_at_midnight_takes_no_sun_through_the_ground() {
+        let here = DVec3::new(0.2, 0.3, 0.93).normalize();
+        let noon = DVec3::new(0.9, 0.1, 0.42).normalize();
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .insert_resource(crate::Eye(freeport_core::pos::WorldPos(here * 1_000_000.0)))
+            .insert_resource(crate::Ground(
+                std::sync::Arc::new(crate::world::World {
+                    planet: freeport_core::field::Planet::default(),
+                    towns: Vec::new(),
+                    roads: Vec::new(),
+                    routes: Vec::new(),
+                    bounds: freeport_core::walker::Bounds {
+                        radius: 1_000_000.0,
+                        floor: 0.0,
+                        top: 1.0,
+                        sea: 0.0,
+                    },
+                    sea: freeport_core::water::Sea {
+                        radius: 1_000_000.0,
+                    },
+                }),
+                DVec3::ZERO,
+            ))
+            .insert_resource(Weather {
+                air: freeport_core::atmos::Air::round(1_000_000.0, 8_000.0),
+                sea: 1_000_000.0,
+                sun: noon,
+                noon,
+                start: 0.0,
+                now: 0.0,
+                day: day::DAY,
+                here,
+            })
+            .add_systems(Update, turn_sun);
+        let light = app
+            .world_mut()
+            .spawn((DirectionalLight::default(), Transform::default()))
+            .id();
+        let (mut band, mut full, mut dark) = (0, 0, 0);
+        for step in 0..240 {
+            let hour = step as f64 / 10.0;
+            let start = day::at_oclock(noon, here, hour, day::DAY);
+            let sun = day::sun_at(noon, start, day::DAY);
+            {
+                // The CLOCK and not the sun: `turn_sun` works the sun
+                // out of the hour itself, so a test that wrote the sun
+                // straight in had it overwritten and read noon at
+                // midnight.
+                let mut weather = app.world_mut().resource_mut::<Weather>();
+                (weather.start, weather.now) = (start, start);
+            }
+            app.update();
+            let lux = app
+                .world()
+                .get::<DirectionalLight>(light)
+                .expect("the sun")
+                .illuminance;
+            // Over the horizon, as the SINE the terminator is measured
+            // in rather than as an hour of anybody's clock.
+            let up = sun.dot(here);
+            if up <= 0.0 {
+                assert_eq!(
+                    lux, 0.0,
+                    "at {hour:.1} o'clock the sun is {:.2} degrees UNDER the horizon and worth {lux} lux",
+                    -up.asin().to_degrees()
+                );
+                dark += 1;
+            } else {
+                assert!(lux > 0.0, "at {hour:.1} o'clock the sun is up and out");
+                if lux >= SUN_LUX * 0.999 {
+                    full += 1;
+                } else {
+                    band += 1;
+                }
+            }
+        }
+        // A day, a night, and a dusk between them that is a BAND and not
+        // a switch: the fade is ABOVE the horizon, where a low sun is
+        // shining through forty airmasses.
+        assert!(
+            dark > 0 && full > 0 && band > 0,
+            "{dark} dark readings, {full} full and {band} in the band is not a day"
+        );
+    }
 }

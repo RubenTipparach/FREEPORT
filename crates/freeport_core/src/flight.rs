@@ -199,11 +199,7 @@ mod tests {
     fn a_flat_town_recovers_to_contact_without_a_remote_skirt_work_limit() {
         let planet = Planet {
             octaves: 18,
-            sites: vec![Site {
-                dir: DVec3::Y,
-                h: 1200.0,
-                r: 160.0,
-            }],
+            sites: vec![Site::round(DVec3::Y, 1200.0, 160.0)].into(),
             ..Default::default()
         };
         let landed = sweep_planet(&planet, DVec3::Y * 1_004_100.0, DVec3::ZERO, 0.51);
@@ -225,16 +221,12 @@ mod tests {
     /// other runs straight through it.
     #[test]
     fn local_slope_keeps_skirts_crossed_between_clear_endpoints() {
-        let pan = |x: f64| Site {
-            dir: DVec3::new(x, 1000.0, 0.0).normalize(),
-            h: -20.0,
-            r: 40.0,
-        };
+        let pan = |x: f64| Site::round(DVec3::new(x, 1000.0, 0.0).normalize(), -20.0, 40.0);
         let planet = Planet {
             radius: 1000.0,
             relief: 0.0,
             overhang: 0.0,
-            sites: vec![pan(-60.0), pan(60.0)],
+            sites: vec![pan(-60.0), pan(60.0)].into(),
             ..Default::default()
         };
         let start = DVec3::new(-60.0, 985.0, 0.0);
@@ -256,11 +248,7 @@ mod tests {
         let start = DVec3::X * 1_010_000.0;
         let end = DVec3::X * 990_000.0;
         let expected = sweep_planet(&planet, start, end, 0.5);
-        planet.sites.push(Site {
-            dir: DVec3::Y,
-            h: 1000.0,
-            r: 160.0,
-        });
+        planet.sites.push(Site::round(DVec3::Y, 1000.0, 160.0));
         assert_eq!(sweep_planet(&planet, start, end, 0.5), expected);
         assert!(planet.at(expected) <= -0.5);
     }
@@ -269,14 +257,14 @@ mod tests {
     fn radial_takeoff_on_a_skirt_keeps_its_distance_and_carve_collision() {
         let planet = Planet {
             octaves: 18,
-            sites: vec![Site {
-                dir: DVec3::Y,
-                h: 1200.0,
-                r: 160.0,
-            }],
+            sites: vec![Site::round(DVec3::Y, 1200.0, 160.0)].into(),
             ..Default::default()
         };
-        let direction = DVec3::new(80e-6, 1.0, 0.0).normalize();
+        // ON THE SKIRT, which is the middle of the band rather than a
+        // hard coded 80 m: `site_band` is what says where a skirt is.
+        let (inner, outer) = crate::field::site_band(&planet.sites[0]);
+        let across = (inner + outer) * 0.5 / planet.radius;
+        let direction = DVec3::new(across, 1.0, 0.0).normalize();
         let ground = crate::town::surface_radius(&planet, direction);
         let landed = sweep_planet(
             &planet,

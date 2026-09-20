@@ -24,11 +24,9 @@ fn gpu_preserves_cpu_signs_and_lod_seams() {
     };
     let dir = DVec3::new(0.5, 0.8, -0.3).normalize();
     let top = surface_radius(&planet, dir);
-    planet.sites.push(Site {
-        dir,
-        h: top - planet.radius,
-        r: 172.0,
-    });
+    planet
+        .sites
+        .push(Site::round(dir, top - planet.radius, 172.0));
     let lat = Lattice::new(DVec3::splat(-2_000_099.875), 0.25);
     let eye = dir * top;
     let rings = Rings::around(&lat, eye, 12);

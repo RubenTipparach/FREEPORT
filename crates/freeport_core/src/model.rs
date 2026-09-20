@@ -20,7 +20,10 @@
 //! which is what `town::Frame` maps to and from.
 
 use crate::dc::DcMesh;
-use crate::field::{hash3, Block, CONCRETE, GLASS, LAMP, LIT, PAINT, PLATE, STREET};
+use crate::field::{
+    hash3, Block, BRICK, CONCRETE, CURTAIN, GLASS, LAMP, LIT, MARBLE, PAINT, PLATE, STONE, STREET,
+    VINYL, WOOD,
+};
 use crate::town::{lot_frame, paved, Frame, Piece, Town, BANDS, KERB, LANE, LIFT, WALK};
 use glam::{DVec2, DVec3};
 
@@ -143,6 +146,34 @@ impl Model {
     /// Nothing yet.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Repaint every triangle and every box of one material as another.
+    ///
+    /// What it is FOR is the baked building library: a bake out of
+    /// Blender is authored in one material (`tools/bake_buildings.py`
+    /// writes concrete), and which trade a building is actually built in
+    /// is a fact about the LOT rather than about the variant, so thirteen
+    /// variants would have to be baked five times over to carry it. One
+    /// table of trades (`Kind::skin`) and one repaint on the way out of
+    /// the library is the whole of it.
+    ///
+    /// It repaints the MESH and the SOLIDS together, which is this
+    /// project's own rule that a wall is one oriented box that is drawn
+    /// and collided from one set of numbers: a repaint that moved only
+    /// one of them would be a wall that looked like brick and answered
+    /// concrete to whatever asks what a body is standing on.
+    pub fn reskin(&mut self, from: u8, to: u8) {
+        for s in &mut self.solids {
+            if s.material == from {
+                s.material = to;
+            }
+        }
+        for m in &mut self.mesh.materials {
+            if *m == from {
+                *m = to;
+            }
+        }
     }
 
     /// A triangle, wound so `(b - a) x (c - a)` points out of the solid.
@@ -268,6 +299,32 @@ impl Kind {
         }
     }
 
+    /// How much of its own BLOCK a kind's walls cover, as a share of
+    /// `town::BLOCK` across.
+    ///
+    /// A block is `BLOCK` and the street's own inner kerb stands exactly
+    /// `BLOCK / 2` from its middle, so this is the one number that says
+    /// how far a lot may be set back or jittered without putting a wall
+    /// on a pavement: the room a lot has is `BLOCK * (1 - covers) / 2`
+    /// either way, and `town::plot` bounds every offset by it. A wall is
+    /// one oriented box that is DRAWN and COLLIDED, so a building
+    /// standing in a street is a body walking into a wall in the middle
+    /// of the road, which is what the owner photographed.
+    ///
+    /// It is ONE for every kind today, and that is a fact about the
+    /// LIBRARY rather than a knob nobody turned:
+    /// `assets/config/buildings.json` bakes every one of the thirteen
+    /// variants at the full block and `Library` refuses a bake wider
+    /// than this, so there is no room for a setback to be in. The day a
+    /// house is baked at six metres this is where that is said, and the
+    /// suburb's own setback appears with it and with nothing else
+    /// changed.
+    pub fn covers(self) -> f64 {
+        match self {
+            Kind::Block | Kind::House | Kind::Bungalow | Kind::Tower | Kind::Hangar => 1.0,
+        }
+    }
+
     /// The fewest and the most storeys it stands in.
     pub fn storeys(self) -> (u32, u32) {
         match self {
@@ -277,6 +334,34 @@ impl Kind {
             Kind::Tower => (3, 6),
             Kind::Hangar => (1, 1),
         }
+    }
+
+    /// What its walls are made of, off its own seed: the owner's own
+    /// list of trades, a house out of wood, red brick or vinyl and an
+    /// office out of red brick, concrete, marble, glass or stone blocks.
+    /// The glass is a CURTAIN WALL and not the pane material, for the
+    /// reason `field::CURTAIN` writes down: a whole tower of the pane's
+    /// own flat dark mirror vanished against the sky.
+    ///
+    /// A TABLE a kind and a hash into it, which is this project's own
+    /// "open for extension" rule: a new skin is a row and a set, not a
+    /// branch in a builder. A hangar is neither a house nor an office
+    /// and keeps the concrete it was built in, because what the owner
+    /// asked about is the two a town is made of.
+    ///
+    /// It is the SEED and never the lot's place, so a building is the
+    /// same building wherever the eye happens to be when the town is
+    /// raised: `city::stream` builds a town as the eye comes near it and
+    /// drops it again, and a skin picked off anything that streams would
+    /// change colour every time you drove back into town.
+    pub fn skin(self, seed: u32) -> u8 {
+        let trades: &[u8] = match self {
+            Kind::House | Kind::Bungalow => &[WOOD, BRICK, VINYL],
+            Kind::Block | Kind::Tower => &[BRICK, CONCRETE, MARBLE, CURTAIN, STONE],
+            Kind::Hangar => &[CONCRETE],
+        };
+        let pick = hash3(seed as i64, 0x5C11, 0x2E, 0x51DE);
+        trades[((pick * trades.len() as f64) as usize).min(trades.len() - 1)]
     }
 
     /// Every kind, so a harness can build one of each.
@@ -303,12 +388,17 @@ pub fn building(kind: Kind, w: f64, d: f64, storeys: u32, seed: u32) -> Model {
     let n = storeys.clamp(low, high);
     let h = n as f64 * STOREY;
     let mut m = Model::new();
+    // What this one is BUILT of. The walls and a pitched roof wear it;
+    // a flat roof's slab, a floor and the pillars stay what they were,
+    // because a flat roof IS poured concrete and a pillar IS steel
+    // whatever the skin hung off it is.
+    let skin = kind.skin(seed);
     match kind {
-        Kind::Tower => round(&mut m, w.min(d) * 0.5, h, seed),
-        _ => shell(&mut m, w, d, h, seed),
+        Kind::Tower => round(&mut m, w.min(d) * 0.5, h, seed, skin),
+        _ => shell(&mut m, w, d, h, seed, skin),
     }
     match kind {
-        Kind::House => gable(&mut m, w, d, h),
+        Kind::House => gable(&mut m, w, d, h, skin),
         Kind::Hangar => vault(&mut m, w, d, h),
         Kind::Tower => flat_roof(&mut m, w.min(d), w.min(d), h),
         _ => flat_roof(&mut m, w, d, h),
@@ -325,10 +415,13 @@ pub fn building(kind: Kind, w: f64, d: f64, storeys: u32, seed: u32) -> Model {
     m
 }
 
-/// Four walls, a floor, a doorway in the south wall and panes up the rest.
-fn shell(m: &mut Model, w: f64, d: f64, h: f64, seed: u32) {
+/// Four walls of `skin`, a concrete floor, a doorway in the south wall
+/// and panes up the rest.
+fn shell(m: &mut Model, w: f64, d: f64, h: f64, seed: u32, skin: u8) {
     let t = WALL * 0.5;
     let (hw, hd) = (w * 0.5, d * 0.5);
+    // The FLOOR is poured concrete whatever the walls are, which is
+    // what a floor is: a slab on the ground.
     m.solid(
         DVec3::new(0.0, 0.0, SLAB * 0.5),
         DVec3::new(hw, hd, SLAB * 0.5),
@@ -339,14 +432,14 @@ fn shell(m: &mut Model, w: f64, d: f64, h: f64, seed: u32) {
         DVec3::new(0.0, hd - t, h * 0.5),
         DVec3::new(hw, t, h * 0.5),
         0.0,
-        CONCRETE,
+        skin,
     );
     for side in [-1.0, 1.0] {
         m.solid(
             DVec3::new(side * (hw - t), 0.0, h * 0.5),
             DVec3::new(t, hd - WALL, h * 0.5),
             0.0,
-            CONCRETE,
+            skin,
         );
     }
     // The south wall is the doorway's: two piers and a lintel over them.
@@ -356,14 +449,14 @@ fn shell(m: &mut Model, w: f64, d: f64, h: f64, seed: u32) {
             DVec3::new(side * (DOOR_W * 0.5 + pier), -(hd - t), h * 0.5),
             DVec3::new(pier, t, h * 0.5),
             0.0,
-            CONCRETE,
+            skin,
         );
     }
     m.solid(
         DVec3::new(0.0, -(hd - t), (DOOR_H + h) * 0.5),
         DVec3::new(DOOR_W * 0.5, t, (h - DOOR_H) * 0.5),
         0.0,
-        CONCRETE,
+        skin,
     );
     panes(m, w, d, h, seed);
 }
@@ -404,7 +497,7 @@ fn panes(m: &mut Model, w: f64, d: f64, h: f64, seed: u32) {
 
 /// A round wall: `SIDES` boxes in a ring, which draws as a drum and
 /// collides as one, with a gap for the door on the south side.
-fn round(m: &mut Model, r: f64, h: f64, seed: u32) {
+fn round(m: &mut Model, r: f64, h: f64, seed: u32, skin: u8) {
     let step = std::f64::consts::TAU / SIDES as f64;
     let wide = r * (step * 0.5).tan();
     m.solid(
@@ -424,7 +517,7 @@ fn round(m: &mut Model, r: f64, h: f64, seed: u32) {
             out * (r - WALL * 0.5) + DVec3::Z * ((h + lo) * 0.5),
             DVec3::new(WALL * 0.5, wide, (h - lo) * 0.5),
             a,
-            CONCRETE,
+            skin,
         );
         if door {
             continue;
@@ -473,7 +566,7 @@ fn flat_roof(m: &mut Model, w: f64, d: f64, h: f64) {
 
 /// A gable: two pitched faces to a ridge along the lot's east axis, and a
 /// triangle closing each end.
-fn gable(m: &mut Model, w: f64, d: f64, h: f64) {
+fn gable(m: &mut Model, w: f64, d: f64, h: f64, skin: u8) {
     let (hw, hd) = (w * 0.5 + 0.3, d * 0.5 + 0.3);
     let ridge = h + d * 0.35;
     for side in [-1.0, 1.0] {
@@ -483,9 +576,9 @@ fn gable(m: &mut Model, w: f64, d: f64, h: f64) {
         let c = DVec3::new(hw, 0.0, ridge);
         let e = DVec3::new(-hw, 0.0, ridge);
         if side < 0.0 {
-            m.quad(a, b, c, e, CONCRETE);
+            m.quad(a, b, c, e, skin);
         } else {
-            m.quad(b, a, e, c, CONCRETE);
+            m.quad(b, a, e, c, skin);
         }
     }
     for side in [-1.0, 1.0] {
@@ -494,9 +587,9 @@ fn gable(m: &mut Model, w: f64, d: f64, h: f64) {
         let b = DVec3::new(x, hd, h);
         let c = DVec3::new(x, 0.0, ridge);
         if side < 0.0 {
-            m.tri(a, c, b, CONCRETE);
+            m.tri(a, c, b, skin);
         } else {
-            m.tri(a, b, c, CONCRETE);
+            m.tri(a, b, c, skin);
         }
     }
 }
@@ -691,13 +784,8 @@ pub struct Fabric {
 /// under it is placed in one piece.
 pub fn fabric(town: &Town, radius: f64, seed: u32) -> Fabric {
     fabric_with(town, radius, |lot| {
-        building(
-            lot.kind,
-            crate::town::BLOCK,
-            crate::town::BLOCK,
-            lot.storeys,
-            seed ^ lot.id,
-        )
+        let w = lot.kind.covers() * crate::town::BLOCK;
+        building(lot.kind, w, w, lot.storeys, seed ^ lot.id)
     })
 }
 

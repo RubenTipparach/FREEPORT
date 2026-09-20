@@ -29,6 +29,39 @@ pub(crate) struct Args {
     /// Metres over the PORT to stand and look straight down at it, for a
     /// picture of a town's own plan in the game.
     pub(crate) over: Option<f64>,
+    /// What o'clock it is where the world starts, on a twenty four hour
+    /// dial: twelve is the sun at its own highest over the port and
+    /// nought is its midnight. A day is `day::DAY` long (four hours), so
+    /// the clock runs on from here while the picture is taken; over the
+    /// thirty frames a headless render takes it moves under a minute of
+    /// game time, which is a fiftieth of a degree of sun.
+    ///
+    /// It is an HOUR and never a sun direction, which is this file's own
+    /// solved camera rule arriving at the clock: a direction says nothing
+    /// about what time it is anywhere, so a picture asked for at dusk
+    /// cannot be aimed by hand. `day::at_oclock` solves the turn.
+    pub(crate) hour: Option<f64>,
+    /// Metres over the ROAD out of the port, looking along it toward the
+    /// town it goes to. A camera for a picture is SOLVED and never hand
+    /// aimed: where a road leaves a town depends on where the network
+    /// came out, so a hand aimed camera at a road finds a field.
+    pub(crate) road: Option<f64>,
+    /// Metres over the PORT's own waterline, looking out to sea. The
+    /// one camera the sheet can be judged from, and the tool this
+    /// project's design named as missing: a shore at a given hour could
+    /// not be aimed at by hand, because where the sea meets the land
+    /// depends on where the towns came out.
+    pub(crate) shore: Option<f64>,
+    /// Metres over the JUNCTION, looking straight down at it: the point
+    /// where the highway's first laid tarmac meets the port's own
+    /// paving. `--over` frames a town's PLAN and a junction is 25 px of
+    /// that; this is the one camera the join itself can be judged from.
+    pub(crate) junction: Option<f64>,
+    /// Metres over the ROAD out of the port, standing out in the country
+    /// and looking BACK at the town it runs into: the other end of
+    /// `--road`'s own camera, and the one that shows a highway crossing
+    /// terrain to reach a city rather than leaving one.
+    pub(crate) approach: Option<f64>,
     /// Plan the home body's cities and roads, write its atlas and stop.
     /// It runs BEFORE any of Bevy is built, so a bake needs no window, no
     /// device and no Xvfb: it is arithmetic and a file.
@@ -47,10 +80,13 @@ pub(crate) struct Args {
     /// feel is a number a second person can check rather than a thing to
     /// take on trust.
     pub(crate) walk: u32,
-    /// STEAL the nearest car and drive it forward for this many frames,
-    /// at the same fixed sixtieth `--walk` uses. A headless run has
-    /// nobody to press E and then hold W, and a car nobody can
-    /// photograph is a car nobody can judge the feel of.
+    /// STEAL the nearest car and drive it for this many SECONDS, aimed
+    /// at the nearest settlement that is not the one it is standing in.
+    /// A headless run has nobody to press E and then hold W, and a car
+    /// nobody can photograph is a car nobody can judge the feel of. A
+    /// second a rendered FRAME, in sixtieths, because a frame of this
+    /// world on a software rasteriser is most of a second and the
+    /// nearest town is nine kilometres away.
     pub(crate) drive: u32,
     pub(crate) cpu_terrain: bool,
     pub(crate) benchmark: Option<String>,
@@ -72,6 +108,11 @@ impl Default for Args {
             sunward: None,
             around: 0.0,
             over: None,
+            hour: None,
+            road: None,
+            junction: None,
+            shore: None,
+            approach: None,
             bake_atlas: false,
             levels: LEVELS,
             shot: None,
@@ -109,6 +150,11 @@ pub(crate) fn parse_args() -> Args {
             "--sunward" => args.sunward = it.next().and_then(|v| v.parse().ok()),
             "--around" => args.around = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0),
             "--over" => args.over = it.next().and_then(|v| v.parse().ok()),
+            "--road" => args.road = it.next().and_then(|v| v.parse().ok()),
+            "--junction" => args.junction = it.next().and_then(|v| v.parse().ok()),
+            "--shore" => args.shore = it.next().and_then(|v| v.parse().ok()),
+            "--approach" => args.approach = it.next().and_then(|v| v.parse().ok()),
+            "--hour" => args.hour = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),

@@ -26,9 +26,23 @@ use crate::figure::{CAR_LONG, CAR_WIDE};
 use crate::walker::{self, Bounds};
 use glam::{DVec2, DVec3};
 
-/// How fast a town car goes, metres a second: about 58 km/h forward and a
-/// crawl backwards, because nobody reverses fast.
-pub const TOP: f64 = 16.0;
+/// How fast a car goes, metres a second: 160 km/h flat out and a crawl
+/// backwards, because nobody reverses fast.
+///
+/// It was 16 m/s, which is 58 km/h, and that is a town car's own speed
+/// rather than a car's: a road between two settlements here is tens of
+/// kilometres and at 58 km/h the nearest one to the port is ten minutes
+/// away. 44.4 m/s is 160 km/h, which is what the owner asked for and is
+/// what the country roads in this world are for.
+///
+/// `ACCEL` is unchanged at 5.5 m/s^2, so nought to a hundred km/h is
+/// about five seconds and the top is reached in eight, which is a car
+/// rather than a rocket. What it DOES change is the lock taper: `TAPER`
+/// is the speed the steering is given up over, so at nearly three times
+/// the top speed the wheel is a third of the lock far earlier in the
+/// range, which is the right way round, because a car cornering hard at
+/// 160 km/h would be pulling gravities it has no tyres for.
+pub const TOP: f64 = 44.4;
 pub const REVERSE: f64 = 5.0;
 /// How hard it pulls, brakes and coasts down, metres a second a second.
 const ACCEL: f64 = 5.5;
@@ -49,9 +63,33 @@ const TAPER: f64 = 9.0;
 /// The tallest kerb the wheels climb, metres. A pavement's is 12 cm, so a
 /// stolen car mounts one; a wall is not a kerb and stops it.
 const CLIMB: f64 = 0.3;
+/// The steepest GROUND it drives up, rise over run.
+///
+/// It is `walker::STAND` said as a GRADE rather than a second number:
+/// `sqrt(1 - STAND^2) / STAND`, fifty degrees, and
+/// `a_car_climbs_exactly_what_a_walker_can_stand_on` holds the two in
+/// step. A body drives over what it walks over, and a slope past this
+/// is a cliff to both.
+///
+/// A step was refused on `CLIMB` alone, which is a rule in METRES that
+/// is really a rule in FRAMES: at sixty a second a car covers 0.27 m and
+/// a one in two hill rises 0.13 under it, and at the twentieth a
+/// software rasteriser runs at it covers 0.8 and rises 0.4, so the same
+/// hill the same car climbed was a wall. Measured, ten seconds of
+/// twentieths up one in two went 64.8 m against 136.9.
+const STEEPEST: f64 = 1.200_5;
 /// What is left of the speed when the car hits something square on.
 const CRASH: f64 = 0.15;
 const GRAVITY: f64 = 9.81;
+/// How long the bodywork takes to lay itself on a new slope, seconds.
+/// Short, because a car on its springs settles in about this, and a car
+/// that snapped would flick over every seam in the mesh.
+const LEAN: f64 = 0.12;
+/// How far off the nose a place has to be for FULL lock, radians. A
+/// quarter turn: anything further round and the wheel is hard over
+/// anyway, and anything nearer eases off, so a car does not saw at the
+/// wheel about its own line.
+const AIM: f64 = std::f64::consts::FRAC_PI_4;
 /// The driver's eye over the road, metres, and where a body gets out.
 pub const SEAT: f64 = 1.15;
 pub const DOOR: f64 = 1.5;
@@ -93,6 +131,29 @@ pub struct Driver {
     pub on_ground: bool,
     /// The radius of the wheels, metres.
     pub foot: f64,
+    /// How far this car has actually COME, metres: the ground that has
+    /// gone past its wheels, which is what a wheel turns on.
+    ///
+    /// The arc the car SWEPT and never its own `speed` integrated: a
+    /// crash scales the speed down rather than stopping the car, so the
+    /// dial says what the engine is asking for and the wheels of a
+    /// wedged car would spin on bare tarmac. It is the same distinction
+    /// `drive::Auto` already makes to tell a stuck car from a slow one.
+    pub gone: f64,
+    /// Which way is UP for the BODYWORK: the ground's own normal under
+    /// the four wheels, eased.
+    ///
+    /// Not `dir`, which is up for the PLANET, and the difference is the
+    /// whole of it: on a hillside the radial is not the surface normal,
+    /// so a car drawn off `dir` sits dead level while the hill falls
+    /// away under it. The owner read that off a picture of a car parked
+    /// on a slope.
+    ///
+    /// It is a fact about the GROUND, so it is the core's and not a
+    /// thing the app works out to draw with: what a body is standing on
+    /// is the same question the walker and the collider already ask the
+    /// field, and an app that derived its own would be a second answer.
+    pub lean: DVec3,
 }
 
 /// The car's own OUTLINE in its tangent frame, right and forward in
@@ -135,6 +196,8 @@ impl Driver {
             vy: 0.0,
             on_ground: true,
             foot: walker::ground(field, bounds, dir, None),
+            gone: 0.0,
+            lean: dir,
         }
     }
 
@@ -168,6 +231,24 @@ impl Driver {
         (self.dir + self.right() * ((CAR_WIDE * 0.5 + DOOR) / radius)).normalize()
     }
 
+    /// Which way the wheel has to go to point the car at `goal`, -1 to
+    /// 1, and nought once it is aimed there.
+    ///
+    /// A bearing error rather than a heading difference, because a
+    /// heading is a tangent vector and two of them at two places on a
+    /// sphere are not in the same plane: what a driver actually reads
+    /// is how far off his own nose the place he is going sits.
+    pub fn toward(&self, goal: DVec3) -> f64 {
+        let want = (goal - self.dir * goal.dot(self.dir)).normalize_or_zero();
+        if want.length_squared() < 0.5 {
+            return 0.0;
+        }
+        // Left is positive, which is what `steer` is: the angle off the
+        // nose, measured about the local up.
+        let off = want.dot(-self.right()).atan2(want.dot(self.fwd));
+        (off / AIM).clamp(-1.0, 1.0)
+    }
+
     /// How tight a turn the wheels are asking for at this speed, radians
     /// of yaw a second. The BICYCLE model: a car turns by rolling, so
     /// this is proportional to the speed and a car standing still does
@@ -185,6 +266,43 @@ impl Driver {
         self.fwd = (self.fwd - self.dir * self.fwd.dot(self.dir)).normalize_or(DVec3::X);
         self.roll(field, bounds, dt);
         self.fall(field, bounds, dt);
+        self.settle(field, bounds, dt);
+    }
+
+    /// Lay the bodywork on the ground the WHEELS are standing on.
+    ///
+    /// The four wheels and not the field's gradient at one point: a
+    /// gradient is the slope of a hand's width of ground and a car is
+    /// 4.1 m by 1.6, so a gradient would pitch the whole car over every
+    /// pebble the mesher drew, and what a car actually rests on is the
+    /// plane through its own contact patches. The normal is the cross of
+    /// the two DIAGONALS, which is the symmetric answer for a quad whose
+    /// four corners are not coplanar, and every quad on ground like this
+    /// is one.
+    ///
+    /// Eased on `LEAN`, a time constant in SECONDS like the chase
+    /// camera's `SWING`, so the lean takes the same wall time at twenty
+    /// frames a second as at a hundred and twenty; a share of a frame
+    /// would be a different car on every machine.
+    fn settle(&mut self, field: &dyn Density, bounds: &Bounds, dt: f64) {
+        let (w, l) = (CAR_WIDE * 0.5, CAR_LONG * 0.5);
+        let right = self.right();
+        let corner = |x: f64, y: f64| {
+            let d = (self.dir + (right * x + self.fwd * y) / bounds.radius).normalize();
+            d * walker::ground(field, bounds, d, Some(self.foot))
+        };
+        let (fl, fr) = (corner(-w, l), corner(w, l));
+        let (rl, rr) = (corner(-w, -l), corner(w, -l));
+        let want = (fr - rl).cross(fl - rr).normalize_or(self.dir);
+        // Out of the ground and never into it, whichever way the corners
+        // happened to be ordered on this patch of sphere.
+        let want = if want.dot(self.dir) < 0.0 {
+            -want
+        } else {
+            want
+        };
+        let t = 1.0 - (-dt / LEAN).exp();
+        self.lean = (self.lean + (want - self.lean) * t).normalize_or(self.dir);
     }
 
     /// The throttle, the brake and what a car does with neither down.
@@ -218,8 +336,12 @@ impl Driver {
         // How much of the step survived being pushed out of the walls: a
         // car stopped dead made none of it.
         let made = (got - self.dir).dot(self.fwd) * bounds.radius;
+        self.gone += (got - self.dir).length() * bounds.radius;
         let g = walker::ground(field, bounds, got, Some(self.foot));
-        if g - (self.foot) > CLIMB || made.abs() < asked.abs() * 0.05 {
+        // A kerb's worth of step, plus whatever the GROUND itself rose
+        // over the distance the car actually covered.
+        let allowed = CLIMB + made.abs() * STEEPEST;
+        if g - (self.foot) > allowed || made.abs() < asked.abs() * 0.05 {
             self.speed *= CRASH;
             return;
         }

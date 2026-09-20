@@ -72,12 +72,16 @@ fn a_car_pulls_away_and_tops_out() {
             brake: true,
             ..Default::default()
         },
-        3.0,
+        5.0,
     );
     println!("the brake takes {TOP} m/s off in {stopping:.1} m");
     assert_eq!(d.speed, 0.0, "the brake left it rolling");
+    // `v^2 / 2 BRAKE` is 82 m at 44.4 m/s against 10.5 at 16, which is
+    // the square law and the whole of what a faster car costs to stop.
+    // Five seconds of brake and not three, because 44.4 over `BRAKE` is
+    // 3.7 s and a three second test could not reach nought.
     assert!(
-        (8.0..14.0).contains(&stopping),
+        (70.0..95.0).contains(&stopping),
         "it stopped in {stopping:.1} m from {TOP} m/s"
     );
     // Coasting is slower than braking and still comes to rest.
@@ -298,5 +302,316 @@ fn the_seat_is_in_the_car_and_the_door_is_beside_it() {
     assert!(
         (out.length() - 1.0).abs() < 1e-12,
         "a direction that is not a direction"
+    );
+}
+
+/// A car STEERS TOWARD somewhere, which is what a drive between two
+/// towns is made of. The wheel goes hard over for a place behind, eases
+/// as the nose comes round, and reads nought dead ahead.
+#[test]
+fn a_car_steers_toward_where_it_is_going_and_straightens_when_it_is_aimed() {
+    let field = world(&[]);
+    let bounds = bounds();
+    let dir = DVec3::Y;
+    let mut car = car(&field, &bounds);
+    let ahead = (dir + car.fwd * 0.01).normalize();
+    assert!(
+        car.toward(ahead).abs() < 0.05,
+        "dead ahead asks for {:.3} of lock",
+        car.toward(ahead)
+    );
+    let left = (dir - car.right() * 0.01).normalize();
+    let right = (dir + car.right() * 0.01).normalize();
+    assert!(
+        car.toward(left) > 0.9,
+        "hard left is {:.2}",
+        car.toward(left)
+    );
+    assert!(
+        car.toward(right) < -0.9,
+        "hard right is {:.2}",
+        car.toward(right)
+    );
+    // And driving with the wheel on that bearing CLOSES on the place.
+    // Two hundred metres off, which is far enough that closing means
+    // something: a car turns inside 4.8 m, so a goal eight metres away
+    // is one it orbits rather than arrives at.
+    let goal = (dir + car.right() * 0.1).normalize();
+    let start = car.dir.angle_between(goal) * R;
+    for _ in 0..1800 {
+        let steer = car.toward(goal);
+        car.update(
+            &field,
+            &bounds,
+            &Drive {
+                throttle: 1.0,
+                steer,
+                brake: false,
+            },
+            1.0 / 60.0,
+        );
+    }
+    let end = car.dir.angle_between(goal) * R;
+    println!("closed from {start:.1} m to {end:.1} m in thirty seconds");
+    assert!(end < 20.0, "closed {start:.1} m to {end:.1} m only");
+}
+
+/// A car that has met a wall can BACK OFF IT AGAIN.
+///
+/// The first scripted drive to the next town went twelve metres, met a
+/// corner of the port and then never moved again: 4 km/h, then 3, then
+/// 2, then 1, and nought metres of ground in the next thirteen minutes.
+/// Backing off did not free it either, so the picture at the end was
+/// byte for byte the picture at the start.
+#[test]
+fn a_car_that_has_met_a_wall_can_back_off_it_again() {
+    let b = bounds();
+    let frame = crate::town::Frame {
+        dir: DVec3::Y,
+        east: DVec3::X,
+        north: DVec3::Z,
+        base: R,
+    };
+    let slab = |centre: DVec3, half: DVec3| {
+        crate::model::Solid {
+            centre,
+            half,
+            yaw: 0.0,
+            material: CONCRETE,
+        }
+        .block(&frame)
+    };
+    // A CORNER, which is what the car in the game actually met: two
+    // walls at a right angle, so the outline is pushed out along both
+    // and a step that clears one is refused by the other.
+    let wall = [
+        slab(DVec3::new(8.0, 0.0, 1.6), DVec3::new(0.4, 6.0, 1.6)),
+        slab(DVec3::new(4.0, 4.0, 1.6), DVec3::new(6.0, 0.4, 1.6)),
+    ];
+    let w = world(&wall);
+    let mut d = car(&w, &b);
+    // Drive into it, hard, for long enough to be well and truly stopped.
+    let to_wall = drive(
+        &mut d,
+        &w,
+        &b,
+        Drive {
+            throttle: 1.0,
+            ..Default::default()
+        },
+        6.0,
+    );
+    let stopped = d.dir;
+    println!("drove {to_wall:.2} m into the wall, at {:.3} m/s", d.speed);
+    // Now reverse, which is what a driver does.
+    let back = drive(
+        &mut d,
+        &w,
+        &b,
+        Drive {
+            throttle: -1.0,
+            ..Default::default()
+        },
+        3.0,
+    );
+    let _ = stopped;
+    println!("backed {back:.2} m off it, at {:.3} m/s", d.speed);
+    assert!(
+        back > 2.0,
+        "a car against a wall backed {back:.2} m off it in three seconds"
+    );
+}
+
+/// A car drives AT PLANET SCALE, which is the radius the game actually
+/// runs at and five hundred times the one the rest of this suite uses.
+///
+/// The scripted drive to the next town went twelve metres and stopped,
+/// on open level ground with nothing blocking it: the probe read the
+/// ground under the car, two metres ahead of it and two metres behind
+/// it as the same 1105.65 m and `resolve_body` moving it nought. Every
+/// other test here is on a two kilometre ball.
+#[test]
+fn a_car_pulls_away_at_planet_scale() {
+    for radius in [2_000.0, 100_000.0, 1_000_000.0] {
+        let b = Bounds {
+            radius,
+            floor: radius - 50.0,
+            top: radius + 50.0,
+            sea: 0.0,
+        };
+        let ground = Sphere { radius };
+        let w = Built {
+            ground: &ground,
+            blocks: vec![],
+        };
+        let mut d = Driver::board(&w, &b, DVec3::Y, DVec3::X);
+        let from = d.dir;
+        for _ in 0..600 {
+            d.update(
+                &w,
+                &b,
+                &Drive {
+                    throttle: 1.0,
+                    ..Default::default()
+                },
+                1.0 / 60.0,
+            );
+        }
+        let gone = from.angle_between(d.dir) * radius;
+        println!(
+            "on a {radius:.0} m ball: {gone:.1} m in ten seconds at {:.1} m/s",
+            d.speed
+        );
+        assert!(
+            gone > 100.0,
+            "a car on a {radius:.0} m ball went {gone:.1} m in ten seconds"
+        );
+    }
+}
+
+/// A car that has been SLOWED by a crash can pull away again.
+///
+/// `roll` refuses a step that made under a twentieth of what it asked
+/// for, which is the right shape and the wrong SCALE: the threshold is
+/// a share of the asked step, and the asked step is the speed, so a car
+/// knocked down to a crawl asks for a step of a millimetre and any
+/// rounding in the push out fails it. The crash then knocks it down
+/// again. It is a LATCH: nothing the throttle does can ever get out of
+/// it, in either gear, and that is a car dead on open ground.
+#[test]
+fn a_car_slowed_to_a_crawl_can_pull_away_again() {
+    let b = bounds();
+    let w = world(&[]);
+    let mut d = car(&w, &b);
+    // Put it where a crash leaves it: a hair of speed on open ground.
+    d.speed = 0.01;
+    let gone = drive(
+        &mut d,
+        &w,
+        &b,
+        Drive {
+            throttle: 1.0,
+            ..Default::default()
+        },
+        5.0,
+    );
+    println!(
+        "pulled away {gone:.1} m in five seconds, reaching {:.1} m/s",
+        d.speed
+    );
+    assert!(
+        gone > 30.0,
+        "a car at a crawl on open ground went {gone:.1} m in five seconds"
+    );
+}
+
+/// A ball whose ground RISES along x at a fixed grade: a hillside with
+/// nothing built on it, which is what a car meets between two towns.
+struct Hill {
+    grade: f64,
+}
+
+impl Density for Hill {
+    fn at(&self, p: DVec3) -> f64 {
+        let len = p.length();
+        if len <= 0.0 {
+            return R;
+        }
+        // How far along x from the pole, metres of arc, so the grade is
+        // a rise over a run along the GROUND and not over a chord.
+        let along = (p.x / len).clamp(-1.0, 1.0).asin() * R;
+        R + self.grade * along - len
+    }
+
+    fn slope(&self) -> f64 {
+        1.0 + self.grade.abs()
+    }
+}
+
+/// A car drives UP a hill, and the hill it stops on is a cliff rather
+/// than a slope.
+///
+/// It did not. A car's outline reaches `CAR_LONG * 0.5` (2.05 m) forward
+/// and its ring was tested for solid at a fixed 0.45 m over its own
+/// MIDDLE's foot, so ground rising 0.45 m within 2.05 was a wall to it:
+/// every slope past about one in four and a half stopped the car dead,
+/// which on this planet is most of the country. A walker never met it
+/// because a walker is 35 cm across, so ground rising its own 60 cm step
+/// within 35 is a slope of 1.7 and `can_stand` had already refused it.
+/// One rule, asked in both places: a body drives and walks over anything
+/// it can stand on.
+#[test]
+fn a_car_drives_up_a_hill_and_is_stopped_by_a_cliff() {
+    let b = Bounds {
+        floor: R - 400.0,
+        top: R + 400.0,
+        ..bounds()
+    };
+    let throttle = Drive {
+        throttle: 1.0,
+        ..Default::default()
+    };
+    // Every grade a road is ever built at, and then some: `road::STEEPEST`
+    // is one in ten, and this climbs one in one and comes back DOWN it.
+    for grade in [0.0, 0.1, 0.25, 0.5, 1.0, -0.5] {
+        let w = Hill { grade };
+        let mut d = car(&w, &b);
+        let from = d.foot;
+        let gone = drive(&mut d, &w, &b, throttle, 10.0);
+        let up = d.foot - from;
+        println!("ten seconds up a {grade:.2} hill goes {gone:.1} m and climbs {up:.1} m");
+        assert!(
+            gone > 100.0,
+            "a car on a {grade:.2} hill went {gone:.1} m in ten seconds: it is stuck"
+        );
+        // Six per cent of the run and not five, and the reason is the
+        // SPHERE rather than the car. At 44.4 m/s ten seconds is 265 m
+        // of arc on this 2 km ball, which is 7.6 degrees: over that
+        // angle the hill's own horizontal and the arc travelled are no
+        // longer the same length, and the measured fall on a one in two
+        // DOWNhill is 118.1 m against the 132.6 a flat plane would give.
+        // At 16 m/s the same ten seconds was 137 m and 3.9 degrees,
+        // where the difference did not show.
+        assert!(
+            (up - gone * grade).abs() < gone * 0.06 + 1.0,
+            "it climbed {up:.1} m over {gone:.1} m of ground, which is not a {grade:.2} grade"
+        );
+    }
+    // And on a SLOW machine too. A frame is a twentieth on a software
+    // rasteriser and `update` clamps there, so the step is 0.8 m rather
+    // than 0.27: a rise allowed as a flat `CLIMB` would refuse a hill
+    // the same car climbs at sixty frames a second, which is a rule in
+    // FRAMES wearing the costume of a rule in metres.
+    let w = Hill { grade: 0.5 };
+    let mut d = car(&w, &b);
+    let (from, at) = (d.dir, d.foot);
+    for _ in 0..200 {
+        d.update(&w, &b, &throttle, 0.05);
+    }
+    let (gone, up) = (from.angle_between(d.dir) * R, d.foot - at);
+    println!("ten seconds of TWENTIETHS up a 0.50 hill goes {gone:.1} m and climbs {up:.1} m");
+    assert!(
+        gone > 100.0,
+        "a car stepped a twentieth at a time went {gone:.1} m up a one in two hill"
+    );
+}
+
+/// A car climbs exactly what a walker can stand on.
+///
+/// `walker::STAND` is a COSINE, because that is what a surface normal
+/// answers, and `STEEPEST` is a GRADE, because that is what a rise over
+/// a run is. They are one rule said twice across a boundary the machine
+/// cannot cross, so this is what keeps them in step: a car that drove up
+/// less than a walker walks up would stop on ground a player could climb
+/// out and walk, and one that drove up more would climb what the field
+/// pushes it out of.
+#[test]
+fn a_car_climbs_exactly_what_a_walker_can_stand_on() {
+    let stand = walker::STAND;
+    let grade = (1.0 - stand * stand).sqrt() / stand;
+    println!("a walker stands on {stand:.4}, which is a grade of {grade:.4}");
+    assert!(
+        (STEEPEST - grade).abs() < 1e-3,
+        "the car climbs {STEEPEST} and the walker stands on {grade:.4}"
     );
 }

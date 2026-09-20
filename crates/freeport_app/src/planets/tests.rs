@@ -70,8 +70,19 @@ fn planet_relative_motion_is_translation_invariant_at_interplanetary_distances()
 
 #[test]
 fn nearby_bodies_have_separate_fields_and_local_atmospheres() {
-    let home = system(DVec3::ZERO).bodies.remove(0).world;
-    let planets = Planets::load(home);
+    // The bodies are BUILT here rather than read off the shipped
+    // `planets.json`: what this holds is a rule about several bodies at
+    // once, and pinning the count in that file made it a pin on what
+    // the game happens to ship. The file is empty now (the three it
+    // carried were copies of one another) and the rule is untouched.
+    let mut planets = system(DVec3::ZERO);
+    for centre in [
+        DVec3::new(40_000.0, 0.0, 0.0),
+        DVec3::new(0.0, -60_000.0, 0.0),
+        DVec3::new(0.0, 0.0, 90_000.0),
+    ] {
+        planets.bodies.push(system(centre).bodies.remove(0));
+    }
     assert_eq!(planets.bodies.len(), 4);
     for (i, body) in planets.bodies.iter().enumerate() {
         assert_eq!(planets.nearest(body.centre + DVec3::Y * body.air.top), i);
@@ -92,6 +103,11 @@ fn changing_planets_updates_ground_streamer_and_weather_together() {
         air: planets.bodies[0].air,
         sea: 900.0,
         sun: DVec3::Z,
+        noon: DVec3::Z,
+        start: 0.0,
+        now: 0.0,
+        day: freeport_core::day::DAY,
+        here: DVec3::Y,
     };
     let mut app = App::new();
     app.insert_resource(planets)

@@ -188,10 +188,7 @@ const RIDGE_SLOPE: f64 = 2.0 * RIDGE_POWER;
 /// with flanks that fall away, which is what a range looks like.
 const RIDGE_POWER: f64 = 1.6;
 
-fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
-    let k = ((t - a) / (b - a)).clamp(0.0, 1.0);
-    k * k * (3.0 - 2.0 * k)
-}
+use crate::noise::smoothstep;
 
 /// A planet's relief terms, built from the planet's own numbers so there
 /// is one place a body's size and roughness are written down.

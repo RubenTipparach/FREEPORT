@@ -289,10 +289,7 @@ fn dusk(height: f64) -> f64 {
     smoothstep(0.18, 0.0, height) * smoothstep(-0.32, -0.1, height)
 }
 
-fn smoothstep(a: f64, b: f64, t: f64) -> f64 {
-    let k = ((t - a) / (b - a)).clamp(0.0, 1.0);
-    k * k * (3.0 - 2.0 * k)
-}
+use crate::noise::smoothstep;
 
 /// The sky along a view ray, and how much of it there is: the colour, and
 /// an alpha that is one where the ray meets the ground (the air in front

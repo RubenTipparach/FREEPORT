@@ -25,11 +25,12 @@ fn local_culling_preserves_owned_apron_polygons_near_town_skirts() {
         ..Planet::default()
     };
     let planet = Planet {
-        sites: vec![crate::town::Site {
-            dir: DVec3::Y,
-            h: bare.shape().height(DVec3::Y) - 2.0,
-            r: 172.0,
-        }],
+        sites: vec![crate::town::Site::round(
+            DVec3::Y,
+            bare.shape().height(DVec3::Y) - 2.0,
+            172.0,
+        )]
+        .into(),
         ..bare.clone()
     };
     let lat = Lattice::new(DVec3::splat(-2_000_099.75), 0.5);
@@ -82,7 +83,7 @@ fn rough_planet_lod_boundaries_have_no_open_edges() {
         overhang: 1.5,
         ledge: 2.0,
         seed: 7,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let lat = Lattice::new(DVec3::splat(-40.0625), 0.125);
     for eye in [DVec3::new(0.3, 20.0, 0.2), DVec3::new(11.0, 12.0, 13.0)] {

@@ -249,7 +249,7 @@ fn built_planet() -> (Planet, Vec<Block>, Lattice, Rings) {
         overhang: 0.6,
         ledge: 3.0,
         seed: 11,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let top = planet.at(DVec3::new(0.0, 20.0, 0.0)) + 20.0;
     // Half extents along the block's own axes: east, north, up.

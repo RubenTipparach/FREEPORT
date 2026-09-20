@@ -27,6 +27,7 @@
 //! rings for inspection. `--eye` is where to start, metres from
 //! the system origin (on foot, the spot under it) and `--look` what to
 //! face; both default to the port.
+mod aim;
 mod args;
 mod atlas;
 mod buildings;
@@ -42,6 +43,7 @@ mod meshing;
 mod planet_view;
 mod planets;
 mod render_probe;
+mod roads;
 mod sky;
 mod stream;
 mod terrain;
@@ -62,20 +64,20 @@ use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use drive::{board, drive_car, show_cars, Thefts};
+use drive::{aim_drive, board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
 use freeport_core::town;
 use freeport_core::walker::Walker;
-use lamps::light_lamps;
+use lamps::{dim_lamps, light_lamps};
 use std::sync::Arc;
 use std::time::Instant;
 use stream::{rebase_origin, stream, Frame, Streamer};
 use terrain::{terrain_material, TerrainMaterial, TerrainPlugin};
 use walk::{toggle_walk, walk, OnFoot};
 use water::{water_material, WaterMaterial, WaterPlugin};
-use world::{shore, start};
+use world::shore;
 pub(crate) use world::{Ground, World};
 
 /// The planet: a thousand kilometres of radius, so two thousand across,
@@ -143,102 +145,45 @@ const TOWN_RADIUS: f64 = 170.0;
 /// spacing is 280 km, so a reach of ninety thousand metres built exactly
 /// one of them.
 ///
-/// What is MISSING and named rather than hidden: a town that comes into
-/// range as you fly is not built, so a far city is its own levelled
-/// plateau with no buildings on it until town streaming lands. The chunk
-/// streamer already does exactly this for ground and the shape of it is
-/// the same.
+/// The set FOLLOWS THE EYE (`city::stream`), so a town that comes over
+/// the horizon as you drive is built and the one behind you is dropped.
+/// It was picked ONCE, nearest to where the world happened to begin, so
+/// every other city on the body was a levelled plateau with a mark on
+/// the chart and nothing standing on it, and driving to the next town
+/// arrived at an empty field.
 const TOWNS_BUILT: usize = 8;
+/// How far a town may be and still be BUILT, metres.
+///
+/// The count on its own would drag eight towns across an ocean to keep
+/// itself full, which is eight cities' triangles held for a view of
+/// water. Two hundred kilometres is about the horizon from the top of
+/// the atmosphere and a good deal past what a car can see.
+const TOWNS_REACH: f64 = 200_000.0;
 /// The world's seed.
 const SEED: u32 = 7;
-/// Ten levels at 0.5 m preserve the previous 32.8 km streaming box while
-/// removing the unnecessarily dense 0.25 m tier. Distant meshes fill the disk.
-const LEVELS: u8 = 10;
+/// How many LOD levels of terrain the harness streams, finest 0.5 m.
+///
+/// Fourteen, and the four past ten are what closes the gap between the
+/// ground and the CHART. A level's box is `2 * HALF * CH` cells across,
+/// so ten levels reach 16.4 km from the eye and fourteen reach 262 km,
+/// and the coarsest cell goes from 256 m to 4,096 m against a chart texel
+/// of 6,136 m on this body.
+///
+/// The owner asked for a seamless climb and the pictures said why there
+/// was not one: at 33 km up, ten levels drew a sharp 32 km island of
+/// terrain floating over a chart magnified a hundred times, a 24 fold
+/// cliff in detail with nothing in between. At fourteen the same frame is
+/// terrain to its edges, and the coarsest cell and the chart's texel are
+/// within one and a half of each other, which is a step an eye cannot
+/// find. Measured: 282 chunks and 177,897 triangles at 49 km, against 148
+/// and 54,625.
+const LEVELS: u8 = 14;
 /// Frames a second the loop is held to by default. Vsync is the MONITOR's
 /// cap and not a cap at all: a scene this cheap to simulate draws at the
 /// refresh rate and holds the card at full clock the whole time, which is
 /// a hot room for frames nobody asked for. swarm-demo's number and its
 /// rule, `--fps 0` lifts it.
 const FPS: f64 = 144.0;
-
-/// Where the sun stands over the WORLD's own starting point: degrees over
-/// the local horizon there, and degrees round from local north. A low sun
-/// is the light a landscape reads best in, and the bearing puts it off the
-/// shoulder rather than behind the camera. It is the world's start and
-/// never `--eye`, so two pictures from two places are lit alike.
-///
-/// It was a fixed world direction, and its own comment claimed it stood
-/// "a little over the horizon at the harness's start", which is a thing a
-/// world direction cannot promise: it is true of one spot on the planet
-/// and the towns are placed by the ground. On this planet the port came
-/// out 56 degrees into its own NIGHT, and a picture of a city at midnight
-/// is a picture of nothing. `sun_over` measures it from where the world
-/// starts instead, so the claim is kept by construction on any planet,
-/// any seed and any port.
-const SUN_UP: f64 = 32.0;
-const SUN_BEARING: f64 = 40.0;
-
-/// The sun's world direction for an eye starting at `dir`: ONE number,
-/// read by the light that casts the shadows, by the sky dome, by the fog
-/// and by the bodies drawn from far off, so they cannot point four ways.
-///
-/// It is asked about the WALKER's own start and never about where `aim`
-/// put the camera, which is a circle: `--sunward` stands the camera along
-/// the sun, so a sun measured over that camera is a sun measured over
-/// itself. Measured on this planet, `--sunward 2.6 --around 150` put the
-/// camera 58 degrees from the sun rather than 150, and the picture of the
-/// body's own midnight came back three quarters lit.
-/// Where the camera starts: on a street of the port, or, with
-/// `--sunward`, that many radii off the body and looking at its centre,
-/// `--around` degrees round from the sun.
-///
-/// A camera for a picture is SOLVED and never hand aimed, which is
-/// tenebris's LODCAM lesson: the sun stands over wherever the world
-/// starts, so where it is depends on where the towns came out, and three
-/// runs of this were aimed by hand at a planet that turned out to be a
-/// different one, in its own night.
-///
-/// `--around` is the same rule for the NIGHT side. A body's dark half is
-/// a picture nobody can aim at either, because where it is depends on
-/// where the sun came out: turned 180 degrees the camera is at the body's
-/// own midnight and 140 leaves a crescent of day in the frame, which is
-/// what shows the lights and the ground they stand on in one picture.
-fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
-    let (eye, look) = start(world);
-    // Straight down on the PORT, which is the one camera a town's own
-    // plan can be judged from: its outline, its zones and where its
-    // streets run are a thing seen from above and nothing else.
-    if let Some(over) = args.over {
-        if let Some(port) = world.towns.first() {
-            let ground = port.dir * (world.planet.radius + port.h);
-            return (ground + port.dir * over, ground);
-        }
-    }
-    match args.sunward {
-        Some(radii) => (
-            turned(sun_over(eye), args.around.to_radians()) * world.planet.radius * radii.max(1.05),
-            DVec3::ZERO,
-        ),
-        None => (eye, look),
-    }
-}
-
-/// A direction turned `angle` away from itself, about whichever axis is
-/// square to it. Which axis does not matter for a picture of a sphere:
-/// what is being asked for is how much of the body's night is in frame,
-/// and that is the ANGLE alone.
-fn turned(dir: DVec3, angle: f64) -> DVec3 {
-    let (east, _) = town::frame_at(dir);
-    (dir * angle.cos() + east * angle.sin()).normalize_or(DVec3::Y)
-}
-
-fn sun_over(dir: DVec3) -> DVec3 {
-    let (east, north) = town::frame_at(dir);
-    let up = SUN_UP.to_radians();
-    let round = SUN_BEARING.to_radians();
-    (dir.normalize_or(DVec3::Y) * up.sin() + (north * round.cos() + east * round.sin()) * up.cos())
-        .normalize_or(DVec3::Y)
-}
 
 /// Radians of look per pixel of mouse.
 pub(crate) const LOOK: f32 = 0.0022;
@@ -295,6 +240,8 @@ fn main() {
     .init_resource::<Frame>()
     .init_resource::<Status>()
     .init_resource::<Thefts>()
+    .init_resource::<lamps::TorchOn>()
+    .init_resource::<drive::Goal>()
     .init_resource::<flight_bench::Benchmark>()
     .add_systems(
         Startup,
@@ -329,6 +276,7 @@ fn tick(app: &mut App) {
                     toggle_walk,
                     board,
                     walk,
+                    aim_drive,
                     drive_car,
                     fly,
                     flight_bench::drive,
@@ -336,15 +284,26 @@ fn tick(app: &mut App) {
                     rebase_origin,
                     planet_view::recentre,
                     city::update_lod,
+                    city::stream::stream_towns,
+                    roads::stream_roads,
                     stream,
                     flight_bench::after_stream,
                     light_lamps,
-                    traffic::drive_traffic,
+                    (
+                        traffic::drive_traffic,
+                        traffic::spin_wheels,
+                        lamps::hold_torch,
+                        lamps::light_headlamps,
+                    )
+                        .chain(),
                     show_cars,
                 )
                     .chain(),
                 (
                     place_eye,
+                    sky::turn_sun,
+                    dim_lamps,
+                    sky::rebake_env,
                     sky::drift_sky,
                     show_status,
                     lod_debug::apply,
@@ -436,12 +395,13 @@ fn spawn_world(
         mut skies,
         mut standard,
     } = assets;
-    let (world, towns) = world::build(&args);
-    let (start_eye, start_look) = aim(&world, &args);
+    let world = world::build(&args);
+    let (start_eye, start_look) = aim::aim(&world, &args);
     // The sun, worked out while the world is still here to ask: it is a
     // fact about where the WALKER starts, and `start_eye` is wherever the
     // camera was aimed.
-    let sun = sun_over(world::start(&world).0);
+    let here = world::start(&world).0;
+    let sun = aim::sun_over(here);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
     // The lattice's origin sits half a fine cell off the half metre grid
@@ -458,29 +418,30 @@ fn spawn_world(
         .iter()
         .map(|t| town::lot_frame(RADIUS, t, 0.0, 0.0))
         .collect();
-    let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
+    let kit = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
+    let material = kit.ground.clone();
     let sheet = water_material(&mut waters, SEA);
     say_world(&world, start_eye, &lat, args.levels);
-    // The people and the cars on their streets. Built from the same
-    // towns, so a crowd exists exactly where the buildings do.
+    // The people and the cars on their streets. It is handed the PLANNED
+    // towns and turns a crowd out only on the ones standing, which the
+    // town streamer moves: a townsman walking a street nobody has laid
+    // the buildings of stands on a bare levelled plateau.
     traffic::turn_out(
         &mut commands,
         0,
-        &world.built,
+        &world.towns,
         SEED,
         &mut meshes,
         &mut standard,
     );
-    // The towns are drawn once and never again: models, not chunks.
-    city::spawn_towns(
-        &mut commands,
-        &mut meshes,
-        &material,
-        &Frame::default(),
-        SEA,
-        towns,
-        &mut standard,
-    );
+    // The towns are BUILT by `city::stream`, one at a time, following
+    // the eye. Nothing is raised here.
+    commands.insert_resource(city::stream::Library(buildings::Library::load()));
+    say_roads(&mut commands, &world);
+    commands.insert_resource(city::Glazing::new(&mut standard));
+    commands.insert_resource(kit);
+    commands.init_resource::<world::Fabric>();
+    commands.init_resource::<city::stream::Building>();
     let mut planets = planets::Planets::load(Arc::new(world));
     planets.bodies[0].material = material;
     planets.bodies[0].water = sheet;
@@ -508,16 +469,62 @@ fn spawn_world(
         &mut skies,
         &mut images,
         eye - body.centre,
-        sky::Weather {
-            air: body.air,
-            sea: body.world.sea.radius,
-            sun,
-        },
+        aim::clock_of(&args, sun, here, body),
     );
     spawn_camera(&mut commands, body, &args, eye, look, env, &flight);
     commands.insert_resource(Eye(WorldPos(eye)));
     commands.insert_resource(Ground(body.world.clone(), body.centre));
     commands.insert_resource(planets);
+}
+
+/// The body's road network, and a line saying how much tarmac there is.
+/// Every stretch of it is known from the first frame and the ones near
+/// the eye are laid as it moves, which is `city::stream`'s own rule for
+/// a town.
+fn say_roads(commands: &mut Commands, world: &World) {
+    let network = roads::Network::of(world);
+    // How far the LIGHTING reaches out of a town, measured on the road
+    // out of the port rather than restated from `road::LIT_NEAR`: what
+    // a picture of a lit approach has to be aimed at is where the lamps
+    // actually stop, and the first night render of one came back black
+    // because the camera stood a hundred metres past them.
+    let lit = world.routes.first().map(|r| {
+        let open = r.open.iter().position(|o| *o).unwrap_or(0);
+        // The first UNLIT piece past it, and not the last lit one
+        // anywhere: a road is lit at BOTH ends, so `rposition` measured
+        // the whole road and reported 121.6 km of approach.
+        let dark = r.lit[open..].iter().position(|l| !*l).unwrap_or(0) + open;
+        (
+            open,
+            dark,
+            r.line[open].angle_between(r.line[dark]) * world.planet.radius,
+        )
+    });
+    // Whether the highway JOINS the city it leaves, which is a number
+    // and not a thing to squint at a picture for.
+    if let Some((worst, median)) = roads::ground_over_tarmac(world) {
+        info!(
+            "the ground a coarse chunk draws stands {worst:.2} m over road 0's tarmac at its worst and {median:.2} m at its median"
+        );
+    }
+    if let Some((n, ran, mouth, end, meets, paved, buried)) = roads::slip_of(world) {
+        info!(
+            "road 0's SLIP is {n} pieces over {ran:.0} m, from the highway's mouth {mouth:.0} m out of town 0 to {end:.0} m out, ending {meets:.2} m from the town's own paving, which reaches {paved:.0} m; the drawn ground stands {buried:.2} m over its own tarmac at the worst"
+        );
+    }
+    info!(
+        "{} roads are {} stretches of tarmac; the ones within {:.0} km of the eye are laid{}",
+        world.roads.len(),
+        network.len(),
+        roads::REACH / 1000.0,
+        match lit {
+            Some((open, dark, run)) => format!(
+                ", and road 0 is lit from its first open piece {open} to piece {dark}, {run:.0} m of approach"
+            ),
+            None => String::new(),
+        }
+    );
+    commands.insert_resource(network);
 }
 
 /// The chunk streamer, standing at whichever body the eye is nearest.
@@ -600,7 +607,11 @@ fn spawn_sky(
 fn spawn_light(commands: &mut Commands, sun: DVec3) {
     commands.spawn((
         DirectionalLight {
-            illuminance: 8_000.0,
+            // NOUGHT, and `sky::turn_sun` is the one writer of it: how
+            // hard the sun burns is a question about what time it is,
+            // and it goes out entirely on the night side, which is why
+            // a wall at midnight is no longer lit from under the ground.
+            illuminance: 0.0,
             shadows_enabled: true,
             ..default()
         },
@@ -654,31 +665,53 @@ fn spawn_camera(
     let world = &body.world;
     let fly = Fly::new(eye, d, local.normalize_or(DVec3::Y), flight.speed);
     if !args.fly {
-        let w = Walker::enter(&world.underfoot(local, 8.0), &world.bounds, local, d);
+        // The BARE ground: nothing is built yet on the frame the camera
+        // is spawned, because `city::stream` raises the first town on
+        // the frame after. `world::start` puts the walker on a STREET,
+        // so the town arriving under him does not arrive inside him.
+        let w = Walker::enter(&world.ground(), &world.bounds, local, d);
         commands.insert_resource(OnFoot(w));
     }
-    commands.spawn((
-        Camera3d {
-            screen_space_specular_transmission_steps: 1,
-            ..default()
-        },
-        DepthPrepass,
-        Projection::Perspective(PerspectiveProjection {
-            far: 100_000_000.0,
-            ..default()
-        }),
-        Exposure { ev100: 10.5 },
-        // The sky lights the world: what fills a shadow is the air over
-        // it, off the same march the dome is drawn by, which is why a
-        // face turned away from the sun is sky blue and not black.
-        bevy::light::GeneratedEnvironmentMapLight {
-            environment_map: env,
-            intensity: 1.0,
-            ..default()
-        },
-        sky::StaticEnvironment,
-        fly,
-    ));
+    commands
+        .spawn((
+            Camera3d {
+                screen_space_specular_transmission_steps: 1,
+                ..default()
+            },
+            DepthPrepass,
+            Projection::Perspective(PerspectiveProjection {
+                far: 100_000_000.0,
+                ..default()
+            }),
+            Exposure { ev100: 10.5 },
+            // The sky lights the world: what fills a shadow is the air over
+            // it, off the same march the dome is drawn by, which is why a
+            // face turned away from the sun is sky blue and not black.
+            bevy::light::GeneratedEnvironmentMapLight {
+                environment_map: env,
+                intensity: 1.0,
+                ..default()
+            },
+            sky::StaticEnvironment,
+            fly,
+        ))
+        // The TORCH, a child of the camera so it points wherever the eye
+        // does and needs nothing to move it: a light carried by a body is
+        // the body's frame, which is this project's own rule for anything
+        // standing on a thing that moves.
+        .with_child((
+            SpotLight {
+                intensity: 0.0,
+                range: lamps::TORCH_REACH,
+                inner_angle: lamps::TORCH_INNER,
+                outer_angle: lamps::TORCH_OUTER,
+                color: lamps::TORCH_COLOUR,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::IDENTITY,
+            lamps::Torch,
+        ));
 }
 
 /// Left click takes the mouse, Escape gives it back.
@@ -719,7 +752,7 @@ fn place_eye(
     // rotation and the picture came back with no car in it at all.
     *tf = match (thefts.driving(), walker) {
         (Some(theft), _) => {
-            let look = drive::look_at(&theft.car);
+            let look = drive::look_at(&theft.car, theft.swing);
             Transform::from_translation(at).looking_to(look.as_vec3(), theft.car.dir.as_vec3())
         }
         (None, Some(w)) => {
@@ -733,16 +766,31 @@ fn show_status(
     status: Res<Status>,
     streamer: Option<Res<Streamer>>,
     walker: Option<Res<OnFoot>>,
+    weather: Res<sky::Weather>,
     mut text: Query<&mut Text, With<Stat>>,
 ) {
     let what = streamer.map(|s| s.status()).unwrap_or_default();
     let mode = if walker.is_some() { "fly" } else { "walk" };
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
-            "{}\n{}   |   F {mode}, Tab wire, L LOD, Esc mouse",
-            status.walker, what
+            "{}\n{}   |   {}   |   F {mode}, Tab wire, L LOD, Esc mouse",
+            status.walker,
+            what,
+            clock(&weather)
         );
     }
+}
+
+/// What o'clock it is where the eye stands, on the twenty four hour dial
+/// `--hour` is asked in, so the flag and the readout cannot mean two
+/// different times. The ONE place a time is turned into words.
+fn clock(weather: &sky::Weather) -> String {
+    let h = weather.oclock();
+    format!(
+        "{:02}:{:02}",
+        h.floor() as u32 % 24,
+        ((h.fract() * 60.0) as u32).min(59)
+    )
 }
 
 /// Hold the loop to `--fps`. It is a DEADLINE rather than a fixed sleep,

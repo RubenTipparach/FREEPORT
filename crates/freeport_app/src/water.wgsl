@@ -65,6 +65,22 @@ struct Water {
 // unfiltered original.
 const DETAIL_FADE: f32 = 4.0;
 
+/// How hard the normal's own sub pixel WOBBLE widens the specular lobe.
+///
+/// This is NDF filtering (Toksvig's): the variance a normal has inside a
+/// pixel belongs in the roughness, because a lobe narrower than that
+/// variance can only ever sample one point of it and flicker. Squared,
+/// because roughness combines in quadrature.
+/// The sun's GLINT on the sheet: its colour, how wide the lobe is and
+/// how bright it burns in nits.
+///
+/// A power of 90 rather than of thousands, which is `distant.wgsl`'s own
+/// number and for its own reason: the sun's half degree is spread by the
+/// waves, so a glint on water is a soft patch and not a point.
+const GLINT: vec3<f32> = vec3<f32>(1.0, 0.96, 0.88);
+const GLINT_POWER: f32 = 90.0;
+const GLINT_NITS: f32 = 620.0;
+
 // Where the terminator falls on the sun's elevation over the local
 // horizon, as `distant.wgsl` measures the same line on the same body.
 const DUSK_TO: f32 = -0.10;
@@ -147,16 +163,36 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // seam where the ripple cell is a step.
     let foot = length(fwidth(in.world_position.xyz)) * water.wave.y;
     let detail = 1.0 / (1.0 + foot * DETAIL_FADE);
-    let h = fbm3_at(cell, frac, t) * detail;
     let e = 0.08;
     let at = fbm3_at(cell, frac, t);
-    var grad = vec3<f32>(
+    var raw = vec3<f32>(
         fbm3_at(cell, frac + vec3<f32>(e, 0.0, 0.0), t) - at,
         fbm3_at(cell, frac + vec3<f32>(0.0, e, 0.0), t) - at,
         fbm3_at(cell, frac + vec3<f32>(0.0, 0.0, e), t) - at,
-    ) * 12.5 * detail;
-    grad = grad - radial * dot(grad, radial);
+    ) * 12.5;
+    raw = raw - radial * dot(raw, radial);
+    // The NORMAL may be faded on the signal: a normal is a smooth
+    // function of the gradient, so a gradient worn toward nought is a
+    // sheet worn smoothly flat and there is nothing to alias.
+    let grad = raw * detail;
     let steep = length(grad);
+    // The FOAM may not, and that is what the speckle was. A threshold
+    // does not antialias by fading what goes into it: `h = fbm * detail`
+    // slides ACROSS `band.x` rather than leaving it, so a point sampled
+    // ripple crossing that edge flickers per pixel, and the foam colour
+    // is near white. It was worst in the MID field for the same reason,
+    // because that is where `detail` is about a half and `h` sits in the
+    // middle of the 0.35 to 0.60 band.
+    //
+    // So the foam is taken off the RAW ripple through a band WIDENED by
+    // the same footprint, which is what antialiasing a threshold
+    // actually is: as a texel covers more of the signal the edge blurs
+    // toward the signal's own average instead of flickering about it.
+    // The whole term is then worn out by `detail` as well, so the far
+    // sea has no foam at all rather than a grey average of some.
+    let blur = (1.0 - detail) * 0.5;
+    let crest = at;
+    let sharp = length(raw);
     var bent = grad;
     if (steep > water.zenith.w) {
         bent = grad * (water.zenith.w / steep);
@@ -171,6 +207,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // level already, and dimmed twice the sea went black at the horizon,
     // where a mirror should be closest to the sky it mirrors.
     let sun = normalize(water.sun.xyz);
+    // `freeport_core::day::twilight`: what a sheet MIRRORS is the sky,
+    // and the sky is still lit after the sun has set, which is the whole
+    // of why this keeps the band where the directional light does not.
     let daylight = smoothstep(DUSK_TO, DUSK_FROM, dot(radial, sun));
     let lit = mix(water.sun.w, 1.0, daylight);
     let absorb = max(water.absorb.rgb, vec3<f32>(0.0));
@@ -215,6 +254,40 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var pbr_input = pbr_input_from_standard_material(plain, is_front);
     pbr_input.N = n;
+    // EVERY SPECULAR TERM IN `apply_pbr_lighting` TO NOUGHT, the lights'
+    // and the environment map's alike, and the sheet keeps its own glint
+    // instead. `distant.wgsl` already does this to a body's ocean seen
+    // from orbit, for the same reason and in the same three lines, and
+    // it is what pale-blue-dot's water does too: that shader never calls
+    // Bevy's PBR at all and carries one explicit Blinn Phong lobe.
+    //
+    // The speckle was that lobe. A GGX highlight as narrow as water's
+    // own `perceptual_roughness` laid on a normal that wobbles under the
+    // pixel is glitter by construction, because every fragment catches
+    // or misses the sun and the sky by itself. Measured on a wader's
+    // frame 60 m off the port at levels 9, mean high frequency energy in
+    // the mid water band: 5.219 for the sheet against a floor of 0.826
+    // with the ripple normal taken out altogether. Handing Bevy the FLAT
+    // normal read 1.123 and widening its lobe to 0.6 while KEEPING the
+    // ripple normal read 1.519, and that PAIR is what says it is the
+    // lobe and never the normal. Nothing else came near: the foam
+    // threshold 5.443, the ripple gradient over a wider `e` 5.116, this
+    // shader's own fresnel on the flat normal 4.476, and screen space
+    // transmission 2.417, which is an amplifier rather than a source
+    // because it refracts along that same normal.
+    //
+    // Filtering the lobe (Toksvig, the variance in the roughness) got it
+    // to 2.007 and is what this carried for one commit. It is a filter
+    // on a term that should not be there: a sea's shine is ONE lobe the
+    // shader owns, not a GGX highlight plus an environment map of the
+    // sky reflected in a mirror.
+    //
+    // The ROUGHNESS is left alone, unlike `distant.wgsl`'s, because
+    // Bevy's screen space transmission blurs by it: taken to one the
+    // seabed comes back a smear. Nought reflectance is what zeroes F0,
+    // and F0 is what every specular term here is multiplied by.
+    pbr_input.material.metallic = 0.0;
+    pbr_input.material.reflectance = vec3<f32>(0.0);
     // Bevy's own transmission attenuates the refracted ray over this, on
     // the colour `water::attenuation` DERIVED from the same absorption
     // the next line reads, so the two halves of one Beer's law cannot
@@ -254,10 +327,23 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Foam on the crests and on the steep, as the GLSL blends them, and
     // on the light the water's body gets rather than the sky's.
     let foam = max(
-        smoothstep(water.band.x, water.band.y, h) * 0.55,
-        smoothstep(water.band.z, water.band.w, steep) * 0.26,
-    ) * water.foam.w;
+        smoothstep(water.band.x - blur, water.band.y + blur, crest) * 0.55,
+        smoothstep(water.band.z - blur, water.band.w + blur, sharp) * 0.26,
+    ) * water.foam.w * detail;
     shaded = mix(shaded, water.foam.rgb * view.exposure * lit, foam);
+
+    // The SUN's own GLINT, and the only shine on this sheet: one Blinn
+    // Phong lobe about the half vector, which is `distant.wgsl`'s line
+    // for a body's ocean and pale-blue-dot's for its sea. WIDE, because
+    // the sun's half degree is spread by the waves, and because a narrow
+    // lobe on this normal is the speckle this replaces.
+    //
+    // Scaled by `detail` like the foam, so where the ripples are worn
+    // out by their own footprint the glint goes with them rather than
+    // surviving on a normal that is no longer there.
+    let half_v = normalize(V + sun);
+    let lobe = pow(max(dot(n, half_v), 0.0), GLINT_POWER);
+    shaded += GLINT * (GLINT_NITS * lobe * lit * detail * view.exposure);
     color = vec4<f32>(shaded, color.a);
 
     color = main_pass_post_lighting_processing(pbr_input, color);
