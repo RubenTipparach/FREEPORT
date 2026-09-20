@@ -320,3 +320,69 @@ fn lay(
 fn mesh_points(mesh: &freeport_core::dc::DcMesh) -> impl Iterator<Item = Vec3> + '_ {
     mesh.positions.iter().map(|p| Vec3::from(*p))
 }
+
+/// How far the first TARMAC of a road stands from the nearest paving of
+/// the town it leaves: metres along the ground, and which town.
+///
+/// It is the one number that says whether a highway JOINS a city or
+/// merely points at it, and it is measured rather than reasoned about
+/// because the two ends are decided by different rules. A town's streets
+/// are laid where its `demand` says a block carries a lot; a road's
+/// tarmac starts where `road::open` says the point is outside the town's
+/// own levelling AND its skirt, because inside that the town's site
+/// answers the ground and a road laid there would float over it. Nothing
+/// makes those meet, so the gap is whatever it is.
+///
+/// Measured against every piece of the town's paving rather than along
+/// the road's own bearing, because a town's grid is a grid: the nearest
+/// tarmac to a street is not always the street the road is pointing at.
+///
+/// On this body it is **39 m**, and the two ends say which is short: the
+/// first tarmac stands 169 m out of the port while the town's own paving
+/// reaches 270 at its furthest. The road leaves along a bearing where
+/// the town is NARROW, so the tarmac starts at that bearing's own
+/// `level_r` (the outline plus a 12 m apron) and the town's outermost
+/// block frontage there is 27 m further in, which is a block and a half
+/// of grid. It is NOT the skirt: measured, dropping `field::site_skirt`
+/// from `road::open` moved the levelling 24.6 m inward and the gap not
+/// at all, because the first tarmac is laid at a STATION and the
+/// stations are 85 m apart.
+///
+/// Closing it is a JUNCTION between two paving systems, which this
+/// project already names as missing: a road arrives on an arbitrary
+/// bearing and a town's streets run on its own grid, so there is nothing
+/// for the tarmac to meet until one of them is laid toward the other.
+/// Running the tarmac on INTO the town instead would put a 10 cm lip
+/// across whatever suburb street it crossed, since a road is lifted
+/// 0.15 m and a street 0.05.
+pub fn gap_to_town(world: &World) -> Option<(usize, usize, f64, f64, f64)> {
+    let radius = world.planet.radius;
+    let (k, road) = world.roads.iter().enumerate().next()?;
+    let route = world.routes.get(k)?;
+    // The first point a piece of tarmac is actually LAID at, which is
+    // `ribbon::stretch`'s own rule and not merely the first open point.
+    let first = route.open.windows(2).position(|o| o[0] && o[1])?;
+    let at = route.line[first];
+    let town = world.towns.get(road.from)?;
+    let nearest = town
+        .pieces
+        .iter()
+        .map(|p| {
+            let dir = (town.dir * radius + town.east * p.x + town.north * p.z).normalize();
+            dir.angle_between(at) * radius
+        })
+        .fold(f64::INFINITY, f64::min);
+    // And where the two ends actually stand, out of the town's own
+    // middle, because a gap says nothing about which end is short: the
+    // tarmac starting late and the paving stopping early look alike.
+    let out = at.angle_between(town.dir) * radius;
+    let paved = town
+        .pieces
+        .iter()
+        .map(|p| {
+            let dir = (town.dir * radius + town.east * p.x + town.north * p.z).normalize();
+            dir.angle_between(town.dir) * radius
+        })
+        .fold(0.0f64, f64::max);
+    Some((k, road.from, nearest, out, paved))
+}

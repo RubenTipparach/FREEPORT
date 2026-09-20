@@ -2573,10 +2573,31 @@ The lights themselves are `lamps.rs`'s, unchanged but for knowing that a
 lamp can be a road's as well as a town's, and a road's is indexed along
 the whole ROAD because a stretch of it streams.
 
+**And it does NOT quite JOIN the town, which is measured rather than
+assumed.** `roads::gap_to_town` is that number and the harness prints it:
+road 0's first tarmac stands **169 m out of the port, whose own paving
+reaches 270 m, a gap of 39 m**. The two ends say which one is short. The
+road leaves along a bearing where the town is NARROW, so its tarmac
+starts at that bearing's own `Site::level_r`, the outline plus a 12 m
+apron; the town's outermost block frontage on that bearing is 27 m
+further in, which is a block and a half of an 18.5 m grid. It is not the
+SKIRT: dropping `field::site_skirt` from `road::open` moves the levelling
+24.6 m inward and the gap not at all, because the first tarmac is laid at
+a STATION and the stations are 85 m apart. That measurement is why the
+skirt is still in `open`, where it keeps the tarmac out of the band the
+town's own site is winning: inside it a road's tarmac floats 0.10 m off
+its own 0.15 m lift, and past it 0.003.
+
 **What is MISSING, named rather than hidden.** A road has no junctions:
 where two roads cross, two corridors overlap and the field answers
 whichever it reaches first, and there is no give way, no slip road and no
-roundabout. Nothing drives on it on rails, so the country between two
+roundabout. **And there is none where a road MEETS a town** either, which
+is the same gap said at the other end: a road arrives on an arbitrary
+bearing and a town's streets run on its own grid, so there is nothing for
+the tarmac to meet until one of them is laid toward the other. Running
+the tarmac on INTO the town instead is not the answer, because a road is
+lifted 0.15 m and a street 0.05, so it would put a 10 cm lip across
+whatever suburb street it crossed. Nothing drives on it on rails, so the country between two
 towns is empty of traffic. A car has no HEADLAMPS: its lamps are emissive
 and cast no light, so a night drive out past `LIT_NEAR` is a drive in the
 dark, which is what a day arriving on a world with unlit country roads

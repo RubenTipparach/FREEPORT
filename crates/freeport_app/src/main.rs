@@ -492,6 +492,13 @@ fn say_roads(commands: &mut Commands, world: &World) {
             r.line[open].angle_between(r.line[dark]) * world.planet.radius,
         )
     });
+    // Whether the highway JOINS the city it leaves, which is a number
+    // and not a thing to squint at a picture for.
+    if let Some((k, town, gap, out, paved)) = roads::gap_to_town(world) {
+        info!(
+            "road {k}'s first tarmac stands {out:.0} m out of town {town}, whose own paving reaches {paved:.0} m: a gap of {gap:.0} m"
+        );
+    }
     info!(
         "{} roads are {} stretches of tarmac; the ones within {:.0} km of the eye are laid{}",
         world.roads.len(),
