@@ -65,6 +65,14 @@ struct Water {
 // unfiltered original.
 const DETAIL_FADE: f32 = 4.0;
 
+/// How hard the normal's own sub pixel WOBBLE widens the specular lobe.
+///
+/// This is NDF filtering (Toksvig's): the variance a normal has inside a
+/// pixel belongs in the roughness, because a lobe narrower than that
+/// variance can only ever sample one point of it and flicker. Squared,
+/// because roughness combines in quadrature.
+const NDF_FILTER: f32 = 90.0;
+
 // Where the terminator falls on the sun's elevation over the local
 // horizon, as `distant.wgsl` measures the same line on the same body.
 const DUSK_TO: f32 = -0.10;
@@ -238,6 +246,33 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var pbr_input = pbr_input_from_standard_material(plain, is_front);
     pbr_input.N = n;
+    // NDF FILTERING, and it is the whole of the speckle. A specular lobe
+    // as narrow as water's own `perceptual_roughness` (0.12) laid on a
+    // normal that WOBBLES under the pixel is glitter by construction:
+    // every fragment catches or misses the sun and the sky by itself.
+    //
+    // Measured on a wader's frame 60 m off the port at levels 9, in the
+    // mid water band, as mean high frequency energy: the sheet reads
+    // 5.219 against a floor of 0.826 with the ripple normal taken out
+    // altogether. Handing Bevy the FLAT normal reads 1.123 and widening
+    // the lobe to 0.6 while KEEPING the ripple normal reads 1.519, and
+    // that pair is what says it is the LOBE and not the normal. Nothing
+    // else came close: the foam threshold 5.443, the ripple gradient
+    // taken over a wider `e` 5.116, this shader's own fresnel on the
+    // flat normal 4.476, and screen space transmission 2.417, which is
+    // an amplifier rather than a source because it refracts along that
+    // same normal.
+    //
+    // A flat 0.6 is not the answer, because that is a matte sea and
+    // throws away the sun's glint this project measured its water by.
+    // The variance goes in the ROUGHNESS instead: `fwidth(n)` is how far
+    // the normal moves across one pixel, and a lobe widened by it covers
+    // what the normal is doing inside that pixel rather than sampling
+    // one point of it. Calm water a few metres away keeps its own 0.12.
+    let wobble = length(fwidth(n));
+    let base = pbr_input.material.perceptual_roughness;
+    pbr_input.material.perceptual_roughness =
+        clamp(sqrt(base * base + wobble * wobble * NDF_FILTER), base, 1.0);
     // Bevy's own transmission attenuates the refracted ray over this, on
     // the colour `water::attenuation` DERIVED from the same absorption
     // the next line reads, so the two halves of one Beer's law cannot
