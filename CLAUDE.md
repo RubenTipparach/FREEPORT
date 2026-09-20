@@ -1637,10 +1637,9 @@ the town under the walker's feet read as 1,113 m away. That is the
 what makes it a rule rather than a slip: a position multiplied by a
 radius it already carries is not a distance to anything but the centre.
 
-**What is MISSING, named rather than hidden:** a road is DATA and there
-is no ribbon on the ground, so driving between two towns is driving
-cross country on ground a road was routed over. The section on the roads
-below has the shape of what is left.
+**And a road is ON THE GROUND now**, levelled into the planet's own
+field and paved with tarmac that streams, which is the section on the
+roads below.
 
 Measured: 160 cities and 544 roadside villages planned and BAKED in
 23.8 s (20,000 candidates), 704 settlements from 180 m across down to 23,
@@ -2045,12 +2044,27 @@ km/s, because two million metres a second is a number nobody can hold
 and is the same speed as 2,000 km/s.
 
 **And a car with no ROUTE cannot get out of a town, which is measured
-rather than guessed.** The scripted drive aims straight at the next
+rather than guessed.** The scripted drive aimed straight at the next
 settlement, which from a street between two buildings is straight at a
 wall. It drove twelve metres out of the port and then oscillated in
 place for the rest of the run: forward into the building, back off,
 forward into the same building. `driven 12 m in 30 s`, and 12 m at 60,
 90 and 120.
+
+**So it FOLLOWS THE ROAD now**, which is what a road is for and what the
+section above finally put on the ground. `roads::Network::follow` is the
+point on the tarmac `AHEAD` (400 m) along from the piece nearest the car,
+in whichever direction gets nearer the town it is driving to, and
+`steer_for` hands that to `Driver::toward` instead of the town itself.
+Off the road, further than `OFF_ROAD` (400 m) from any tarmac, it falls
+back to aiming at the town, which is what gets it out of a street and
+onto one. It is pure pursuit with one knob, and the knob is how far ahead
+it looks: nearer and it saws at the wheel, further and it cuts the bends.
+
+The search is not a walk of the road. The `Network` keeps each stretch's
+own middle, so the nearest of 11,987 of them is an angle each, and only
+that stretch's seventeen points are looked at; walking 190,168 points a
+frame would be the frame.
 
 Two things came out of measuring it, and both are worth keeping
 whatever drives next:
@@ -2081,6 +2095,129 @@ the walker knows about the boxes a model was drawn from and those do not
 move. Nothing is saved, so a car is stolen afresh every run. And the sea
 does not stop it: the bounds it drives against carry no water, so a car
 driven off a beach keeps going down the sea bed.
+
+## A road is ON THE GROUND now, and its corridor is levelled like a town's
+
+A road was DATA: a chain of directions the chart painted and nothing
+underfoot, so driving between two towns was driving cross country over a
+route nothing marked. This is the other half, and it is the same shape as
+a town: the GROUND is cut in the planet's own field from the first frame,
+and the TARMAC streams.
+
+**A `Site` is an ARC now, and a town's disc is the case where its two
+ends are the same direction.** One type and not a disc beside a capsule,
+because everything that reads a site (`site_band`, `site_weight`,
+`surface_blend`, `local_solid`, `Planet::around` and the slope bound they
+all rest on) would otherwise be written twice and two of them are subtle
+enough that one copy would be wrong. `Site::nearest` is the whole of the
+new geometry: the point projected onto the arc's own great circle, clamped
+to the segment, and the level ramped along it.
+
+**How FINELY a corridor is cut was measured, not chosen.**
+`examples/road_ground.rs` walks the body's own roads and asks how far the
+ground strays from a straight ramp between two stations. On the atlas's
+ten kilometre waypoints it is a median of 45 m and up to 830, which is a
+canyon rather than a cutting. The sweep halves with the spacing: 2.7 km is
+10.3 m, 1.4 km is 4.8, 683 m is 2.3, 341 m is 1.20 with a 99th of 6.2, and
+171 m is 0.72. `PIECE` is 341 m, because a metre of cut is a verge and six
+is a cutting and both are things a road HAS, and the next halving buys
+half a metre and doubles a count that is already 186,788 arcs.
+
+**A road may FILL and a town may not**, and that is the one rule the two
+do not share. A town's level is the lowest its own survey found, so a site
+that filled would be a city on a pedestal with its apron over the valley,
+which is what the owner read off a picture once. A road's level is the
+ground at its own stations, so the ramp between two of them runs over
+every hollow between: tarmac laid on a corridor that could only cut
+floated 18.6 m over the ground in the worst place on this body. An
+embankment is the other half of a cutting and no road is built without
+both. `Site::fills` is the flag and `Planet::levelling` is where the two
+answers come off one loop.
+
+**The count is what `field::Sites` is for.** A body with eight towns can
+be walked and a body with a hundred and sixty can, once `Planet::around`
+filters once a CHUNK; a body whose roads are levelled cannot, because
+`surface_blend` is asked for every one of a chunk's seven thousand sample
+points and there are 186,788 sites. The index is the simplest thing that
+works on a sphere and keeps this crate's no-`HashMap` rule: the sites
+sorted by LATITUDE, which is `dir.y` because that is what `biome` already
+measures latitude on, plus one number for how far the widest of them
+reaches off its own. A query is a binary search and a walk of a thin band.
+`the_site_index_finds_every_site_a_walk_would` holds it against a brute
+force walk at a thousand directions on a body of discs and corridors of
+every size, because an index that MISSES a site is ground nobody levelled
+and a hole in the world.
+
+**And `..self.clone()` was the whole cost of a road.** Struct update
+syntax evaluates its base FIRST, so `Planet { sites, ..self.clone() }`
+clones every site on the body and then throws the list away. With eight
+towns that is a hundred bytes and nobody notices; with 186,788 corridor
+pieces it is 13 MB a call, and `around` is called once a chunk and once a
+sample in the bake's own survey. Measured on the port: **71 ms a chunk,
+against 8 before and 8 after `Planet::bare`**. A body with a hundred and
+ninety thousand levelled corridor pieces costs a chunk exactly what a
+body with eight towns did.
+
+**What is BAKED is the HEIGHTS and nothing else.** The refined
+centreline's directions are a slerp off the atlas's own waypoints at a
+spacing both sides compute from `PIECE`, so only the ground under them has
+to be written down: 190,168 numbers rounded to the centimetre, which took
+the atlas from 1.7 MB to 4.4 rather than to 17. `road::pieces` and
+`road::step` are the one function each side derives from, because a bake
+and a game that disagreed by one piece would be a road whose levelling and
+whose tarmac are in different places.
+
+**A corridor stops at EVERY town it passes and not only at its two ends.**
+`road::waysides` grows a village wherever a road has run a day's cart, so
+a road passes THROUGH settlements as well as ending at them, and a town's
+disc levels its ground to the town's level while a corridor ramps to the
+road's: where the two overlapped the field answered whichever it reached
+first and the tarmac stood on the other. `road::open` is the one answer
+both the levelling and the tarmac are cut by, so they cover the same
+ground by construction.
+
+**The tarmac is the streets' own cross section at the country's scale.**
+`LANE` each way read off `town::street` rather than written again, a
+dashed centreline, a solid line down each edge, and a SHOULDER falling
+from the tarmac into the ground. The lift is three times a street's five
+centimetres and the reason is measured: a street is laid on a town's one
+level and a road on a RAMP, so where two pieces meet at a bend the tarmac
+is MITRED and its outer corner sits a little along the ramp from the
+station it belongs to. 4 mm almost everywhere and up to 0.103 m at the
+waypoint bends. Fifteen centimetres clears that, and the shoulder is
+buried deeper than the error runs so there is no crack at the outside of a
+bend for the ground to show through.
+`the_tarmac_lands_on_the_ground_its_corridor_levelled` measures both.
+
+**It STREAMS, one stretch a frame, like a town.** 63,840 km of road is
+sixty million triangles and the eye is only ever in one place: a stretch
+is sixteen pieces, 5.5 km, one mesh in a frame of its own (an `f32` there
+holds a third of a millimetre), and the ones within `REACH` of the eye are
+laid one a frame and dropped one a frame. `roads::Network` keeps each
+stretch's own middle so the near ones can be ranked without walking a
+centreline, and the distance is along the GROUND, the angle times the
+radius, which is this file's own rule about a position multiplied by a
+radius it already carries.
+
+**A road is LIT on the approach to a town and dark in the country**,
+which is the owner's own rule. `road::lit` is where that is decided and it
+is measured from a settlement's own site, so it cannot drift from where
+the towns are: `LIT_NEAR` is 1.5 km, and a lamp stands every third piece,
+about a kilometre apart, seven metres up and half a metre off the
+carriageway. The post only DRAWS, which is this file's rule that anything
+a body should pass through is trim: a lamp post is not what stops a car.
+The lights themselves are `lamps.rs`'s, unchanged but for knowing that a
+lamp can be a road's as well as a town's, and a road's is indexed along
+the whole ROAD because a stretch of it streams.
+
+**What is MISSING, named rather than hidden.** A road has no junctions:
+where two roads cross, two corridors overlap and the field answers
+whichever it reaches first, and there is no give way, no slip road and no
+roundabout. Nothing drives on it on rails, so the country between two
+towns is empty of traffic. The car does not FOLLOW it yet, which is the
+next section's own gap. And a road is not drawn in a town, because the
+town's streets are there, so the join between the two is a change of
+surface rather than a junction.
 
 ## Cities are JOINED, and the plan of a body is BAKED
 
@@ -2204,12 +2341,9 @@ so the four channel dump opened with every scrap of land transparent and
 every ocean opaque: the one picture that exists so a person can look at
 the chart showed the planet inside out in every viewer.
 
-**What is MISSING, named rather than hidden:** a road is data, a levelled
-corridor is not, and there is no ribbon on the ground yet. A road shows
-from orbit and is in the world's own state, and walking one means
-generalising a `Site` from a circle to an ARC so the corridor under it is
-levelled the way a town's ground is, plus the same streaming a far town
-still waits on.
+**And that is what the section above builds on**: a `Site` is an ARC now,
+so the corridor under a road is levelled the way a town's ground is, and
+the tarmac over it streams the way a town's buildings do.
 
 Measured on this planet: 160 towns and 155 roads over 36,716 km joining
 123 of them, baked in 23.7 s and READ in 10 ms, against 7,200 ms to plan
@@ -2499,6 +2633,31 @@ there is one answer and no queue, and `is_finished` is the poll. Nothing
 had to be written to make the filtered light follow: `StaticEnvironment`
 caches Bevy's own filtering on the SOURCE TEXTURE's id, so a new image
 is a new texture is a new filter.
+
+**AND THE SUN GOES OUT ON THE NIGHT SIDE.** A directional light shines
+on every surface whose normal faces it, and nothing in a shadow cascade a
+few hundred metres deep can put a PLANET in the way: at midnight the sun
+stood under the ground and every wall facing it was lit from below, which
+is sunlight shining up through the world. The owner saw it and named
+where the answer is.
+
+It is TENEBRIS's, and it is one line there too. `hex.vs.glsl` carries
+`v_sun_brightness = smoothstep(term_lo, term_hi, dot(radial, sun))` and
+`hex.fs.glsl` multiplies the sun's own diffuse by it, so which half of a
+planet is in its own night is decided on the RADIAL and never on the
+surface normal. That is `day::daylight`, which this crate already carried
+and which `distant.wgsl`, `water.wgsl` and `terrain.wgsl` already
+transcribe; the sun was the one thing not reading it.
+
+`turn_sun` scales the light's own illuminance by it, at the EYE's own
+radial, because Bevy's light loop is inside `apply_pbr_lighting` and
+there is nowhere to scale ONE light per fragment without writing the loop
+again. On the ground that is exact to a tenth of a degree, which is what
+a 1.8 km horizon subtends; from the air near the terminator it is one
+answer for a scene spanning several degrees of it; and from orbit the
+impostor does the same rule per fragment off its own chart. Measured as a
+picture, the port at eleven at night: 8.55% of pixels moved by more than
+8 of 255, worst 220.
 
 **What is MISSING, named rather than hidden.** The cubemap is baked for
 where the eye was when the sun last moved, so flying from a beach to
@@ -2830,6 +2989,20 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 # The game reads it at startup and plans the body itself, slowly and with
 # no roads, only when there is no atlas that fits.
 ./target/release/freeport_app --bake-atlas
+# The ROAD between two towns, along itself. `--road N` stands N metres
+# over the tarmac a kilometre out of the port and looks down it: a
+# camera for a picture is solved and never hand aimed, and where a road
+# leaves a town depends on where the network came out. The first cut of
+# it looked sixty pieces ahead, which is twenty kilometres and well
+# under the horizon of an eye 25 m up, and the picture came back as bare
+# hills.
+./target/release/freeport_app --fly --levels 6 --octaves 10 --frames 50 --road 3 --hour 10 --shot road.png
+./target/release/freeport_app --fly --levels 6 --octaves 10 --frames 50 --road 3 --hour 22 --shot roadnight.png
+# How far the ground strays from a straight ramp between two road
+# waypoints, which is the measurement that decided `road::PIECE`. It
+# reads the atlas's own segments off a file, because it is a measurement
+# and not a feature.
+cargo run --release -p freeport_core --example road_ground -- segments.txt
 # The charts themselves, written beside the assets as PNGs.
 FREEPORT_DUMP_CHARTS=1 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 3 --shot n.png
 ```

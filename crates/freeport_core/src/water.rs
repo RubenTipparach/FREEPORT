@@ -114,7 +114,7 @@ mod tests {
             overhang: 0.0,
             ledge: 1.0,
             seed: 11,
-            sites: vec![],
+            sites: vec![].into(),
         }
     }
 

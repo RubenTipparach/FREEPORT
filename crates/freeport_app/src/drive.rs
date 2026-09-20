@@ -240,7 +240,7 @@ pub fn drive_car(
         // anywhere to drive TO, which is what the owner asked for.
         input = Drive {
             throttle: 1.0,
-            steer: script.goal.0.map_or(0.0, |g| car.toward(g)),
+            steer: steer_for(&script, &here, car),
             ..Default::default()
         };
         dt = 1.0 / 60.0;
@@ -404,7 +404,39 @@ impl Auto {
 pub struct Script<'w> {
     args: Res<'w, Args>,
     goal: Res<'w, Goal>,
+    /// The tarmac, so a scripted drive FOLLOWS the road to its town
+    /// rather than aiming through whatever stands between.
+    roads: Res<'w, crate::roads::Network>,
 }
+
+/// Which way a SCRIPTED drive turns the wheel: toward the road's own
+/// tarmac `AHEAD` metres along, and toward the town itself where there
+/// is no road under the wheels.
+///
+/// Aimed straight at the town, a car leaving the port drove twelve
+/// metres and then oscillated against a building for the rest of the
+/// run: forward into it, back off, forward into the same building. What
+/// stopped it was never its physics (it pulls away at planet scale,
+/// backs out of a corner of two walls and climbs out of a crawl, all
+/// measured) but that a building stood between it and where it was going
+/// and it had nothing to follow round one. Following the road is what a
+/// road is FOR.
+fn steer_for(script: &Script, here: &crate::world::Surface, car: &Driver) -> f64 {
+    let Some(goal) = script.goal.0 else {
+        return 0.0;
+    };
+    let world = here.world();
+    let aim = script
+        .roads
+        .follow(world, car.dir, goal, AHEAD, world.planet.radius)
+        .map_or(goal, |p| p.normalize());
+    car.toward(aim)
+}
+
+/// How far down the road a scripted drive looks, metres: far enough that
+/// the wheel is not sawed at and near enough that a bend is taken rather
+/// than cut. Pure pursuit's own one knob.
+const AHEAD: f64 = 400.0;
 
 /// Where a scripted drive is HEADED: the nearest settlement that is not
 /// the one the car is standing in, and its own name.

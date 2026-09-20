@@ -41,6 +41,11 @@ pub(crate) struct Args {
     /// about what time it is anywhere, so a picture asked for at dusk
     /// cannot be aimed by hand. `day::at_oclock` solves the turn.
     pub(crate) hour: Option<f64>,
+    /// Metres over the ROAD out of the port, looking along it toward the
+    /// town it goes to. A camera for a picture is SOLVED and never hand
+    /// aimed: where a road leaves a town depends on where the network
+    /// came out, so a hand aimed camera at a road finds a field.
+    pub(crate) road: Option<f64>,
     /// Plan the home body's cities and roads, write its atlas and stop.
     /// It runs BEFORE any of Bevy is built, so a bake needs no window, no
     /// device and no Xvfb: it is arithmetic and a file.
@@ -88,6 +93,7 @@ impl Default for Args {
             around: 0.0,
             over: None,
             hour: None,
+            road: None,
             bake_atlas: false,
             levels: LEVELS,
             shot: None,
@@ -125,6 +131,7 @@ pub(crate) fn parse_args() -> Args {
             "--sunward" => args.sunward = it.next().and_then(|v| v.parse().ok()),
             "--around" => args.around = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0),
             "--over" => args.over = it.next().and_then(|v| v.parse().ok()),
+            "--road" => args.road = it.next().and_then(|v| v.parse().ok()),
             "--hour" => args.hour = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),

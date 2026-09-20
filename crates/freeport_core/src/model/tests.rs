@@ -366,7 +366,7 @@ fn a_towns_fabric_is_one_mesh_in_its_own_frame() {
         overhang: 0.0,
         ledge: 0.0,
         seed: 11,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
     assert!(!towns.is_empty(), "the ball grew no town");
@@ -469,7 +469,7 @@ fn a_walker_stands_on_the_kerb_and_steps_up_onto_it() {
         overhang: 0.0,
         ledge: 0.0,
         seed: 11,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
     let town = towns[0].clone();
@@ -535,7 +535,7 @@ fn a_walker_walks_a_street_and_is_stopped_by_a_wall() {
         overhang: 0.0,
         ledge: 0.0,
         seed: 11,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
     let town = towns[0].clone();

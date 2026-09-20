@@ -83,7 +83,7 @@ const PROBE_TOL: f64 = 1.0;
 /// is checking.
 fn probe(planet: &Planet) -> Vec<f64> {
     let bare = Planet {
-        sites: Vec::new(),
+        sites: Vec::new().into(),
         ..planet.clone()
     };
     let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
@@ -126,6 +126,19 @@ pub(crate) struct Line {
     pub to: usize,
     /// x, y, z and the level over the mean radius.
     pub line: Vec<[f64; 4]>,
+    /// The GROUND under the road's refined centreline, metres over the
+    /// mean radius, one a point of `road::centreline`.
+    ///
+    /// Only the heights, because the DIRECTIONS are derivable: the
+    /// centreline is a slerp between the waypoints at a spacing both
+    /// sides compute from `road::PIECE`. Written out whole it would be
+    /// 17 MB of this file; as heights alone it is 1.5. An atlas from
+    /// before there was a corridor parses with none, and `road::corridor`
+    /// refuses a run whose length does not match the line it derives, so
+    /// an old file is a body with roads and no ground under them rather
+    /// than a body with its roads in the wrong place.
+    #[serde(default)]
+    pub run: Vec<f64>,
 }
 
 impl Atlas {
@@ -165,6 +178,18 @@ impl Atlas {
                     from: r.from,
                     to: r.to,
                     line: r.line.iter().map(|(d, h)| [d.x, d.y, d.z, *h]).collect(),
+                    // Surveyed against the LEVELLED planet, the one the
+                    // roads were routed over, so a corridor arriving at
+                    // a town meets the level that town cut rather than
+                    // the hill that stood there before it.
+                    // Rounded to the CENTIMETRE, which is four times
+                    // finer than the half metre the finest terrain cell
+                    // is and takes 2 MB off this file: serde writes an
+                    // f64 in full and there are 190,168 of them.
+                    run: road::survey(&levelled, r, sea - planet.radius + road::DRY)
+                        .iter()
+                        .map(|h| (h * 100.0).round() / 100.0)
+                        .collect(),
                 })
                 .collect(),
         }
@@ -207,6 +232,12 @@ impl Atlas {
                     .collect(),
             })
             .collect()
+    }
+
+    /// The GROUND under each road's refined centreline, in the same order
+    /// as `roads`. Empty for a road an old atlas carries no survey for.
+    pub fn runs(&self) -> Vec<Vec<f64>> {
+        self.roads.iter().map(|r| r.run.clone()).collect()
     }
 
     /// Whether this atlas is the plan of the body asked for. A plan from

@@ -22,14 +22,24 @@ const MOST: usize = 48;
 /// bright a lamp is is decided in one place and by the time of day.
 const LUMENS: f32 = 250_000.0;
 
-/// Which lamp a light is: the PLANNED town it belongs to and its place
-/// in that town's own list.
+/// Whether a lamp is a town's or a road's, which is what stops a
+/// village's third lamp and a road's third lamp being the same lamp.
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+pub enum Of {
+    Town,
+    Road,
+}
+
+/// Which lamp a light is: whose it is, the PLANNED town or the road it
+/// belongs to, and its place in that one's own list.
 ///
 /// The planned index and not a slot in the built list, because the built
 /// list STREAMS: a town going out of range takes its own entry out of
-/// the middle and every slot after it would name a different lamp.
+/// the middle and every slot after it would name a different lamp. A
+/// road's lamps are indexed along the whole ROAD for the same reason,
+/// since a stretch of it streams too.
 #[derive(Component, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Lamp(pub usize, pub usize);
+pub struct Lamp(pub Of, pub usize, pub usize);
 
 /// Spawn the lamps within reach of the eye and despawn those out of it.
 pub fn light_lamps(
@@ -52,7 +62,17 @@ pub fn light_lamps(
         for (i, (at, reach)) in town.lamps.iter().enumerate() {
             let d = (*at + ground.1 - eye.0 .0).length();
             if d < REACH {
-                near.push((d, Lamp(town.town, i), *at, *reach));
+                near.push((d, Lamp(Of::Town, town.town, i), *at, *reach));
+            }
+        }
+    }
+    // And the lamps on the approaches to a town, which stand along the
+    // ROAD rather than in anybody's street.
+    for verge in &fabric.verges {
+        for (i, at, reach) in &verge.lamps {
+            let d = (*at + ground.1 - eye.0 .0).length();
+            if d < REACH {
+                near.push((d, Lamp(Of::Road, verge.which.0, *i), *at, *reach));
             }
         }
     }
@@ -143,7 +163,7 @@ mod tests {
                 .add_systems(Update, dim_lamps);
             let lamp = app
                 .world_mut()
-                .spawn((PointLight::default(), Lamp(0, 0)))
+                .spawn((PointLight::default(), Lamp(Of::Town, 0, 0)))
                 .id();
             app.update();
             let lit = app

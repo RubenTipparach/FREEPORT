@@ -12,7 +12,7 @@ fn town() -> Town {
         overhang: 1.0,
         ledge: 8.0,
         seed: 7,
-        sites: vec![],
+        sites: vec![].into(),
     };
     crate::town::plan(&planet, 996.0, 60.0, 4, 7)
         .into_iter()

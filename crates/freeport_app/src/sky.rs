@@ -222,6 +222,12 @@ pub fn spawn_dome(
     );
 }
 
+/// What the sun is worth at its own noon, lux. It is scaled down to
+/// NOUGHT across the terminator by `turn_sun`, which is the one writer
+/// of it: `spawn_light` spawns the light dark and this decides how hard
+/// it burns, the same split `light_lamps` and `dim_lamps` keep.
+pub const SUN_LUX: f32 = 8_000.0;
+
 /// How far the sun may TURN before the sky that lights the world is
 /// baked again, radians. Half a degree is the sun's own width, which is
 /// the finest step there is any point taking: what the cubemap feeds is
@@ -271,7 +277,7 @@ pub fn turn_sun(
     eye: Res<crate::Eye>,
     ground: Res<crate::Ground>,
     mut weather: ResMut<Weather>,
-    mut light: Query<&mut Transform, With<DirectionalLight>>,
+    mut light: Query<(&mut Transform, &mut DirectionalLight)>,
 ) {
     weather.now = weather.start + time.elapsed_secs_f64();
     weather.sun = freeport_core::day::sun_at(weather.noon, weather.now, weather.day);
@@ -283,8 +289,32 @@ pub fn turn_sun(
     // its direction has no frame to build and the sun passes over the
     // pole twice a year on any body with a tilt.
     let up = if sun.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
-    for mut tf in &mut light {
+    // AND IT GOES OUT ON THE NIGHT SIDE. A directional light shines on
+    // every surface whose normal faces it, and nothing in a cascade a
+    // few hundred metres deep can put a PLANET in the way: at midnight
+    // the sun stands under the ground and every wall facing it was lit
+    // from below, which is sunlight shining up through the world. The
+    // owner saw it and named where the answer is.
+    //
+    // It is tenebris's, and it is one line there too (`hex.vs.glsl`):
+    // `smoothstep(term_lo, term_hi, dot(radial, sun))` scales the sun's
+    // own diffuse, so which half of a planet is in its own night is
+    // decided on the RADIAL and not on the surface normal. That is
+    // `freeport_core::day::daylight`, which this crate already carries
+    // and which `distant.wgsl`, `water.wgsl` and `terrain.wgsl` already
+    // transcribe; the sun was the one thing not reading it.
+    //
+    // At the EYE's own radial, because Bevy's light loop is inside
+    // `apply_pbr_lighting` and there is nowhere to scale one light per
+    // fragment without writing the loop again. On the ground that is
+    // exact to a tenth of a degree, which is what a 1.8 km horizon
+    // subtends; from the air near the terminator it is one answer for a
+    // scene that spans several degrees of it, and from orbit the
+    // impostor does the same rule per fragment off its own chart.
+    let lux = SUN_LUX * freeport_core::day::daylight(weather.sun, weather.here) as f32;
+    for (mut tf, mut lamp) in &mut light {
         *tf = Transform::from_translation(Vec3::ZERO).looking_to(-sun, up);
+        lamp.illuminance = lux;
     }
 }
 
@@ -484,4 +514,88 @@ fn cube_dir(face: usize, u: f64, v: f64) -> DVec3 {
         _ => DVec3::new(-u, -v, -1.0),
     }
     .normalize()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freeport_core::day;
+
+    /// THE SUN GOES OUT ON THE NIGHT SIDE, which is tenebris's own rule
+    /// (`hex.vs.glsl`: the terminator is measured on the RADIAL and it
+    /// scales the sun's diffuse) and what stops a wall at midnight being
+    /// lit from under the ground. Driven through the real system,
+    /// because the rule is the core's and the wiring is where an app
+    /// side bug would be.
+    #[test]
+    fn a_wall_at_midnight_takes_no_sun_through_the_ground() {
+        let here = DVec3::new(0.2, 0.3, 0.93).normalize();
+        let noon = DVec3::new(0.9, 0.1, 0.42).normalize();
+        // Six and eighteen are DUSK and not night: the sun is crossing
+        // the horizon there and `day::daylight` is a band eight degrees
+        // either side of it, which is the point of a band.
+        let mut dusk = 0.0f32;
+        for (hour, want) in [
+            (12.0, Some(SUN_LUX)),
+            (0.0, Some(0.0)),
+            (22.0, Some(0.0)),
+            (2.0, Some(0.0)),
+            (18.0, None),
+        ] {
+            let start = day::at_oclock(noon, here, hour, day::DAY);
+            let mut app = App::new();
+            app.insert_resource(Time::<()>::default())
+                .insert_resource(crate::Eye(freeport_core::pos::WorldPos(here * 1_000_000.0)))
+                .insert_resource(crate::Ground(
+                    std::sync::Arc::new(crate::world::World {
+                        planet: freeport_core::field::Planet::default(),
+                        towns: Vec::new(),
+                        roads: Vec::new(),
+                        routes: Vec::new(),
+                        bounds: freeport_core::walker::Bounds {
+                            radius: 1_000_000.0,
+                            floor: 0.0,
+                            top: 1.0,
+                            sea: 0.0,
+                        },
+                        sea: freeport_core::water::Sea {
+                            radius: 1_000_000.0,
+                        },
+                    }),
+                    DVec3::ZERO,
+                ))
+                .insert_resource(Weather {
+                    air: freeport_core::atmos::Air::round(1_000_000.0, 8_000.0),
+                    sea: 1_000_000.0,
+                    sun: day::sun_at(noon, start, day::DAY),
+                    noon,
+                    start,
+                    now: start,
+                    day: day::DAY,
+                    here,
+                })
+                .add_systems(Update, turn_sun);
+            let light = app
+                .world_mut()
+                .spawn((DirectionalLight::default(), Transform::default()))
+                .id();
+            app.update();
+            let lux = app
+                .world()
+                .get::<DirectionalLight>(light)
+                .expect("the sun")
+                .illuminance;
+            match want {
+                Some(want) => assert!(
+                    (lux - want).abs() < SUN_LUX * 1e-3,
+                    "at {hour} o'clock the sun is worth {lux} lux and should be {want}"
+                ),
+                None => dusk = lux,
+            }
+        }
+        assert!(
+            dusk > 0.0 && dusk < SUN_LUX,
+            "dusk is worth {dusk} lux, which is not a band"
+        );
+    }
 }

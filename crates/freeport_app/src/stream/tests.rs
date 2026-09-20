@@ -307,6 +307,7 @@ fn test_world() -> Arc<World> {
         planet: freeport_core::field::Planet::default(),
         towns: vec![],
         roads: vec![],
+        routes: vec![],
         bounds: freeport_core::walker::Bounds {
             radius: 1e6,
             floor: 990000.0,

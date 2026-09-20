@@ -222,6 +222,7 @@ fn ground() -> Ground {
             },
             towns: vec![],
             roads: vec![],
+            routes: vec![],
             bounds: Bounds {
                 radius: RADIUS,
                 floor: RADIUS - 2.0,

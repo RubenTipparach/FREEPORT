@@ -361,7 +361,7 @@ fn harness() -> (crate::field::Planet, f64) {
             overhang: 3.0,
             ledge: 12.0,
             seed: 7,
-            sites: vec![],
+            sites: vec![].into(),
         },
         // `freeport_app`'s own SEA. The two are one number in two crates
         // and this test is what keeps them one: the core cannot read the

@@ -203,6 +203,7 @@ impl Body {
                 planet,
                 towns: vec![],
                 roads: vec![],
+                routes: vec![],
                 bounds: Bounds {
                     radius: d.radius,
                     floor: floor - 2.0,

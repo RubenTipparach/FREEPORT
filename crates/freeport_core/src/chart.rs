@@ -22,7 +22,7 @@
 //! wrong place the moment you flew down to it.
 
 use crate::biome::{Climate, Kind, BEACH_TO};
-use crate::field::Planet;
+use crate::field::{Planet, Sites};
 use crate::road::Road;
 use glam::DVec3;
 
@@ -207,7 +207,7 @@ impl Chart {
         // 954 ms to 1,617). Baked bare and stamped after, the cities are
         // ON it and the bake is back to what it was.
         let bare = Planet {
-            sites: Vec::new(),
+            sites: Sites::default(),
             ..planet.clone()
         };
         let mut chart = Chart::bake_bare(&bare, sea, w, h);

@@ -27,6 +27,7 @@
 //! rings for inspection. `--eye` is where to start, metres from
 //! the system origin (on foot, the spot under it) and `--look` what to
 //! face; both default to the port.
+mod aim;
 mod args;
 mod atlas;
 mod buildings;
@@ -42,6 +43,7 @@ mod meshing;
 mod planet_view;
 mod planets;
 mod render_probe;
+mod roads;
 mod sky;
 mod stream;
 mod terrain;
@@ -64,7 +66,6 @@ use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use drive::{aim_drive, board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
-use freeport_core::day;
 use freeport_core::lattice::Lattice;
 use freeport_core::pos::WorldPos;
 use freeport_core::town;
@@ -76,7 +77,7 @@ use stream::{rebase_origin, stream, Frame, Streamer};
 use terrain::{terrain_material, TerrainMaterial, TerrainPlugin};
 use walk::{toggle_walk, walk, OnFoot};
 use water::{water_material, WaterMaterial, WaterPlugin};
-use world::{shore, start};
+use world::shore;
 pub(crate) use world::{Ground, World};
 
 /// The planet: a thousand kilometres of radius, so two thousand across,
@@ -169,85 +170,6 @@ const LEVELS: u8 = 10;
 /// a hot room for frames nobody asked for. swarm-demo's number and its
 /// rule, `--fps 0` lifts it.
 const FPS: f64 = 144.0;
-
-/// Where the sun stands over the WORLD's own starting point: degrees over
-/// the local horizon there, and degrees round from local north. A low sun
-/// is the light a landscape reads best in, and the bearing puts it off the
-/// shoulder rather than behind the camera. It is the world's start and
-/// never `--eye`, so two pictures from two places are lit alike.
-///
-/// It was a fixed world direction, and its own comment claimed it stood
-/// "a little over the horizon at the harness's start", which is a thing a
-/// world direction cannot promise: it is true of one spot on the planet
-/// and the towns are placed by the ground. On this planet the port came
-/// out 56 degrees into its own NIGHT, and a picture of a city at midnight
-/// is a picture of nothing. `sun_over` measures it from where the world
-/// starts instead, so the claim is kept by construction on any planet,
-/// any seed and any port.
-const SUN_UP: f64 = 32.0;
-const SUN_BEARING: f64 = 40.0;
-
-/// The sun's world direction for an eye starting at `dir`: ONE number,
-/// read by the light that casts the shadows, by the sky dome, by the fog
-/// and by the bodies drawn from far off, so they cannot point four ways.
-///
-/// It is asked about the WALKER's own start and never about where `aim`
-/// put the camera, which is a circle: `--sunward` stands the camera along
-/// the sun, so a sun measured over that camera is a sun measured over
-/// itself. Measured on this planet, `--sunward 2.6 --around 150` put the
-/// camera 58 degrees from the sun rather than 150, and the picture of the
-/// body's own midnight came back three quarters lit.
-/// Where the camera starts: on a street of the port, or, with
-/// `--sunward`, that many radii off the body and looking at its centre,
-/// `--around` degrees round from the sun.
-///
-/// A camera for a picture is SOLVED and never hand aimed, which is
-/// tenebris's LODCAM lesson: the sun stands over wherever the world
-/// starts, so where it is depends on where the towns came out, and three
-/// runs of this were aimed by hand at a planet that turned out to be a
-/// different one, in its own night.
-///
-/// `--around` is the same rule for the NIGHT side. A body's dark half is
-/// a picture nobody can aim at either, because where it is depends on
-/// where the sun came out: turned 180 degrees the camera is at the body's
-/// own midnight and 140 leaves a crescent of day in the frame, which is
-/// what shows the lights and the ground they stand on in one picture.
-fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
-    let (eye, look) = start(world);
-    // Straight down on the PORT, which is the one camera a town's own
-    // plan can be judged from: its outline, its zones and where its
-    // streets run are a thing seen from above and nothing else.
-    if let Some(over) = args.over {
-        if let Some(port) = world.towns.first() {
-            let ground = port.dir * (world.planet.radius + port.h);
-            return (ground + port.dir * over, ground);
-        }
-    }
-    match args.sunward {
-        Some(radii) => (
-            turned(sun_over(eye), args.around.to_radians()) * world.planet.radius * radii.max(1.05),
-            DVec3::ZERO,
-        ),
-        None => (eye, look),
-    }
-}
-
-/// A direction turned `angle` away from itself, about whichever axis is
-/// square to it. Which axis does not matter for a picture of a sphere:
-/// what is being asked for is how much of the body's night is in frame,
-/// and that is the ANGLE alone.
-fn turned(dir: DVec3, angle: f64) -> DVec3 {
-    let (east, _) = town::frame_at(dir);
-    (dir * angle.cos() + east * angle.sin()).normalize_or(DVec3::Y)
-}
-
-fn sun_over(dir: DVec3) -> DVec3 {
-    let (east, north) = town::frame_at(dir);
-    let up = SUN_UP.to_radians();
-    let round = SUN_BEARING.to_radians();
-    (dir.normalize_or(DVec3::Y) * up.sin() + (north * round.cos() + east * round.sin()) * up.cos())
-        .normalize_or(DVec3::Y)
-}
 
 /// Radians of look per pixel of mouse.
 pub(crate) const LOOK: f32 = 0.0022;
@@ -348,6 +270,7 @@ fn tick(app: &mut App) {
                     planet_view::recentre,
                     city::update_lod,
                     city::stream::stream_towns,
+                    roads::stream_roads,
                     stream,
                     flight_bench::after_stream,
                     light_lamps,
@@ -452,12 +375,12 @@ fn spawn_world(
         mut standard,
     } = assets;
     let world = world::build(&args);
-    let (start_eye, start_look) = aim(&world, &args);
+    let (start_eye, start_look) = aim::aim(&world, &args);
     // The sun, worked out while the world is still here to ask: it is a
     // fact about where the WALKER starts, and `start_eye` is wherever the
     // camera was aimed.
     let here = world::start(&world).0;
-    let sun = sun_over(here);
+    let sun = aim::sun_over(here);
     let eye = args.eye.unwrap_or(start_eye);
     let look = args.look.unwrap_or(start_look);
     // The lattice's origin sits half a fine cell off the half metre grid
@@ -492,6 +415,7 @@ fn spawn_world(
     // The towns are BUILT by `city::stream`, one at a time, following
     // the eye. Nothing is raised here.
     commands.insert_resource(city::stream::Library(buildings::Library::load()));
+    say_roads(&mut commands, &world);
     commands.insert_resource(city::Glazing::new(&mut standard));
     commands.insert_resource(terrain::Ground3d(material.clone()));
     commands.init_resource::<world::Fabric>();
@@ -523,12 +447,27 @@ fn spawn_world(
         &mut skies,
         &mut images,
         eye - body.centre,
-        clock_of(&args, sun, here, body),
+        aim::clock_of(&args, sun, here, body),
     );
     spawn_camera(&mut commands, body, &args, eye, look, env, &flight);
     commands.insert_resource(Eye(WorldPos(eye)));
     commands.insert_resource(Ground(body.world.clone(), body.centre));
     commands.insert_resource(planets);
+}
+
+/// The body's road network, and a line saying how much tarmac there is.
+/// Every stretch of it is known from the first frame and the ones near
+/// the eye are laid as it moves, which is `city::stream`'s own rule for
+/// a town.
+fn say_roads(commands: &mut Commands, world: &World) {
+    let network = roads::Network::of(world);
+    info!(
+        "{} roads are {} stretches of tarmac; the ones within {:.0} km of the eye are laid",
+        world.roads.len(),
+        network.len(),
+        roads::REACH / 1000.0,
+    );
+    commands.insert_resource(network);
 }
 
 /// The chunk streamer, standing at whichever body the eye is nearest.
@@ -606,37 +545,16 @@ fn spawn_sky(
     env
 }
 
-/// The weather this world starts under, clock and all. `sun` is where
-/// the sun stood when the clock read nought and `here` is where the world
-/// starts, so `--hour` is SOLVED back into the seconds that put the hour
-/// asked for over that spot: an hour is a thing a person can ask for and
-/// a sun direction is not, which is this file's own solved camera rule
-/// arriving at the time of day. With no flag the clock starts at nought
-/// and the sun is where `sun_over` put it, so every picture taken before
-/// there was a day is the picture it always was.
-fn clock_of(args: &Args, sun: DVec3, here: DVec3, body: &planets::Body) -> sky::Weather {
-    let start = args
-        .hour
-        .map(|h| day::at_oclock(sun, here, h, day::DAY))
-        .unwrap_or(0.0);
-    sky::Weather {
-        air: body.air,
-        sea: body.world.sea.radius,
-        sun: day::sun_at(sun, start, day::DAY),
-        noon: sun,
-        start,
-        now: start,
-        day: day::DAY,
-        here,
-    }
-}
-
 /// The sun, and the light it casts. The direction is the weather's own and
 /// nothing else, so the shadows fall the way the sky says they should.
 fn spawn_light(commands: &mut Commands, sun: DVec3) {
     commands.spawn((
         DirectionalLight {
-            illuminance: 8_000.0,
+            // NOUGHT, and `sky::turn_sun` is the one writer of it: how
+            // hard the sun burns is a question about what time it is,
+            // and it goes out entirely on the night side, which is why
+            // a wall at midnight is no longer lit from under the ground.
+            illuminance: 0.0,
             shadows_enabled: true,
             ..default()
         },

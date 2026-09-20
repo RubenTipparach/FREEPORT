@@ -185,7 +185,7 @@ fn planet() -> Planet {
         overhang: 1.0,
         ledge: 8.0,
         seed: 7,
-        sites: vec![],
+        sites: vec![].into(),
     }
 }
 
@@ -304,7 +304,7 @@ fn a_levelled_site_flattens_the_ground_to_the_towns_height() {
 /// picture of a suburb sunk to its eaves.
 fn sink(planet: &Planet, sea: f64, town: &Town) -> (f64, f64, f64) {
     let mut here = planet.clone();
-    here.sites = vec![site_of(town)];
+    here.sites = vec![site_of(town)].into();
     let (mut worst_in, mut worst_out, mut count) = (0.0f64, 0.0f64, 0.0f64);
     for lot in &town.lots {
         let f = lot_frame(planet.radius, town, lot.x, lot.z);
@@ -441,4 +441,70 @@ fn every_house_is_on_one_connected_road_network() {
         );
         assert_eq!(stranded, 0, "town {} strands {stranded} houses", town.index);
     }
+}
+
+/// A round site is an ARC OF NO LENGTH, which is what lets one type
+/// serve a town's disc and a road's corridor.
+#[test]
+fn a_round_site_is_an_arc_of_no_length() {
+    let site = Site::round(DVec3::new(0.3, 0.4, 0.87).normalize(), 42.0, 80.0);
+    for probe in [DVec3::X, DVec3::Y, DVec3::Z, site.dir, -site.dir] {
+        assert_eq!(site.along(probe), 0.0, "a disc has nowhere to be along");
+        let (at, h) = site.nearest(probe);
+        assert_eq!(at, site.dir);
+        assert_eq!(h, 42.0);
+    }
+    assert_eq!(site.reach(), 0.0);
+    assert_eq!(site.grade(1_000_000.0), 0.0);
+}
+
+/// An arc's nearest point is ON it, its ends CLAMP, and its level ramps
+/// from one to the other: what a corridor cut along a road is made of.
+#[test]
+fn an_arcs_nearest_point_is_on_it_and_its_level_ramps() {
+    let radius = 1_000_000.0;
+    let a = DVec3::new(0.0, 0.1, 1.0).normalize();
+    // A kilometre along, which is a road's own piece at this scale.
+    let b = {
+        let (east, _) = frame_at(a);
+        (a + east * (4_000.0 / radius)).normalize()
+    };
+    let site = Site::arc((a, 100.0), (b, 140.0), 12.0);
+    assert!(
+        (site.along(a) - 0.0).abs() < 1e-9,
+        "the start is nought along"
+    );
+    assert!((site.along(b) - 1.0).abs() < 1e-9, "the end is one along");
+    // The middle of the arc is half along and half way up the ramp.
+    let mid = (a + b).normalize();
+    assert!((site.along(mid) - 0.5).abs() < 1e-6, "{}", site.along(mid));
+    let (at, h) = site.nearest(mid);
+    assert!(at.distance(mid) < 1e-9, "the middle is already on the arc");
+    assert!((h - 120.0).abs() < 1e-6, "the level ramps: {h}");
+    // Off to one side, the nearest point is still ON the arc and the
+    // level is the one at that point rather than at either end.
+    let (_, north) = frame_at(mid);
+    let off = (mid + north * (30.0 / radius)).normalize();
+    let (at, h) = site.nearest(off);
+    let pole = a.cross(b).normalize();
+    assert!(
+        at.dot(pole).abs() < 1e-9,
+        "the nearest point is on the circle"
+    );
+    assert!((h - 120.0).abs() < 0.5, "abreast of the middle: {h}");
+    // And past either end it CLAMPS, so a corridor does not reach round
+    // the planet.
+    let (east, _) = frame_at(a);
+    let behind = (a - east * (9_000.0 / radius)).normalize();
+    assert_eq!(site.along(behind), 0.0);
+    assert_eq!(site.nearest(behind), (a, 100.0));
+    let beyond = (b + east * (9_000.0 / radius)).normalize();
+    assert_eq!(site.along(beyond), 1.0);
+    assert_eq!(site.nearest(beyond), (b, 140.0));
+    // Its grade is what it climbs: 40 m over 4 km.
+    assert!(
+        (site.grade(radius) - 0.01).abs() < 1e-4,
+        "{}",
+        site.grade(radius)
+    );
 }

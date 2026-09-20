@@ -84,7 +84,7 @@ const STEEPEST: f64 = 0.1;
 
 /// How far above the sea a waypoint has to stand to carry a road, metres.
 /// A road does not run along the tide line.
-const DRY: f64 = 2.0;
+pub const DRY: f64 = 2.0;
 
 /// A waypoint: a direction on the body and what the ground is at it.
 struct Node {
@@ -544,5 +544,222 @@ pub fn waysides(
     crate::town::lay_all_from(&placed, big_r, sea, seed, towns.len())
 }
 
+pub mod ribbon;
+
 #[cfg(test)]
 mod tests;
+
+/// How long one piece of a road's levelled CORRIDOR is, metres.
+///
+/// The atlas plans a road over waypoints ten kilometres apart, and a
+/// corridor cut as a straight ramp between two of those is a canyon:
+/// measured on this body's own roads (`examples/road_ground.rs`), the
+/// ground strays from that ramp by a median of 45 m and up to 830. The
+/// same measurement swept the spacing, and the deviation halves as the
+/// spacing does: 2.7 km is a median of 10.3 m, 1.4 km is 4.8, 683 m is
+/// 2.3, 341 m is 1.20 with a 99th of 6.2, and 171 m is 0.72 with a 99th
+/// of 3.1.
+///
+/// 341 m is where it stops being worth halving. A metre of cut is a
+/// verge, six metres is a cutting and both are things a road HAS; the
+/// next halving buys half a metre and doubles a count that is already
+/// 187,000 arcs on this body. What made that count affordable at all is
+/// `field::Sites`, the latitude index, and what made it necessary is
+/// that a corridor has to exist planet wide from the first frame for the
+/// same reason a town's site does: a chunk is meshed once.
+pub const PIECE: f64 = 341.0;
+
+/// How far either side of its centreline a road's ground is levelled,
+/// metres. The carriageway is `town::LANE` each way and the rest is the
+/// verge a road needs to sit in its own cutting rather than on a ledge.
+pub const CORRIDOR: f64 = 7.0;
+
+/// How many pieces a waypoint span is cut into.
+///
+/// It is a FUNCTION and not a stored count because both the bake and the
+/// game have to agree about it exactly: the atlas keeps the corridor's
+/// HEIGHTS and derives its directions, which is 1.5 MB of file rather
+/// than 17, and a bake and a game that disagreed by one piece would be a
+/// road whose levelling and whose tarmac are in different places.
+pub fn pieces(a: DVec3, b: DVec3, radius: f64) -> usize {
+    let run = arc(a, b) * radius;
+    if !run.is_finite() || run <= 0.0 {
+        return 1;
+    }
+    ((run / PIECE).ceil() as usize).max(1)
+}
+
+/// The k-th of `n` points along the great circle from `a` to `b`, a
+/// SLERP so the points are evenly spaced over the ground rather than
+/// bunched at the ends the way a chord's own division is.
+pub fn step(a: DVec3, b: DVec3, k: usize, n: usize) -> DVec3 {
+    let sweep = arc(a, b);
+    if n == 0 || sweep < 1e-12 {
+        return a;
+    }
+    let t = (k as f64 / n as f64).clamp(0.0, 1.0);
+    let (s, c) = (sweep * t).sin_cos();
+    let ahead = (b - a * a.dot(b)).normalize_or_zero();
+    (a * c + ahead * s).normalize_or(a)
+}
+
+/// Every point of a road's refined centreline, ends included: the
+/// waypoints with `pieces` divisions between each neighbouring pair.
+pub fn centreline(road: &Road, radius: f64) -> Vec<DVec3> {
+    let mut out = Vec::new();
+    for pair in road.line.windows(2) {
+        let (a, b) = (pair[0].0, pair[1].0);
+        let n = pieces(a, b, radius);
+        for k in 0..n {
+            out.push(step(a, b, k, n));
+        }
+    }
+    if let Some(last) = road.line.last() {
+        out.push(last.0);
+    }
+    out
+}
+
+/// The GROUND under a road's refined centreline, metres over the mean
+/// radius: what the bake writes into the atlas.
+///
+/// The heights are taken off the planet the roads were ROUTED over,
+/// which is the one carrying the towns' own sites, so a road arriving at
+/// a town meets the level that town cut rather than the hill that was
+/// there before it. They are then held to `STEEPEST` between neighbours
+/// and to `dry` over the sea: the router already refused a wet or a
+/// steep edge between waypoints, and this is the same promise kept
+/// between the pieces it did not look at.
+pub fn survey(planet: &Planet, road: &Road, dry: f64) -> Vec<f64> {
+    let line = centreline(road, planet.radius);
+    let run: Vec<f64> = line
+        .iter()
+        .map(|dir| {
+            let local = planet.around(*dir, 1e-9);
+            crate::town::surface_radius(&local, *dir) - planet.radius
+        })
+        .collect();
+    let gap: Vec<f64> = line
+        .windows(2)
+        .map(|w| arc(w[0], w[1]) * planet.radius)
+        .collect();
+    smooth(run, &gap, dry)
+}
+
+/// A road SMOOTHS what it crosses: every step held to the grade the
+/// route was allowed, and nothing under `dry`.
+///
+/// Each step is clamped against its OWN piece's length and not against
+/// `PIECE`, because `pieces` rounds a span UP and its pieces are
+/// therefore shorter: clamped against the nominal length the last piece
+/// of a span came out at one in 9.4 against a limit of one in ten, which
+/// `a_corridor_is_never_steeper_than_a_road_is_built` caught.
+///
+/// Forward, then backward, then the floor, three rounds, because the
+/// three pull against one another and the fixed point is the envelope
+/// that satisfies all of them. It almost never binds at this spacing:
+/// the ground moves a median of 1.2 m over a piece against the 34 m the
+/// grade allows, and what it is there for is the one sampled crag that
+/// would otherwise put a wall across the corridor.
+fn smooth(mut run: Vec<f64>, gap: &[f64], dry: f64) -> Vec<f64> {
+    if run.len() < 2 {
+        return run.iter().map(|h| h.max(dry)).collect();
+    }
+    for _ in 0..3 {
+        for k in 1..run.len() {
+            let most = STEEPEST * gap[k - 1];
+            run[k] = run[k].clamp(run[k - 1] - most, run[k - 1] + most);
+        }
+        for k in (0..run.len() - 1).rev() {
+            let most = STEEPEST * gap[k];
+            run[k] = run[k].clamp(run[k + 1] - most, run[k + 1] + most);
+        }
+        for h in &mut run {
+            *h = h.max(dry);
+        }
+    }
+    run
+}
+
+/// The SITES a road's corridor levels: one arc a piece, each cut to the
+/// ground its own two ends stand on.
+///
+/// `skip` is how near a town's own centre the corridor stops, and it is
+/// the town's whole SITE BAND (`field::site_band` of `town::site_of`)
+/// rather than its outline: inside the band the town's own site wins at
+/// full weight and answers the town's level, so a corridor that reached
+/// that far would lay its tarmac at the road's level over ground held at
+/// the town's. Measured, tarmac stood 0.10 m off its own lift there;
+/// past the band it is 0.003. Consecutive arcs share an end and its level by
+/// construction, which is what lets the field's slope bound assume TWO
+/// overlapping skirts rather than however many roads meet at a hub.
+pub fn corridor(
+    road: &Road,
+    run: &[f64],
+    radius: f64,
+    towns: &crate::field::Sites,
+) -> Vec<crate::town::Site> {
+    let line = centreline(road, radius);
+    if run.len() != line.len() {
+        return Vec::new();
+    }
+    let open = open(&line, radius, towns);
+    line.windows(2)
+        .zip(run.windows(2))
+        .zip(open.windows(2))
+        .filter(|(_, o)| o[0] && o[1])
+        .map(|((d, h), _)| crate::town::Site::arc((d[0], h[0]), (d[1], h[1]), CORRIDOR))
+        .collect()
+}
+
+/// Which points of a road's centreline are OUT of every town's own
+/// levelling: one per point of `centreline`.
+///
+/// EVERY town and not only the two a road joins. `road::waysides` grows
+/// a village wherever a road has run a day's cart since the last one, so
+/// a road passes THROUGH settlements as well as ending at them, and a
+/// town's disc levels its ground to the town's level while a corridor
+/// ramps to the road's. Where the two overlap the field answers whichever
+/// it reaches first and the tarmac stands on the other: measured, 0.10 m
+/// off its own lift, which is a road stepping in and out of the ground
+/// at every village on it.
+///
+/// It is measured against the town's whole SITE BAND rather than its
+/// outline, because inside the band the town's site is what the field
+/// answers; and through `field::Sites`, the latitude index, because a
+/// body carries 1,084 settlements and a road 600 points, and the product
+/// of those two is not a loop worth writing.
+pub fn open(line: &[DVec3], radius: f64, towns: &crate::field::Sites) -> Vec<bool> {
+    let window = towns.window(radius);
+    line.iter()
+        .map(|d| {
+            !towns.near(*d, window).any(|site| {
+                let (_, outer) = crate::field::site_band(site);
+                (*d - site.nearest(*d).0).length() * radius <= outer
+            })
+        })
+        .collect()
+}
+
+/// How near a settlement a stretch of road has to pass to be LIT,
+/// metres.
+///
+/// The owner's own rule: lights along the stretches near a city and
+/// none out in the country, which is what a road actually is. A
+/// kilometre and a half is the approach to a town rather than the town
+/// itself, since a town's own site band ends a couple of hundred metres
+/// out and its streets are lit from there in.
+pub const LIT_NEAR: f64 = 1_500.0;
+
+/// Which points of a road's centreline are near enough a settlement to
+/// carry lamps: one per point of `centreline`.
+pub fn lit(line: &[DVec3], radius: f64, towns: &crate::field::Sites) -> Vec<bool> {
+    let window = towns.window(radius) + LIT_NEAR / radius;
+    line.iter()
+        .map(|d| {
+            towns
+                .near(*d, window)
+                .any(|site| (*d - site.nearest(*d).0).length() * radius <= LIT_NEAR)
+        })
+        .collect()
+}

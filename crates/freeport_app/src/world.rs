@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use freeport_core::dc::DcMesh;
 use freeport_core::field::{Block, Built, Density, Planet};
 use freeport_core::model;
-use freeport_core::road::Road;
+use freeport_core::road::{self, Road};
 use freeport_core::town::{self, lot_frame, Frame, Town};
 use freeport_core::walker::Bounds;
 use freeport_core::water::{Sea, Water};
@@ -30,8 +30,32 @@ pub(crate) struct World {
     pub towns: Vec<Town>,
     /// The roads joining them, as the lines the atlas holds.
     pub roads: Vec<Road>,
+    /// What each of those roads is on the GROUND, in the same order.
+    pub routes: Vec<Route>,
     pub bounds: Bounds,
     pub sea: Sea,
+}
+
+/// A road's own GROUND: its refined centreline, the level the corridor
+/// was cut to under each point, and which of those points are outside
+/// every town's own levelling.
+///
+/// One struct and not three vectors beside each other, because the three
+/// are indexed together at every caller and a fourth would be the fourth
+/// place to get an index wrong. The CENTRELINE is kept rather than
+/// derived per stretch: it is a slerp off the atlas's waypoints and
+/// 190,168 of them are 4.5 MB, against recomputing a whole road's worth
+/// every time one stretch of it is laid.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Route {
+    pub line: Vec<DVec3>,
+    pub run: Vec<f64>,
+    pub open: Vec<bool>,
+    /// Which points are near enough a settlement to carry a lamp.
+    pub lit: Vec<bool>,
+    /// The sea's radius, which is what a vertex's height is measured off
+    /// for the shore band the ground shader reads.
+    pub sea: f64,
 }
 
 /// One BUILT town: the boxes its models were drawn from, the lamps in
@@ -56,9 +80,25 @@ pub(crate) struct Raised {
 /// mesher's workers hold: the PLANET never changes (every town on the
 /// body levels its own ground from the first frame, whether or not
 /// anybody has built it), and the buildings come and go with the eye.
+/// One BUILT stretch of road: which it is and the lamps on it. It
+/// carries no boxes, because tarmac stops nothing and a lamp post only
+/// draws, and no entity, because the entity carries `roads::Paved` and
+/// the query IS the record of what is standing.
+pub(crate) struct Verge {
+    pub which: (usize, usize),
+    /// Each lamp's own index ALONG THE ROAD, where it is and how far it
+    /// throws. The index is along the road and not along the stretch,
+    /// because a stretch streams and an index into one would name a
+    /// different lamp the moment a neighbour arrived.
+    pub lamps: Vec<(usize, DVec3, f64)>,
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct Fabric {
     pub towns: Vec<Raised>,
+    /// The stretches of road standing, which carry lamps of their own on
+    /// the approaches to a town.
+    pub verges: Vec<Verge>,
 }
 
 /// The GROUND and what is BUILT on it: one thing, because what a body
@@ -162,7 +202,7 @@ pub(crate) fn home_planet(octaves: u32) -> Planet {
         overhang: 3.0,
         ledge: 12.0,
         seed: SEED,
-        sites: vec![],
+        sites: vec![].into(),
     }
 }
 
@@ -209,25 +249,54 @@ pub(crate) fn build(args: &Args) -> World {
     // that never changes. Planning here is the fallback, so a checkout
     // nobody has baked still runs and says so.
     let baked = crate::atlas::load(HOME, &planet, SEA, TOWN_RADIUS);
-    let (towns, roads) = match &baked {
-        Some(a) => (a.towns(), a.roads()),
+    let (towns, roads, runs) = match &baked {
+        Some(a) => (a.towns(), a.roads(), a.runs()),
         None => {
             warn!(
                 "no atlas for {HOME}: planning it here, which takes seconds.                  `--bake-atlas` writes one and this becomes a file read."
             );
             let towns = town::plan(&planet, SEA, TOWN_RADIUS, TOWNS, SEED);
-            (towns, Vec::new())
+            (towns, Vec::new(), Vec::new())
         }
     };
-    planet.sites = towns.iter().map(town::site_of).collect();
+    // The ground a town levels and the CORRIDOR a road is cut along, in
+    // one list, because the field reads one list. Both are planet wide
+    // from the first frame for the same reason: a chunk is meshed once,
+    // so ground that a road will stand on has to be levelled before the
+    // chunk over it is contoured, and `field::Sites` is the index that
+    // makes a body carrying hundreds of thousands of them cost a chunk
+    // what a body carrying eight towns did.
+    // The towns' own discs first, as an INDEX, because the corridors are
+    // cut against them: a road ends at a town and passes through the
+    // villages it grew, and inside a town's levelling the ground is the
+    // town's to hold and its streets are the town's to pave.
+    let discs: freeport_core::field::Sites = towns.iter().map(town::site_of).collect();
+    let mut sites: Vec<_> = discs.iter().copied().collect();
+    let mut routes = Vec::with_capacity(roads.len());
+    for (road, run) in roads.iter().zip(&runs) {
+        sites.extend(road::corridor(road, run, planet.radius, &discs));
+        let line = road::centreline(road, planet.radius);
+        let open = road::open(&line, planet.radius, &discs);
+        let lit = road::lit(&line, planet.radius, &discs);
+        routes.push(Route {
+            line,
+            run: run.clone(),
+            open,
+            lit,
+            sea: SEA,
+        });
+    }
+    let corridors = sites.len() - towns.len();
+    planet.sites = sites.into();
     let planned = t0.elapsed();
     say_port(&towns);
     info!(
-        "{} towns {} in {:.0} ms with {} roads; the nearest {} to the eye are BUILT and follow it",
+        "{} towns {} in {:.0} ms with {} roads cut into {} levelled corridor pieces; the nearest {} to the eye are BUILT and follow it",
         towns.len(),
         if baked.is_some() { "read" } else { "planned" },
         planned.as_secs_f64() * 1000.0,
         roads.len(),
+        corridors,
         crate::TOWNS_BUILT,
     );
     let (floor, roof) = planet.band();
@@ -241,6 +310,7 @@ pub(crate) fn build(args: &Args) -> World {
         planet,
         towns,
         roads,
+        routes,
         bounds,
         sea: Sea { radius: SEA },
     }

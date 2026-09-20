@@ -12,7 +12,7 @@ fn world() -> (Planet, f64) {
         overhang: 0.0,
         ledge: 0.0,
         seed: 5,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let sea = planet.radius - 40.0;
     let towns = town::plan(&planet, sea, 80.0, 6, 5);

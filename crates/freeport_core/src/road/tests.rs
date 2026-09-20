@@ -13,7 +13,7 @@ fn world() -> (Planet, f64, Vec<Town>) {
         overhang: 0.0,
         ledge: 0.0,
         seed: 5,
-        sites: vec![],
+        sites: vec![].into(),
     };
     let sea = planet.radius - 40.0;
     let towns = town::plan(&planet, sea, 80.0, 12, 5);
@@ -229,4 +229,170 @@ fn villages_stand_along_the_roads() {
     for (i, v) in grown.iter().enumerate() {
         assert_eq!(v.index, towns.len() + i);
     }
+}
+
+/// A CORRIDOR follows the country rather than ramping straight through
+/// it: every piece is cut to the ground its own two ends stand on, and
+/// what it cuts is a verge rather than a canyon.
+#[test]
+fn a_corridor_follows_the_ground_and_stops_short_of_its_towns() {
+    let (planet, sea, towns) = world();
+    let levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let road = roads.first().expect("a road between two of them");
+    let run = survey(&levelled, road, sea - planet.radius + 2.0);
+    let line = centreline(road, planet.radius);
+    assert_eq!(run.len(), line.len(), "a height a point and no more");
+    // Every piece is about `PIECE` long, which is what the atlas's own
+    // ten kilometre waypoints are refined to.
+    for pair in line.windows(2) {
+        let run_m = pair[0].angle_between(pair[1]) * planet.radius;
+        assert!(
+            run_m <= PIECE + 1e-6,
+            "a piece {run_m:.0} m long against a {PIECE} m limit"
+        );
+    }
+    // What it CUTS is the gap between the levelled corridor and the bare
+    // ground, and it is a verge rather than a canyon.
+    let mut worst = 0.0f64;
+    for (dir, h) in line.iter().zip(&run) {
+        let bare = crate::town::surface_radius(&levelled.around(*dir, 1e-9), *dir) - planet.radius;
+        worst = worst.max((bare - h).abs());
+    }
+    assert!(
+        worst < 40.0,
+        "the corridor cuts {worst:.1} m into its own ground"
+    );
+    // And it stops short of both towns, so a town's disc owns its ground.
+    let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
+    let sites = corridor(road, &run, planet.radius, &discs);
+    let skip = crate::field::site_band(&crate::town::site_of(&towns[road.from])).1;
+    assert!(
+        !sites.is_empty(),
+        "a road with no corridor is a road on data"
+    );
+    let centre = towns[road.from].dir;
+    for site in &sites {
+        for end in [site.dir, site.to] {
+            assert!(
+                end.angle_between(centre) * planet.radius > skip,
+                "a corridor piece reaches inside the town it serves"
+            );
+        }
+    }
+    // Consecutive pieces MEET, which is what lets the field's slope
+    // bound assume two overlapping skirts rather than a count.
+    for pair in sites.windows(2) {
+        assert_eq!(pair[0].to, pair[1].dir, "a gap between two pieces");
+        assert_eq!(pair[0].to_h, pair[1].h, "a step between two pieces");
+    }
+}
+
+/// The corridor's own GRADE is the one the route was allowed, between
+/// the pieces the router never looked at as well as between its own
+/// waypoints.
+#[test]
+fn a_corridor_is_never_steeper_than_a_road_is_built() {
+    let (planet, sea, towns) = world();
+    let levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    for road in connect(&levelled, sea, &towns, SPACING).iter().take(6) {
+        let run = survey(&levelled, road, sea - planet.radius + 2.0);
+        let line = centreline(road, planet.radius);
+        for (pair, h) in line.windows(2).zip(run.windows(2)) {
+            let along = pair[0].angle_between(pair[1]) * planet.radius;
+            let grade = (h[1] - h[0]).abs() / along.max(1e-9);
+            assert!(
+                grade <= 0.1 + 1e-9,
+                "the corridor climbs at one in {:.1}",
+                1.0 / grade
+            );
+        }
+    }
+}
+
+/// THE TARMAC IS ON THE GROUND. Every vertex of every stretch stands
+/// `ribbon::LIFT` over the surface the corridor levelled under it, which
+/// is what makes a road a road and not a ribbon floating over a hill:
+/// the levelling and the tarmac read the same survey, so they cannot
+/// drift.
+#[test]
+fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
+    use crate::road::ribbon;
+    let (planet, sea, towns) = world();
+    let mut levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let road = roads.first().expect("a road");
+    let run = survey(&levelled, road, sea - planet.radius + DRY);
+    let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
+    let mut sites: Vec<_> = discs.iter().copied().collect();
+    sites.extend(corridor(road, &run, planet.radius, &discs));
+    levelled.sites = sites.into();
+
+    let line = centreline(road, planet.radius);
+    let open = open(&line, planet.radius, &discs);
+    let lamps = lit(&line, planet.radius, &discs);
+    let (mut over_most, mut under_most) = (0.0f64, 0.0f64);
+    let mut vertices = 0;
+    for k in 0..ribbon::count(line.len()) {
+        let at = ribbon::span(k, line.len());
+        let (l, r, o, t) = (
+            &line[at.clone()],
+            &run[at.clone()],
+            &open[at.clone()],
+            &lamps[at],
+        );
+        if l.len() < 2 {
+            continue;
+        }
+        let frame = ribbon::frame(l, r, planet.radius);
+        let m = ribbon::stretch(&frame, l, r, o, t, planet.radius);
+        assert!(m.solids.is_empty(), "tarmac collides with nothing");
+        // The road SURFACE alone: a lamp post stands seven metres up and
+        // is not tarmac, which is what the material byte is for.
+        let surface: Vec<_> = m
+            .mesh
+            .materials
+            .iter()
+            .enumerate()
+            .filter(|(_, mat)| **mat == crate::field::STREET || **mat == crate::field::PAINT)
+            .flat_map(|(t, _)| m.mesh.positions[t * 3..t * 3 + 3].to_vec())
+            .collect();
+        for p in &surface {
+            let world = frame.world(glam::Vec3::from(*p).as_dvec3());
+            let dir = world.normalize();
+            // The ground the field actually holds under this vertex.
+            let ground = planet.radius + levelled.surface(dir).0;
+            let over = world.length() - ground;
+            over_most = over_most.max(over);
+            under_most = under_most.min(over);
+            vertices += 1;
+        }
+    }
+    assert!(vertices > 100, "{vertices} vertices is not a road");
+    // ON the ground. `MITRE` is the error the cross section's own mitre
+    // makes at a bend, measured on this road at 0.103 m: the outer
+    // corner of a piece sits a little along the ramp from the station it
+    // belongs to, and the ramp is at a different height there. Nothing
+    // floats more than the surfacing plus that, so the tarmac is laid on
+    // the ground and not over it; and the shoulder is under the ground
+    // even at its worst, so there is no crack for the field to show
+    // through.
+    const MITRE: f64 = 0.12;
+    assert!(
+        over_most <= ribbon::LIFT + MITRE,
+        "the tarmac floats {over_most:.3} m over its own ground"
+    );
+    assert!(
+        under_most < -MITRE && under_most > -0.35,
+        "the shoulder's own edge reaches {under_most:.3} m, which is not buried"
+    );
 }

@@ -169,6 +169,18 @@ fn tri(t: texture_2d_array<f32>, s: sampler, layer: i32, at: Mapping, w: vec3<f3
     return x * w.x + y * w.y + z * w.z;
 }
 
+// How much of a BUILT surface's own normal is kept. A hillside is as
+// rough as its map says; a poured kerb, a brick wall and a road are
+// finished surfaces, and what a normal map at full strength on one of
+// those does under a STREET LAMP a few metres up is throw a white
+// specular glint off every texel that leans, which is what the first
+// picture of the port at midnight came back covered in. The maps
+// themselves were the bigger half of that (asphalt leaned a mean of 86
+// degrees off its own surface and leans 27 now); this is the rest, and
+// it is the mockups' own "the map is at half strength inside" rule
+// arriving outdoors, where the lamp is.
+const BUILT_BUMP: f32 = 0.6;
+
 // How much of the grass set's own normal is kept: a hay normal at full
 // strength on ground seen at a grazing angle speckles, which is the
 // swarm-demo lesson (its finishes run at a fifth) on a field.
@@ -397,6 +409,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             + soften(tri_normal(L_GRASS, pg, w, n, w_grass), n, GRASS_BUMP) * w_grass
             + built_n;
         nm = normalize(nm * mapped + n * flat);
+        let built = w_conc + w_plate + w_asphalt + w_wood + w_brick + w_vinyl
+            + w_marble + w_stone + w_curtain;
+        nm = soften(nm, n, mix(1.0, BUILT_BUMP, clamp(built, 0.0, 1.0)));
     }
     albedo = albedo * mapped
         + vec3<f32>(0.05, 0.08, 0.1) * glass
