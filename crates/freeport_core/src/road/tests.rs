@@ -516,3 +516,56 @@ fn the_lamps_on_an_approach_are_staggered_a_stride_apart() {
         );
     }
 }
+
+/// A road RIDES over the ground rather than cutting into it, which is
+/// what keeps the terrain off the top of it.
+///
+/// A CUT is a feature the terrain's own LOD cannot hold: the corridor is
+/// `CORRIDOR` (7 m) either side of the centreline and the rings put a
+/// cell of about a sixty fourth of its own distance under the eye, so
+/// past a couple of hundred metres the mesher has no sample inside the
+/// cutting, draws the hill that was there before the road, and the
+/// ground closes over the tarmac. A FILL the mesher loses leaves the
+/// road standing a little proud of the ground, which is an embankment.
+/// So what this holds is the CUT, and the fill is only reported.
+#[test]
+fn a_road_rides_over_the_ground_rather_than_cutting_into_it() {
+    let (planet, sea, towns) = world();
+    let levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let dry = sea - planet.radius + 2.0;
+    let (mut cut, mut fill, mut n) = (0.0f64, 0.0f64, 0usize);
+    for road in roads.iter().take(6) {
+        let run = survey(&levelled, road, dry);
+        let line = centreline(road, planet.radius);
+        if run.len() != line.len() {
+            continue;
+        }
+        // ALONG the chord between every pair of stations, because that
+        // is what the tarmac is laid on and what the corridor levels to,
+        // and the ground between two stations is exactly what a station
+        // sample by itself could not see.
+        const STEPS: usize = 8;
+        for (w, h) in line.windows(2).zip(run.windows(2)) {
+            for k in 0..=STEPS {
+                let dir = crate::road::step(w[0], w[1], k, STEPS);
+                let bare =
+                    crate::town::surface_radius(&levelled.around(dir, 1e-9), dir) - planet.radius;
+                let here = h[0] + (h[1] - h[0]) * (k as f64 / STEPS as f64);
+                cut = cut.max(bare - here);
+                fill = fill.max(here - bare);
+                n += 1;
+            }
+        }
+    }
+    println!(
+        "over {n} points a road stands {fill:.2} m over its own ground at most and {cut:.2} m under it"
+    );
+    assert!(
+        cut < 1.0,
+        "a road cuts {cut:.2} m into its own ground, which a coarse chunk cannot hold and the terrain then closes over"
+    );
+}

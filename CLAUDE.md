@@ -2457,6 +2457,43 @@ levels of indentation: 13 bytes of whitespace a number, 7.3 MB of a
 13.9 MB file, and nothing a reader could have read anyway. It is 6.6 MB
 compact.
 
+**A road RIDES the country, and never cuts into it.** The owner read it
+off the air: terrain on top of the road, and the road not moving up and
+down with the ground. A CUT is the one thing this terrain cannot draw.
+The corridor is `CORRIDOR` (7 m) either side of the centreline and the
+rings put a cell of about a SIXTY FOURTH of its own distance under the
+eye (a box at level L is 32 * 2^L metres across and its cell is
+0.5 * 2^L), so past a couple of hundred metres the mesher has no sample
+inside the cutting at all: it draws the hill that was there before the
+road and the ground closes over the tarmac. That is this file's own
+"nothing thinner than a cell's DIAGONAL exists", arriving outdoors.
+
+It is NOT the depth buffer, and that is worth saying because it is the
+first thing anybody reaches for. Bevy's perspective is infinite reverse
+Z, so at a near plane of a tenth of a metre the step at two kilometres
+is well under a millimetre and the tarmac's own 0.15 m lift is thousands
+of steps clear of the ground. A logarithmic depth buffer is what a
+program with a FINITE far plane needs and this one has none.
+
+So a road only ever RISES. `road::smooth` held its grade by CLAMPING
+both ways, which is real road engineering and means cutting: a station
+standing higher than the grade allowed was pulled down into the hill.
+It takes the MAX both ways now, so the forward pass bounds the descent
+and the backward pass the ascent and neither ever pulls a station down;
+the fixed point is the least profile above the ground that a road may be
+built at, which starts a climb earlier and stands on an embankment. An
+embankment the mesher loses leaves the road a little proud of the
+ground. A cutting it loses leaves the road under it.
+
+And the CHORD is held over the ground too, which a station's own height
+says nothing about: `road::PROBES` (3) samples the ground at the quarter
+points inside every piece, and `smooth` lifts BOTH ends of any chord
+that passes under one of them, which leaves the grade exactly as it was
+because a chord raised at both ends has the slope it had. Measured on
+the rough test ball, the worst a road still cuts into its own ground:
+**16.84 m clamping both ways, 1.86 m rising with one probe a piece, and
+0.92 m with three** (`a_road_rides_over_the_ground_rather_than_cutting_into_it`).
+
 **A road may FILL and a town may not**, and that is the one rule the two
 do not share. A town's level is the lowest its own survey found, so a site
 that filled would be a city on a pedestal with its apron over the valley,

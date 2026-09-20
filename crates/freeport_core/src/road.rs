@@ -579,6 +579,19 @@ mod tests;
 /// is meshed once.
 pub const PIECE: f64 = 85.0;
 
+/// How many times the ground is sampled INSIDE a piece, on top of the
+/// two stations at its ends.
+///
+/// Three, at the quarter points, because what a road has to clear is the
+/// ground between its own stations and a station cannot see it: at one
+/// sample a piece the worst a road still cut into its own ground was
+/// 16.84 m on the rough test ball, at two it was 1.86, and at four it is
+/// what `a_road_rides_over_the_ground_rather_than_cutting_into_it`
+/// prints. Each one costs a `surface_radius` march at bake time and
+/// nothing at all afterwards, because what the atlas carries is the
+/// answer.
+const PROBES: usize = 3;
+
 /// How far either side of its centreline a road's ground is levelled,
 /// metres. The carriageway is `town::LANE` each way and the rest is the
 /// verge a road needs to sit in its own cutting rather than on a ledge.
@@ -640,24 +653,58 @@ pub fn centreline(road: &Road, radius: f64) -> Vec<DVec3> {
 /// and to `dry` over the sea: the router already refused a wet or a
 /// steep edge between waypoints, and this is the same promise kept
 /// between the pieces it did not look at.
+///
+/// **The CHORD between two stations is held over the ground it spans, so
+/// a road RIDES the country rather than cutting into it.**
+///
+/// It was the ground at the station and nothing else, and the chord
+/// between two of those dips under every bulge between them: that dip is
+/// a CUTTING, and the corridor duly levels one, seven metres either side
+/// of the centreline. Fourteen metres of cutting is a feature no coarse
+/// chunk can hold. The rings put a cell of about a sixty fourth of its
+/// own distance under the eye (a box at level L is 32 * 2^L metres and
+/// its cell is 0.5 * 2^L), so past a couple of hundred metres the
+/// mesher has no sample inside the cutting at all, draws the hill that
+/// was there before the road, and the ground closes over the tarmac.
+/// The owner saw it from the air: terrain on top of the road, and the
+/// road not moving up and down with the country.
+///
+/// So the ground is sampled `PROBES` times INSIDE every gap as well as
+/// at its ends, and `smooth` lifts both ends of any chord that passes
+/// under one of those samples. Lifting both ends leaves the grade
+/// exactly as it was, because a chord raised at both ends has the slope
+/// it had. What the corridor then levels is a FILL
+/// rather than a cut (`Site::fills` was already true for a road), and a
+/// fill the mesher loses leaves the road standing a little proud of the
+/// ground, which is an embankment and is what a road on cheap ground
+/// is. A cut it loses leaves the road under it, which is a hole.
+///
+/// It costs `PROBES` extra samples a piece.
 pub fn survey(planet: &Planet, road: &Road, dry: f64) -> Vec<f64> {
     let line = centreline(road, planet.radius);
-    let run: Vec<f64> = line
-        .iter()
-        .map(|dir| {
-            let local = planet.around(*dir, 1e-9);
-            crate::town::surface_radius(&local, *dir) - planet.radius
-        })
-        .collect();
+    let ground = |dir: DVec3| {
+        let local = planet.around(dir, 1e-9);
+        crate::town::surface_radius(&local, dir) - planet.radius
+    };
+    let run: Vec<f64> = line.iter().map(|d| ground(*d)).collect();
+    // The ground BETWEEN the stations, which is what a station's own
+    // height says nothing about and what the chord has to clear.
+    let mut mid = Vec::with_capacity(line.len().saturating_sub(1) * PROBES);
+    for w in line.windows(2) {
+        for j in 1..=PROBES {
+            mid.push(ground(step(w[0], w[1], j, PROBES + 1)));
+        }
+    }
     let gap: Vec<f64> = line
         .windows(2)
         .map(|w| arc(w[0], w[1]) * planet.radius)
         .collect();
-    smooth(run, &gap, dry)
+    smooth(run, &gap, dry, &mid)
 }
 
-/// A road SMOOTHS what it crosses: every step held to the grade the
-/// route was allowed, and nothing under `dry`.
+/// A road SMOOTHS what it crosses by RISING: every step held to the
+/// grade the route was allowed, nothing under `dry`, and nothing under
+/// the ground it was surveyed on.
 ///
 /// Each step is clamped against its OWN piece's length and not against
 /// `PIECE`, because `pieces` rounds a span UP and its pieces are
@@ -671,18 +718,53 @@ pub fn survey(planet: &Planet, road: &Road, dry: f64) -> Vec<f64> {
 /// the ground moves a median of 1.2 m over a piece against the 34 m the
 /// grade allows, and what it is there for is the one sampled crag that
 /// would otherwise put a wall across the corridor.
-fn smooth(mut run: Vec<f64>, gap: &[f64], dry: f64) -> Vec<f64> {
+fn smooth(mut run: Vec<f64>, gap: &[f64], dry: f64, mid: &[f64]) -> Vec<f64> {
     if run.len() < 2 {
         return run.iter().map(|h| h.max(dry)).collect();
     }
     for _ in 0..3 {
+        // RAISE only, never lower. The forward pass holds the DESCENT
+        // from one station to the next inside the grade and the backward
+        // pass holds the ASCENT, so between them both directions are
+        // bounded, and because neither ever pulls a station down the
+        // fixed point is the LEAST profile above the ground that a road
+        // may be built at.
+        //
+        // It clamped both ways, which is the same promise kept by
+        // CUTTING: a station standing higher than the grade allows was
+        // pulled down into the hill. That is real road engineering and
+        // it is the one thing this terrain cannot draw, because a
+        // cutting is 14 m wide and the rings put a cell of about a
+        // sixty fourth of its own distance under the eye. Raising
+        // instead starts the climb earlier and stands the road on an
+        // embankment, which the mesher may lose without ever closing
+        // over the tarmac.
         for k in 1..run.len() {
-            let most = STEEPEST * gap[k - 1];
-            run[k] = run[k].clamp(run[k - 1] - most, run[k - 1] + most);
+            run[k] = run[k].max(run[k - 1] - STEEPEST * gap[k - 1]);
         }
         for k in (0..run.len() - 1).rev() {
-            let most = STEEPEST * gap[k];
-            run[k] = run[k].clamp(run[k + 1] - most, run[k + 1] + most);
+            run[k] = run[k].max(run[k + 1] - STEEPEST * gap[k]);
+        }
+        // And the CHORD itself, which is what the tarmac is laid on and
+        // what a station's own height says nothing about. A station
+        // standing at the highest ground within half a piece is not
+        // enough on its own: where the profile DESCENDS, the chord drops
+        // below the station it left and can pass under a bulge between
+        // the two. Lifting both ends by the deficit clears the mid point
+        // exactly and leaves the grade untouched, because a chord raised
+        // at both ends has the slope it had.
+        for k in 0..run.len() - 1 {
+            for j in 0..PROBES {
+                let Some(there) = mid.get(k * PROBES + j) else {
+                    continue;
+                };
+                let t = (j + 1) as f64 / (PROBES + 1) as f64;
+                let under = there - (run[k] * (1.0 - t) + run[k + 1] * t);
+                if under > 0.0 {
+                    run[k] += under;
+                    run[k + 1] += under;
+                }
+            }
         }
         for h in &mut run {
             *h = h.max(dry);
