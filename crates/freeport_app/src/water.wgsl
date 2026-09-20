@@ -71,7 +71,15 @@ const DETAIL_FADE: f32 = 4.0;
 /// pixel belongs in the roughness, because a lobe narrower than that
 /// variance can only ever sample one point of it and flicker. Squared,
 /// because roughness combines in quadrature.
-const NDF_FILTER: f32 = 90.0;
+/// The sun's GLINT on the sheet: its colour, how wide the lobe is and
+/// how bright it burns in nits.
+///
+/// A power of 90 rather than of thousands, which is `distant.wgsl`'s own
+/// number and for its own reason: the sun's half degree is spread by the
+/// waves, so a glint on water is a soft patch and not a point.
+const GLINT: vec3<f32> = vec3<f32>(1.0, 0.96, 0.88);
+const GLINT_POWER: f32 = 90.0;
+const GLINT_NITS: f32 = 620.0;
 
 // Where the terminator falls on the sun's elevation over the local
 // horizon, as `distant.wgsl` measures the same line on the same body.
@@ -246,33 +254,40 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var pbr_input = pbr_input_from_standard_material(plain, is_front);
     pbr_input.N = n;
-    // NDF FILTERING, and it is the whole of the speckle. A specular lobe
-    // as narrow as water's own `perceptual_roughness` (0.12) laid on a
-    // normal that WOBBLES under the pixel is glitter by construction:
-    // every fragment catches or misses the sun and the sky by itself.
+    // EVERY SPECULAR TERM IN `apply_pbr_lighting` TO NOUGHT, the lights'
+    // and the environment map's alike, and the sheet keeps its own glint
+    // instead. `distant.wgsl` already does this to a body's ocean seen
+    // from orbit, for the same reason and in the same three lines, and
+    // it is what pale-blue-dot's water does too: that shader never calls
+    // Bevy's PBR at all and carries one explicit Blinn Phong lobe.
     //
-    // Measured on a wader's frame 60 m off the port at levels 9, in the
-    // mid water band, as mean high frequency energy: the sheet reads
-    // 5.219 against a floor of 0.826 with the ripple normal taken out
-    // altogether. Handing Bevy the FLAT normal reads 1.123 and widening
-    // the lobe to 0.6 while KEEPING the ripple normal reads 1.519, and
-    // that pair is what says it is the LOBE and not the normal. Nothing
-    // else came close: the foam threshold 5.443, the ripple gradient
-    // taken over a wider `e` 5.116, this shader's own fresnel on the
-    // flat normal 4.476, and screen space transmission 2.417, which is
-    // an amplifier rather than a source because it refracts along that
-    // same normal.
+    // The speckle was that lobe. A GGX highlight as narrow as water's
+    // own `perceptual_roughness` laid on a normal that wobbles under the
+    // pixel is glitter by construction, because every fragment catches
+    // or misses the sun and the sky by itself. Measured on a wader's
+    // frame 60 m off the port at levels 9, mean high frequency energy in
+    // the mid water band: 5.219 for the sheet against a floor of 0.826
+    // with the ripple normal taken out altogether. Handing Bevy the FLAT
+    // normal read 1.123 and widening its lobe to 0.6 while KEEPING the
+    // ripple normal read 1.519, and that PAIR is what says it is the
+    // lobe and never the normal. Nothing else came near: the foam
+    // threshold 5.443, the ripple gradient over a wider `e` 5.116, this
+    // shader's own fresnel on the flat normal 4.476, and screen space
+    // transmission 2.417, which is an amplifier rather than a source
+    // because it refracts along that same normal.
     //
-    // A flat 0.6 is not the answer, because that is a matte sea and
-    // throws away the sun's glint this project measured its water by.
-    // The variance goes in the ROUGHNESS instead: `fwidth(n)` is how far
-    // the normal moves across one pixel, and a lobe widened by it covers
-    // what the normal is doing inside that pixel rather than sampling
-    // one point of it. Calm water a few metres away keeps its own 0.12.
-    let wobble = length(fwidth(n));
-    let base = pbr_input.material.perceptual_roughness;
-    pbr_input.material.perceptual_roughness =
-        clamp(sqrt(base * base + wobble * wobble * NDF_FILTER), base, 1.0);
+    // Filtering the lobe (Toksvig, the variance in the roughness) got it
+    // to 2.007 and is what this carried for one commit. It is a filter
+    // on a term that should not be there: a sea's shine is ONE lobe the
+    // shader owns, not a GGX highlight plus an environment map of the
+    // sky reflected in a mirror.
+    //
+    // The ROUGHNESS is left alone, unlike `distant.wgsl`'s, because
+    // Bevy's screen space transmission blurs by it: taken to one the
+    // seabed comes back a smear. Nought reflectance is what zeroes F0,
+    // and F0 is what every specular term here is multiplied by.
+    pbr_input.material.metallic = 0.0;
+    pbr_input.material.reflectance = vec3<f32>(0.0);
     // Bevy's own transmission attenuates the refracted ray over this, on
     // the colour `water::attenuation` DERIVED from the same absorption
     // the next line reads, so the two halves of one Beer's law cannot
@@ -316,6 +331,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         smoothstep(water.band.z - blur, water.band.w + blur, sharp) * 0.26,
     ) * water.foam.w * detail;
     shaded = mix(shaded, water.foam.rgb * view.exposure * lit, foam);
+
+    // The SUN's own GLINT, and the only shine on this sheet: one Blinn
+    // Phong lobe about the half vector, which is `distant.wgsl`'s line
+    // for a body's ocean and pale-blue-dot's for its sea. WIDE, because
+    // the sun's half degree is spread by the waves, and because a narrow
+    // lobe on this normal is the speckle this replaces.
+    //
+    // Scaled by `detail` like the foam, so where the ripples are worn
+    // out by their own footprint the glint goes with them rather than
+    // surviving on a normal that is no longer there.
+    let half_v = normalize(V + sun);
+    let lobe = pow(max(dot(n, half_v), 0.0), GLINT_POWER);
+    shaded += GLINT * (GLINT_NITS * lobe * lit * detail * view.exposure);
     color = vec4<f32>(shaded, color.a);
 
     color = main_pass_post_lighting_processing(pbr_input, color);
