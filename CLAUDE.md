@@ -1302,6 +1302,68 @@ at one level of 255. What the standard material carries instead is water's
 real F0 (Bevy `reflectance` 0.25 against 0.02 of reflectance) and a
 roughness of 0.12, which is a sea rather than the mirror 0.06 was.
 
+**THE SPECKLE ON THE SEA IS BEVY'S OWN SCREEN SPACE TRANSMISSION**, and
+what says so is that it is flat in SCREEN space over a hundredfold range
+of world footprint. The owner sent a picture of a sea covered in per
+pixel salt and pepper and named four candidates: floating point
+precision, a shader not working in the body's local frame, world space
+UVs on one giant mesh, and a voxelised sea. Measured, it is none of
+them, and each of those four was already answered in this file: the
+ripples take a lattice CELL and a FRACTION so nothing is a planet scale
+float, every coordinate is planet local from a centre `rebase_origin`
+moves, the sheet has no UVs at all, and it is a contoured SURFACE with
+its buried triangles dropped.
+
+**A speckle is energy at the PIXEL, so the measure is the mean absolute
+Laplacian of the luminance in a band.** On the owner's own framing, an
+eye at the waterline, it reads 8.20 just under the horizon where a
+ripple is kilometres of ground to a pixel, 7.48 in the middle distance,
+7.67 near and 6.83 at the feet, against 4.65 for the SKY in the same
+frame, which is the dome's own deliberate per pixel dither. A defect
+that came from a coordinate, a frame or a mesh would grow with distance
+from the origin or with the footprint. This one does not move at all.
+
+**The A/B names it**, on a solved `--shore 2` camera: with Bevy's
+`specular_transmission` taken to nought the same frame drops from
+**5.09 to 3.38** in the middle band, 4.78 to 3.16 near, 3.81 to 2.76 at
+the horizon, and the SKY band is unchanged to three decimals, which is
+what says the measure caught the water and nothing else. The crop is
+salt and pepper on one side and smooth on the other.
+
+**And two more ablations say what it is NOT, which is the useful half.**
+Taking the transmission's own blur to nought steps, so the centre tap is
+all there is, is no better at all (5.25 against 5.09): the noise is not
+the randomly rotated spiral of taps that fetches the background. And
+zeroing the RIPPLE gradient moves the water band by **one level of 255
+over 1% of its pixels**, because at a grazing view `detail` has already
+faded the ripples to nothing there: the ripple normal is not the source
+in this frame either.
+
+So what is left is the refraction's own OFFSET. Bevy fetches the
+background at a screen position displaced along the refracted ray and
+scaled by `material.thickness`, and this sheet hands it the PREPASS
+thickness, the path through water to the seabed, capped at `MAX_PATH`
+(200 m). Over open sea at a grazing angle that path swings across its
+whole range between neighbouring pixels, so two neighbours fetch
+background hundreds of metres apart, and the background is terrain with
+its own grain. That is named rather than fixed, because the fix is a
+choice between a thickness that varies smoothly and a transmission that
+does not blur, and neither has been measured yet.
+
+**And a `--shore` camera could not find the sea at all**, which is what
+this cost to measure and is a finding of its own. `aim::shore` scanned
+three kilometres on the reasoning that the port stands on a shore by
+construction, and `town::coastal` sizes a town by how HIGH over the sea
+it stands rather than how NEAR the water it is. Once `town::CUT` capped
+how deep a site may cut, the flattest big sites are inland basins and
+plateaus: **not one of this body's 521 settlements has open sea within
+three kilometres**, and the port's own nearest water is 15,725 m off, so
+every `--shore` render came back as a main street with no sea in the
+frame. The scan is coarse to fifty kilometres and then fine over the one
+step that found water, on the BARE planet because a town's plateau
+cannot make sea, and it aims at the biggest settlement rather than at
+town 0, which is what its own doc always claimed.
+
 **And the night sea is not PHOTOGRAPHED**, which is this file's own camera
 rule catching me out: two hand aimed cameras at the antipode and at the
 terminator both landed on dry land, and the atlas cannot solve a third
@@ -2745,7 +2807,7 @@ Measured: **74.6 s of startup against 0.16 s for the same answer**, and
 `a_march_from_the_analytic_surface_finds_the_same_ground` holds the two
 to a centimetre over four hundred directions.
 
-So a slip carries NO embankment: a road's own `ribbon::LIFT` where the
+So a slip carries the highway's own `ribbon::LIFT + EMBANK` where the
 ground is relief and a street's own `town::LIFT` where the town has
 levelled it, blended by `Planet::site_weight`, which is the one function
 that says where a town's plateau is. Written as a share of the SLIP that
@@ -2754,6 +2816,20 @@ well inside the levelling; written as a band off `Site::level_r` it was
 wrong by the half of the skirt that fades INSIDE that boundary, and
 buried the tarmac the same 0.39 m in the same place. It is one number
 now and the ground and the lift cannot disagree about it.
+
+**And reading the traced ground does NOT make the embankment
+unnecessary**, which is what the first picture of a junction from 90 m
+said and no number had. Dropped on the reasoning that there was nothing
+left for one to hide, the slip came back BITTEN THROUGH in half a dozen
+places by jagged terrain while the highway either side of it was solid.
+The trace and the MESHER are not the same surface either: dual
+contouring puts its vertex within a cell of the crossing, and a cell
+under an eye 90 m up is over a metre, against `ribbon::LIFT`'s own
+0.15 m of clearance. `EMBANK` is the 0.5 m the highway has always
+carried for exactly that. Inside a town's levelling there is nothing to
+hide, because the ground there is a plane the audit holds to two
+millimetres, so the street's five centimetres is enough and the blend is
+the ramp between the two.
 
 **And the slip is anchored at the HIGHWAY's own height and lands on the
 TOWN's own street, with the step between them tapered out along it.**

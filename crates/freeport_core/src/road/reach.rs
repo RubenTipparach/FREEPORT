@@ -159,21 +159,35 @@ const EASE: f64 = 0.55;
 /// is twice the most the volumetric term can lift a surface, it is
 /// **0.3 s for the same answer**.
 ///
-/// **The LIFT is a road's outside the town's levelling and a street's
-/// inside it**, blended by `Planet::site_weight`, which is the one
-/// function that says where a town's plateau is: the lift cannot then
-/// disagree with the ground about it, because the two are one number.
-/// No embankment, because there is nothing left for one to hide. Written
-/// as a share of the SLIP it was wrong twice over, since the crossing a
-/// slip ends on stands well inside the levelling; written as a band off
-/// `Site::level_r` it was wrong by the half of the skirt that fades
-/// INSIDE that boundary, and buried the tarmac the same 0.39 m in the
-/// same place.
+/// **The LIFT is the highway's own outside the town's levelling and a
+/// street's inside it**, blended by `Planet::site_weight`, which is the
+/// one function that says where a town's plateau is: the lift cannot
+/// then disagree with the ground about it, because the two are one
+/// number. Written as a share of the SLIP that taper was wrong twice
+/// over, since the crossing a slip ends on stands well inside the
+/// levelling; written as a band off `Site::level_r` it was wrong by the
+/// half of the skirt that fades INSIDE that boundary, and buried the
+/// tarmac the same 0.39 m in the same place.
+///
+/// **And `road::EMBANK` is in it, which reading the traced ground does
+/// NOT make unnecessary.** Dropped on the reasoning that there was
+/// nothing left for an embankment to hide, the first picture of a
+/// junction from 90 m came back with the slip BITTEN THROUGH in half a
+/// dozen places by jagged terrain while the highway either side of it
+/// was solid. The trace and the MESHER are not the same surface either:
+/// dual contouring puts its vertex within a cell of the crossing, and a
+/// cell under an eye 90 m up is over a metre. `ribbon::LIFT` alone is
+/// 0.15 m of clearance against that, and `EMBANK` is the 0.5 m the
+/// highway has always carried for exactly this reason. Inside the
+/// town's levelling there is no cell error to hide, because the ground
+/// there is a plane the audit holds to two millimetres, so the street's
+/// own five centimetres is enough and the taper is the ramp between.
 fn riding(local: &crate::field::Planet, site: &crate::town::Site, dir: DVec3, radius: f64) -> f64 {
     let top = radius + local.surface(dir).0 + local.overhang;
     let ground = crate::town::surface_radius_from(local, dir, top) - radius;
+    let high = super::ribbon::LIFT + super::EMBANK;
     let ease = 1.0 - local.site_weight(site, dir);
-    let lift = crate::town::LIFT + (super::ribbon::LIFT - crate::town::LIFT) * ease;
+    let lift = crate::town::LIFT + (high - crate::town::LIFT) * ease;
     ground + lift - super::ribbon::LIFT
 }
 
