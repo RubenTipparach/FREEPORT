@@ -17,10 +17,26 @@ use bevy::mesh::PrimitiveTopology;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 
-/// The one terrain material the ground and everything built on it wear,
-/// kept as a resource so a town raised mid flight can reach it.
+/// The terrain material the ground and everything built on it wear, and
+/// the one a ROAD wears, kept as a resource so a town raised mid flight
+/// can reach them.
+///
+/// TWO handles and one shader: the tarmac's is the same material with a
+/// DEPTH BIAS on it, because a road drawn in the corridor the mesher cut
+/// for it is a surface a hair over another surface, and a hair is what a
+/// depth buffer argues about. It is SMALL on purpose. A constant bias
+/// buys clearance that grows as the square of the distance under an
+/// infinite reverse Z projection, so a value that is nothing underfoot
+/// is centimetres a few hundred metres out, which is all the near road
+/// needs: past that the ground PAINTS the road itself
+/// (`field::PAINT_FROM`). A bias big enough to beat a HILL would show
+/// the road through it, and a hill occluding a road is what a hill is
+/// for.
 #[derive(bevy::prelude::Resource)]
-pub struct Ground3d(pub Handle<TerrainMaterial>);
+pub struct Ground3d {
+    pub ground: Handle<TerrainMaterial>,
+    pub tarmac: Handle<TerrainMaterial>,
+}
 
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
@@ -301,12 +317,20 @@ pub fn terrain_maps(images: &mut Assets<Image>) -> [Handle<Image>; 3] {
     ]
 }
 
+/// How hard the tarmac is pushed toward the camera in the depth buffer.
+///
+/// Small, because the near road only has to beat the two millimetres a
+/// dual contoured plane is held to and the centimetre a corridor's own
+/// mitre stands proud at a bend, and because a bias that beat a HILL
+/// would draw the road through it.
+const TARMAC_BIAS: f32 = 8.0;
+
 pub fn terrain_material(
     images: &mut Assets<Image>,
     materials: &mut Assets<TerrainMaterial>,
     frames: &[Frame],
     sea: f32,
-) -> Handle<TerrainMaterial> {
+) -> Ground3d {
     let dir = textures_dir();
     match &dir {
         Some(d) => info!("terrain sets from {}", d.display()),
@@ -314,10 +338,11 @@ pub fn terrain_material(
     }
     let (lanes, count) = frame_lanes(frames);
     let [albedo, normal, orm] = terrain_maps(images);
-    materials.add(ExtendedMaterial {
+    let of = |bias: f32| ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE,
             perceptual_roughness: 0.9,
+            depth_bias: bias,
             ..default()
         },
         extension: Terrain {
@@ -328,11 +353,15 @@ pub fn terrain_material(
             haze: Vec4::ZERO,
             palette: Vec4::ZERO,
             sun: Vec4::new(0.0, 1.0, 0.0, LAMPS_AT_NIGHT),
-            albedo,
-            normal,
-            orm,
+            albedo: albedo.clone(),
+            normal: normal.clone(),
+            orm: orm.clone(),
         },
-    })
+    };
+    Ground3d {
+        ground: materials.add(of(0.0)),
+        tarmac: materials.add(of(TARMAC_BIAS)),
+    }
 }
 
 /// A corner whose normal is further than this from its triangle's face is

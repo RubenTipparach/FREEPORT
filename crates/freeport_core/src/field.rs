@@ -24,7 +24,13 @@ pub trait Density {
 
     /// What the rock at `p` is made of: `TERRAIN` unless something built is
     /// the deepest solid there, which is how a mesher names a triangle.
-    fn material(&self, _p: DVec3) -> u8 {
+    ///
+    /// `reach` is how far apart the samples of the mesh being named are,
+    /// its own cell. A material that is a thin STRIPE on the ground needs
+    /// it: a band narrower than a cell is a band whose triangles are
+    /// tagged only where their middles happen to fall in it, which is a
+    /// dotted road rather than a road.
+    fn material(&self, _p: DVec3, _reach: f64) -> u8 {
         TERRAIN
     }
 
@@ -181,187 +187,6 @@ use crate::noise::smoothstep;
 const SKIRT_IN: f64 = 5.0;
 const SKIRT_OUT: f64 = 6.0;
 
-/// The arc from a site's middle inside which the ground is level right
-/// across, and the arc past which it is the relief again, metres. The one
-/// place the skirt's two widths are read, so a shader handed this pair is
-/// applying the same rule `Planet::site_weight` does rather than a second
-/// copy of two constants.
-///
-/// **`site.r` is the radius the ground is FULLY level inside**, and it
-/// was half that. The first cut read `site.r * 0.5 - SKIRT_IN`, which is
-/// the right band for a `site.r` that means a DIAMETER, and `site_of`
-/// was handing it a radius: a town was levelled right across to about
-/// its own nominal radius while its lots reach `town::OUTLINE` (2.06) of
-/// one. Everything past that stood on bare relief with its base at the
-/// town's level, and the level is the LOWEST of the site's own survey,
-/// so the relief out there is HIGHER and the building is under it. The
-/// owner's picture was a suburb buried to its eaves with only the roofs
-/// and the driveways showing.
-/// Every site on a body, kept so that the few which matter at a
-/// direction can be found without walking the rest.
-///
-/// A body with eight towns on it could be walked; a body with a hundred
-/// and sixty could, once `Planet::around` filtered once a CHUNK rather
-/// than once a sample. A body whose ROADS are levelled cannot: this one
-/// carries 1,084 settlements and 310 roads over 63,840 km, and a
-/// corridor cut every few hundred metres is hundreds of thousands of
-/// sites. `surface_blend` is asked for every one of a chunk's seven
-/// thousand sample points, so walking them all is a hundred million
-/// tests for a chunk in the middle of an ocean.
-///
-/// The index is the simplest one that works on a sphere and keeps this
-/// crate's no-`HashMap` rule: the sites SORTED BY LATITUDE, which is
-/// `dir.y` because that is what `biome` already measures latitude on,
-/// and one number for how far the widest of them reaches off its own.
-/// A query is a binary search and a walk of a thin band. It is not a
-/// quadtree because it does not need to be: a band of the sphere a few
-/// hundred metres deep holds a handful of sites out of any number.
-#[derive(Clone, Debug, Default)]
-pub struct Sites {
-    /// Sorted by `mid`, so a query is a range.
-    by_lat: Vec<crate::town::Site>,
-    /// How far the widest site reaches off its own middle latitude,
-    /// as a share of the y axis (half its arc) and in metres (its outer
-    /// band). `window` is what turns the pair into one number.
-    reach_y: f64,
-    reach_m: f64,
-    /// The worst level and the worst DROP along an arc, which is what
-    /// the field's slope bound reads. Precomputed, because the bound is
-    /// asked once a box and the sites are not walked for it.
-    level: f64,
-    drop: f64,
-    /// The shortest arc any site spans, radians, so the steepest grade
-    /// is bounded by `drop / (sweep * radius)`.
-    sweep: f64,
-}
-
-impl Sites {
-    /// The index over a list of sites.
-    pub fn new(sites: Vec<crate::town::Site>) -> Sites {
-        let mut out = Sites {
-            by_lat: sites,
-            sweep: f64::INFINITY,
-            ..Sites::default()
-        };
-        for site in &out.by_lat {
-            out.reach_y = out.reach_y.max((site.dir.y - site.to.y).abs() * 0.5);
-            out.reach_m = out.reach_m.max(site_band(site).1);
-            out.level = out.level.max(site.h.abs()).max(site.to_h.abs());
-            out.drop = out.drop.max((site.to_h - site.h).abs());
-            let sweep = site.dir.angle_between(site.to);
-            if sweep > 0.0 {
-                out.sweep = out.sweep.min(sweep);
-            }
-        }
-        out.by_lat.sort_by(|a, b| {
-            Sites::mid(a)
-                .partial_cmp(&Sites::mid(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        out
-    }
-
-    /// A site's own middle latitude, which is what it is sorted on.
-    fn mid(site: &crate::town::Site) -> f64 {
-        (site.dir.y + site.to.y) * 0.5
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.by_lat.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.by_lat.len()
-    }
-
-    /// Every site, in no useful order.
-    pub fn iter(&self) -> std::slice::Iter<'_, crate::town::Site> {
-        self.by_lat.iter()
-    }
-
-    /// No sites at all.
-    pub fn clear(&mut self) {
-        *self = Sites::default();
-    }
-
-    /// One more site. It re-sorts, so it is for building a body and not
-    /// for a loop.
-    pub fn push(&mut self, site: crate::town::Site) {
-        let mut all = std::mem::take(&mut self.by_lat);
-        all.push(site);
-        *self = Sites::new(all);
-    }
-
-    /// How far off a query's own latitude a site can still reach, on a
-    /// body of this radius.
-    pub fn window(&self, radius: f64) -> f64 {
-        self.reach_y
-            + if radius > 0.0 {
-                self.reach_m / radius
-            } else {
-                0.0
-            }
-    }
-
-    /// The highest level any site holds, metres, and the steepest its
-    /// own level ramps ALONG it. A town's ramp is nought; a road's is
-    /// the grade it was routed at, and the field's slope bound has to
-    /// carry it or a chunk on a hill road is ruled empty and left as a
-    /// hole.
-    pub fn level(&self) -> f64 {
-        self.level
-    }
-
-    pub fn grade(&self, radius: f64) -> f64 {
-        if self.sweep.is_finite() && self.sweep > 0.0 && radius > 0.0 {
-            self.drop / (self.sweep * radius)
-        } else {
-            0.0
-        }
-    }
-
-    /// The sites whose own latitude band is within `window` of a
-    /// direction's: a binary search and a walk. Everything else on the
-    /// body is skipped without being looked at.
-    pub fn near(&self, dir: DVec3, window: f64) -> impl Iterator<Item = &crate::town::Site> {
-        let (lo, hi) = (dir.y - window, dir.y + window);
-        let start = self.by_lat.partition_point(|s| Sites::mid(s) < lo);
-        self.by_lat[start..]
-            .iter()
-            .take_while(move |s| Sites::mid(s) <= hi)
-    }
-}
-
-impl<'a> IntoIterator for &'a Sites {
-    type Item = &'a crate::town::Site;
-    type IntoIter = std::slice::Iter<'a, crate::town::Site>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-impl std::ops::Index<usize> for Sites {
-    type Output = crate::town::Site;
-    /// One site, in the index's own order, which is by latitude and not
-    /// the order they were handed in. It is here for the tests that hold
-    /// a body with exactly one site on it.
-    fn index(&self, k: usize) -> &crate::town::Site {
-        &self.by_lat[k]
-    }
-}
-
-impl FromIterator<crate::town::Site> for Sites {
-    fn from_iter<T: IntoIterator<Item = crate::town::Site>>(sites: T) -> Sites {
-        Sites::new(sites.into_iter().collect())
-    }
-}
-
-impl From<Vec<crate::town::Site>> for Sites {
-    fn from(sites: Vec<crate::town::Site>) -> Sites {
-        Sites::new(sites)
-    }
-}
-
 /// How wide a site's own skirt is: the blend from its level to the
 /// relief, metres.
 ///
@@ -381,6 +206,22 @@ pub fn site_skirt(site: &crate::town::Site) -> f64 {
     (SKIRT_IN + SKIRT_OUT) * widen
 }
 
+/// The arc from a site's middle inside which the ground is level right
+/// across, and the arc past which it is the relief again, metres. The one
+/// place the skirt's two widths are read, so a shader handed this pair is
+/// applying the same rule `Planet::site_weight` does rather than a second
+/// copy of two constants.
+///
+/// **`site.r` is the radius the ground is FULLY level inside**, and it
+/// was half that. The first cut read `site.r * 0.5 - SKIRT_IN`, which is
+/// the right band for a `site.r` that means a DIAMETER, and `site_of`
+/// was handing it a radius: a town was levelled right across to about
+/// its own nominal radius while its lots reach `town::OUTLINE` (2.06) of
+/// one. Everything past that stood on bare relief with its base at the
+/// town's level, and the level is the LOWEST of the site's own survey,
+/// so the relief out there is HIGHER and the building is under it. The
+/// owner's picture was a suburb buried to its eaves with only the roofs
+/// and the driveways showing.
 pub fn site_band(site: &crate::town::Site) -> (f64, f64) {
     (site.r, site.r + site_skirt(site))
 }
@@ -531,6 +372,19 @@ impl Planet {
     }
 }
 
+/// How coarse a mesh has to be before a road is PAINTED on the ground
+/// rather than left to its own tarmac, metres of cell.
+///
+/// A corridor is `road::CORRIDOR` (7 m) either side of the centreline, so
+/// a mesh with a cell of about half that still has samples inside the
+/// cutting and draws it: the ribbon sits in its own corridor and is the
+/// road. Past that the mesher has nothing inside the corridor at all,
+/// draws the hill that was there before the road, and the tarmac is
+/// under it. The rings put a cell of about a sixty fourth of its own
+/// distance under the eye, so four metres is a few hundred metres out,
+/// which is the owner's own word for where the near road ends.
+const PAINT_FROM: f64 = 4.0;
+
 impl Density for Planet {
     fn at(&self, p: DVec3) -> f64 {
         let r = p.length();
@@ -562,6 +416,47 @@ impl Density for Planet {
 
     fn slope(&self) -> f64 {
         self.steepest()
+    }
+
+    /// The ground is TERRAIN everywhere, except that a mesh too coarse to
+    /// hold a road's own cutting is PAINTED with one.
+    ///
+    /// The tarmac is geometry of its own (`road::ribbon`) and that is the
+    /// road wherever the terrain still carries the corridor it sits in.
+    /// Past `PAINT_FROM` it does not, so the road becomes a material on
+    /// the ground's own triangles: continuous at every level by
+    /// construction, because it IS the ground, and never under it.
+    ///
+    /// The band is at least one CELL wide, which is the lie and a
+    /// deliberate one, the same lie `chart::blot` makes: a band narrower
+    /// than a cell is tagged only where a triangle's middle happens to
+    /// fall in it, which is a dotted road rather than a road. At the
+    /// finest level that paints it the band is the tarmac's own width and
+    /// the lie is nought.
+    fn material(&self, p: DVec3, reach: f64) -> u8 {
+        if reach < PAINT_FROM || self.sites.is_empty() {
+            return TERRAIN;
+        }
+        let Some(dir) = p.try_normalize() else {
+            return TERRAIN;
+        };
+        let half = crate::road::ribbon::HALF.max(reach * 0.5);
+        let band = half / self.radius;
+        for site in self.sites_near(dir, band) {
+            // A road FILLS and a town does not, which is what tells a
+            // corridor from a town's own levelled ground here.
+            if !site.fills {
+                continue;
+            }
+            let far = site.reach() * 2.0 + band;
+            if (dir - site.dir).length_squared() > far * far {
+                continue;
+            }
+            if (dir - site.nearest(dir).0).length() * self.radius <= half {
+                return STREET;
+            }
+        }
+        TERRAIN
     }
 }
 
@@ -831,9 +726,9 @@ impl Density for Built<'_> {
         self.sample(p).0
     }
 
-    fn material(&self, p: DVec3) -> u8 {
+    fn material(&self, p: DVec3, reach: f64) -> u8 {
         if self.blocks.is_empty() {
-            TERRAIN
+            self.ground.material(p, reach)
         } else {
             self.sample(p).1
         }
@@ -878,5 +773,7 @@ impl Block {
     }
 }
 
+mod sites;
+pub use sites::*;
 #[cfg(test)]
 mod tests;

@@ -686,7 +686,9 @@ impl Chunk<'_> {
             self.mesh.indices.extend_from_slice(&[a, c, b]);
         }
         let inside = mid + g.normalize_or_zero() * (self.cell() * HAND);
-        self.mesh.materials.push(self.field.material(inside));
+        self.mesh
+            .materials
+            .push(self.field.material(inside, self.cell()));
     }
 }
 

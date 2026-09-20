@@ -2497,6 +2497,50 @@ What the probes cost is the BAKE: 322.5 s against 99.7, four
 `surface_radius` marches a piece against one, and nothing at all
 afterwards, because what the atlas carries is the answer.
 
+**And past a few hundred metres the GROUND ITSELF is the road.** Riding
+the country is not enough on its own, and the straight down picture is
+what settled it: from 2.5 km up, where no crest can occlude anything, the
+road out of the port came back in three pieces with long gaps. Measured
+along the chord of every laid piece, the ground a coarse chunk draws
+stands **1.33 m over the tarmac at its worst** and -1.18 m at its median,
+so a road rides an embankment better than a metre up nearly everywhere
+and is under the country in a few places. The residual is terrain finer
+than the quarter points the survey probes, and chasing it with more
+probes is a losing race against a fractal.
+
+So `Planet::material` PAINTS the road on the ground's own triangles where
+the mesh is too coarse to carry the corridor. `Density::material` takes
+the sample's own `reach` now, which is the chunk's cell, and past
+`field::PAINT_FROM` (4 m of cell, about a few hundred metres out) a
+triangle whose middle falls within the band is `STREET`. It is
+continuous at every level by construction, because it IS the ground and
+there is nothing left to bury. The band is at least one CELL wide, which
+is the same deliberate lie `chart::blot` makes and for the same reason: a
+band narrower than a cell is tagged only where a triangle's middle
+happens to land in it, which is a dotted road rather than a road. At the
+finest level that paints it the band is the tarmac's own 5.5 m and the
+lie is nought.
+
+**And the NEAR road is the ribbon with a small DEPTH BIAS.** Inside
+`PAINT_FROM` the terrain still has samples in the corridor and draws it,
+so the tarmac sits in its own cutting and is the road at its true width
+with its markings and its kerb; what it needs there is not clearance
+from a hill but from the two millimetres a dual contoured plane is held
+to and the centimetre a mitre stands proud at a bend. `Ground3d` carries
+TWO handles and one shader for that, the ground's and the tarmac's, the
+second identical but for `TARMAC_BIAS`. A constant bias buys clearance
+that grows as the SQUARE of the distance under an infinite reverse Z
+projection, so a value that is nothing underfoot is centimetres a few
+hundred metres out, which is all the near road needs. It is small on
+purpose: a bias big enough to beat a HILL would draw the road through
+it, and a hill occluding a road is what a hill is for.
+
+And because there are two of them, `rebase_origin` writes the body's
+centre into EVERY terrain material rather than into the streamer's own
+handle, which is what `sky.rs` already does with the sun and the air: one
+of the two left behind at a rebase would be a road mapped and fogged in
+the frame before.
+
 **A road may FILL and a town may not**, and that is the one rule the two
 do not share. A town's level is the lowest its own survey found, so a site
 that filled would be a city on a pedestal with its apron over the valley,

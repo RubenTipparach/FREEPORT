@@ -411,7 +411,8 @@ fn spawn_world(
         .iter()
         .map(|t| town::lot_frame(RADIUS, t, 0.0, 0.0))
         .collect();
-    let material = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
+    let kit = terrain_material(&mut images, &mut materials, &frames, SEA as f32);
+    let material = kit.ground.clone();
     let sheet = water_material(&mut waters, SEA);
     say_world(&world, start_eye, &lat, args.levels);
     // The people and the cars on their streets. It is handed the PLANNED
@@ -431,7 +432,7 @@ fn spawn_world(
     commands.insert_resource(city::stream::Library(buildings::Library::load()));
     say_roads(&mut commands, &world);
     commands.insert_resource(city::Glazing::new(&mut standard));
-    commands.insert_resource(terrain::Ground3d(material.clone()));
+    commands.insert_resource(kit);
     commands.init_resource::<world::Fabric>();
     commands.init_resource::<city::stream::Building>();
     let mut planets = planets::Planets::load(Arc::new(world));

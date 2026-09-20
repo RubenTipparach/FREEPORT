@@ -499,8 +499,17 @@ pub fn rebase_origin(
     }
     if let Some(streamer) = streamer {
         let centre = frame.0.local(WorldPos(streamer.centre));
-        if let Some(m) = materials.get_mut(&streamer.material) {
-            m.extension.centre = centre.extend(0.0);
+        // EVERY terrain material and not the streamer's own handle: the
+        // tarmac wears a second one, identical but for its depth bias,
+        // and a body's centre written into one of the two would be a
+        // road mapped and fogged in a frame the ground left behind at
+        // the last rebase. `sky.rs` already writes the sun and the air
+        // this way and for the same reason.
+        let ids: Vec<_> = materials.ids().collect();
+        for id in ids {
+            if let Some(m) = materials.get_mut(id) {
+                m.extension.centre = centre.extend(0.0);
+            }
         }
         recentre(&mut waters, &streamer.water, centre);
     }

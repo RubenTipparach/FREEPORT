@@ -122,7 +122,7 @@ pub fn stream_towns(
     let entity = spawn_town(
         &mut commands,
         &mut kit.meshes,
-        &kit.material.0,
+        &kit.material.ground,
         &here.frame,
         world.sea.radius,
         lifted.mesh,

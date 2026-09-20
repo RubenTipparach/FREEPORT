@@ -281,7 +281,8 @@ fn lay(
     );
     let mut entity = commands.spawn((
         Mesh3d(kit.meshes.add(mesh)),
-        MeshMaterial3d(kit.ground.0.clone()),
+        // The TARMAC's own material: the ground's, with a depth bias.
+        MeshMaterial3d(kit.ground.tarmac.clone()),
         Transform {
             translation: kit.frame.0.local(anchor),
             rotation: Quat::from_mat3(&basis),
