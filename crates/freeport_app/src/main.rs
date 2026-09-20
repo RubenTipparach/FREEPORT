@@ -126,11 +126,17 @@ const SEA: f64 = RADIUS + 1100.0;
 /// each of them.
 const TOWNS: usize = 160;
 /// How far across the BIGGEST town on the body is, metres. Every other
-/// town's size falls off its own rank by Zipf's law (`town::size_of`),
-/// so this is a ceiling rather than the one figure every city was: at 80
-/// m, which is what it was, a hundred and sixty settlements were a
+/// town's size falls off how near the SEA it stands (`town::coastal`),
+/// so this is a ceiling rather than the one figure every city was: at
+/// 80 m, which is what it was, a hundred and sixty settlements were a
 /// hundred and sixty copies of one settlement.
-const TOWN_RADIUS: f64 = 170.0;
+///
+/// TEN TIMES THE CITY, which is the owner's own ask, and it is the
+/// square root of ten on the RADIUS because a city is measured by the
+/// ground it covers: 170 m becomes 537 and a town of 176 lots becomes
+/// one of 1,580. What that costs is the built set, because a town is
+/// its own triangles and `TOWNS_BUILT` of them are standing at once.
+const TOWN_RADIUS: f64 = 537.0;
 
 /// How many of the planned towns are BUILT, nearest to where the world
 /// starts first.
@@ -507,11 +513,12 @@ fn say_roads(commands: &mut Commands, world: &World) {
             "the ground a coarse chunk draws stands {worst:.2} m over road 0's tarmac at its worst and {median:.2} m at its median"
         );
     }
-    if let Some((n, ran, mouth, end, meets, paved, buried)) = roads::slip_of(world) {
-        info!(
-            "road 0's SLIP is {n} pieces over {ran:.0} m, from the highway's mouth {mouth:.0} m out of town 0 to {end:.0} m out, ending {meets:.2} m from the town's own paving, which reaches {paved:.0} m; the drawn ground stands {buried:.2} m over its own tarmac at the worst"
-        );
-    }
+    let (deep, steep, mean) = city::worst_cut(world);
+    bevy::log::info!(
+        "a town CUTS up to {deep:.0} m at its own edge ({mean:.0} m on the mean), which its skirt ramps at up to {:.0}%",
+        steep * 100.0
+    );
+    roads::report(world);
     info!(
         "{} roads are {} stretches of tarmac; the ones within {:.0} km of the eye are laid{}",
         world.roads.len(),

@@ -130,24 +130,96 @@ const SLIP_PIECE: f64 = 3.0;
 /// their own direction without looping.
 const EASE: f64 = 0.55;
 
-/// What share of the slip the LIFT is tapered over, at the town end.
+/// The height a slip's tarmac RIDES at over one point of the ground,
+/// metres over the mean radius, in the units `ribbon::stretch` reads
+/// (it adds its own `LIFT` back to everything it is handed).
 ///
-/// A slip rides the highway's own `EMBANK` for the rest of it, and the
-/// reason is measured: the slip reads `Planet::surface`, which is the
-/// ANALYTIC relief, and the mesher contours the field, which carries
-/// the volumetric term wherever a site has not faded it. On the port's
-/// own slip the drawn ground stands **0.34 m** over a tarmac laid at
-/// `ribbon::LIFT` alone, so the last third of it was under the hill it
-/// was laid on and the picture showed its own curved SHADOW crossing an
-/// empty field. An embankment is what a road already has for exactly
-/// this: the ground beside it is LOWER than the road, so no chord
-/// between two lattice columns can close over it.
+/// **The ground is the one the MESHER draws**, a sphere trace of the
+/// field for its first crossing, which is what `road::survey` reads for
+/// the highway's own profile too. `Planet::surface` is the analytic
+/// relief with the sites applied and it is cheaper, which is what this
+/// read for a commit; what it leaves out is the field's VOLUMETRIC
+/// term, and outside a town's levelling that term is the whole
+/// disagreement. Measured along the port's own slip, the drawn ground
+/// stood **1.045 m over the analytic surface at one point and 0.11 m
+/// under it three metres away**: a swing no fixed embankment covers,
+/// and the 0.39 m of tarmac buried under the hill it was laid on was
+/// that swing less the 0.65 m of `ribbon::LIFT + EMBANK` that was
+/// paying to hide it.
 ///
-/// The taper is over the last quarter and never the whole slip, because
-/// a lift that falls linearly from the mouth is under the burial for
-/// most of its length. A quarter of forty metres is ten, and dropping
-/// `EMBANK` over ten is a one in twenty ramp, which is a road.
-const TAPER: f64 = 0.25;
+/// **And the march is cheap because it starts where the answer is.**
+/// Two things made it 74.6 s of startup on this body. The slip is
+/// spliced AFTER the corridors are installed, so an unfiltered trace
+/// walks all 646,000 levelled arcs at every step of every sample:
+/// `local` is `Planet::around` at the slip's own mouth, filtered ONCE
+/// for the whole curve, which is this file's oldest performance rule.
+/// And `town::surface_radius` starts at the top of the relief band,
+/// which here is sixteen kilometres of air at a floor of half a metre a
+/// step: started at the analytic surface plus `Planet::overhang`, which
+/// is twice the most the volumetric term can lift a surface, it is
+/// **0.3 s for the same answer**.
+///
+/// **The LIFT is a road's outside the town's levelling and a street's
+/// inside it**, blended by `Planet::site_weight`, which is the one
+/// function that says where a town's plateau is: the lift cannot then
+/// disagree with the ground about it, because the two are one number.
+/// No embankment, because there is nothing left for one to hide. Written
+/// as a share of the SLIP it was wrong twice over, since the crossing a
+/// slip ends on stands well inside the levelling; written as a band off
+/// `Site::level_r` it was wrong by the half of the skirt that fades
+/// INSIDE that boundary, and buried the tarmac the same 0.39 m in the
+/// same place.
+fn riding(local: &crate::field::Planet, site: &crate::town::Site, dir: DVec3, radius: f64) -> f64 {
+    let top = radius + local.surface(dir).0 + local.overhang;
+    let ground = crate::town::surface_radius_from(local, dir, top) - radius;
+    let ease = 1.0 - local.site_weight(site, dir);
+    let lift = crate::town::LIFT + (super::ribbon::LIFT - crate::town::LIFT) * ease;
+    ground + lift - super::ribbon::LIFT
+}
+
+/// The piece of a town's own paving a slip is laid to REACH: the
+/// nearest CROSSING on ground the town has levelled.
+///
+/// A CROSSING and never a run, because a crossing is a node where
+/// streets already meet and it owns its whole square (`town::paved`),
+/// so a slip arriving at one merges into the grid; arriving at the
+/// middle of a run would T bone a street at whatever angle the road
+/// came in on and leave the corner bare.
+///
+/// And on LEVELLED ground, which is where a street is laid five
+/// centimetres over a plane and stays there. A town's grid runs out
+/// past its own site onto the skirt, where the blend ramps and the
+/// volumetric term comes back: a slip ending there arrives at the one
+/// part of the town's paving that is itself partly in the hill, and its
+/// last piece is buried with it. Measured on the port, that moved the
+/// slip's end from 158 m out to 129.
+///
+/// The two fallbacks are for the towns that have neither: any crossing
+/// at all, and then any piece at all, which is what a one street hamlet
+/// leaves.
+fn crossing<'a>(
+    town: &'a crate::town::Town,
+    site: &crate::town::Site,
+    p0: glam::DVec2,
+    radius: f64,
+) -> Option<&'a crate::town::Piece> {
+    let near = |p: &&crate::town::Piece| (p.x - p0.x).hypot(p.z - p0.y);
+    let level = |p: &&crate::town::Piece| {
+        let dir = (town.dir * radius + town.east * p.x + town.north * p.z).normalize();
+        dir.angle_between(town.dir) * radius <= site.level_r(dir)
+    };
+    let pick = |firm: bool| {
+        town.pieces
+            .iter()
+            .filter(|p| !p.run() && (!firm || level(p)))
+            .min_by(|a, b| near(a).total_cmp(&near(b)))
+    };
+    pick(true).or_else(|| pick(false)).or_else(|| {
+        town.pieces
+            .iter()
+            .min_by(|a, b| near(a).total_cmp(&near(b)))
+    })
+}
 
 /// The SLIP that joins a highway to a town's own streets: a curve from
 /// the last tarmac the road lays to the nearest CROSSING the town paved,
@@ -183,6 +255,7 @@ pub fn slip(
     planet: &crate::field::Planet,
     town: &crate::town::Town,
     mouth: DVec3,
+    mouth_h: f64,
     along: DVec3,
     radius: f64,
 ) -> Vec<(DVec3, f64)> {
@@ -191,31 +264,8 @@ pub fn slip(
         glam::DVec2::new(here.dot(town.east), here.dot(town.north))
     };
     let p0 = flat(mouth);
-    // The nearest CROSSING, and any piece at all only if the town laid
-    // no crossing, which a one street hamlet can manage.
-    let near = |p: &&crate::town::Piece| (p.x - p0.x).hypot(p.z - p0.y);
-    // And a crossing on ground the town has LEVELLED, which is where a
-    // street is laid five centimetres over a plane and stays there. The
-    // town's own grid runs out past its site onto the skirt, where the
-    // blend ramps and the volumetric term comes back: a slip ending
-    // there arrives at the one part of the town's paving that is itself
-    // partly in the hill, and its last piece is buried with it.
     let site = crate::town::site_of(town);
-    let level = |p: &&crate::town::Piece| {
-        let dir = (town.dir * radius + town.east * p.x + town.north * p.z).normalize();
-        dir.angle_between(town.dir) * radius <= site.level_r(dir)
-    };
-    let pick = |firm: bool| {
-        town.pieces
-            .iter()
-            .filter(|p| !p.run() && (!firm || level(p)))
-            .min_by(|a, b| near(a).total_cmp(&near(b)))
-    };
-    let Some(target) = pick(true).or_else(|| pick(false)).or_else(|| {
-        town.pieces
-            .iter()
-            .min_by(|a, b| near(a).total_cmp(&near(b)))
-    }) else {
+    let Some(target) = crossing(town, &site, p0, radius) else {
         return Vec::new();
     };
     let p1 = glam::DVec2::new(target.x, target.z);
@@ -236,7 +286,17 @@ pub fn slip(
     };
     let (m0, m1) = (t0 * (gap * EASE), t1 * (gap * EASE));
     let steps = ((gap / SLIP_PIECE).ceil() as usize).max(2);
-    (0..=steps)
+    // The sites near the WHOLE slip, filtered ONCE. A slip is eighty
+    // metres of a body two thousand kilometres across, so the same
+    // handful of sites covers every point of it, and the filter is what
+    // makes the march affordable: asked per point on a body carrying
+    // 646,000 levelled corridor arcs it took 62.3 s of startup against
+    // 1.8, because every one of them walks a latitude band of some
+    // seven hundred sites and tests each with an `atan2`. That is this
+    // file's own oldest rule, which is that a survey along one
+    // direction filters the body once and not once a sample.
+    let local = planet.around(mouth, gap * 2.0 / radius + 1e-9);
+    let out: Vec<(DVec3, f64)> = (0..=steps)
         .map(|k| {
             let t = k as f64 / steps as f64;
             let (t2, t3) = (t * t, t * t * t);
@@ -247,27 +307,65 @@ pub fn slip(
                 + p1 * (-2.0 * t3 + 3.0 * t2)
                 + m1 * (t3 - t2);
             let dir = (town.dir * radius + town.east * q.x + town.north * q.y).normalize();
-            // `Planet::surface` and never `town::surface_radius`, which
-            // is the analytic relief with the sites applied rather than
-            // a sphere trace down through the whole band for it. The
-            // two agree wherever `keep` is nought, which is exactly
-            // where a slip runs: a town has levelled its plateau and a
-            // road has cut its corridor, and on a levelled site the
-            // relief IS the site's height and the volumetric noise is
-            // not asked. Marched instead, 620 slips of fifteen points
-            // took 92.7 s of startup on this body against 0.1 s, which
-            // is 620 sphere traces through eight kilometres of relief
-            // for an answer the field can write down.
-            let ground = planet.surface(dir).0;
-            // The highway's own embankment, held for three quarters of
-            // the slip and tapered into the street's own five
-            // centimetres over the last quarter, which is the 10 cm lip
-            // this project's design gave as the reason not to run
-            // tarmac into a town: a ramp rather than a step.
-            let high = super::ribbon::LIFT + super::EMBANK;
-            let ease = ((1.0 - t) / TAPER).clamp(0.0, 1.0);
-            let lift = crate::town::LIFT + (high - crate::town::LIFT) * ease;
-            (dir, ground + lift - super::ribbon::LIFT)
+            (dir, riding(&local, &site, dir, radius))
         })
-        .collect()
+        .collect();
+    grade(out, mouth_h, radius)
+}
+
+/// A slip carried down from the HEIGHT the highway itself stands at,
+/// without moving the end it lands on.
+///
+/// A slip reads the ground and the highway reads its own baked profile,
+/// and the two do not meet: `road::smooth` raises a station to clear
+/// every probe inside its own piece and then to hold the grade, so the
+/// highway's last tarmac stands `EMBANK` to a couple of metres over the
+/// ground at that same direction. Laid on the ground alone the slip
+/// starts with that whole difference as a STEP, over one `SLIP_PIECE`
+/// of three metres. Measured on this body, the steepest piece anywhere
+/// was **-0.50 m over 0.015 m, a grade of 3355%**, and a slip's own
+/// mouth was where the rest of them were.
+///
+/// So the step is TAPERED OUT along the slip: the mouth is the
+/// highway's height exactly, the far end is the town's street exactly,
+/// and what is added between is one straight ramp of `d / length`. Both
+/// ends are what they have to be, because a step at the mouth is a
+/// kerb across the highway and a step at the crossing is a kerb across
+/// the street, and neither is a thing a car drives over.
+///
+/// **What it does NOT do is hold the slip inside the highway's own
+/// grade, and that is named rather than hidden.** The first cut
+/// enveloped the profile from the mouth at `STEEPEST` and let the far
+/// end fall where it fell: on the rough test ball that left a slip
+/// standing **2.39 m over the crossing it was laid to reach**, which is
+/// a ramp ending in the air over a street. The ground between a town's
+/// own skirt and its plateau falls at whatever the town's cut makes it,
+/// 12% on that fixture, and no profile that lands on both ends is
+/// inside 7% when the ground between them is not. A slip is as steep as
+/// the apron it is laid on, and what would fix that is the TOWN's
+/// skirt rather than the road's.
+fn grade(mut out: Vec<(DVec3, f64)>, mouth_h: f64, radius: f64) -> Vec<(DVec3, f64)> {
+    if out.len() < 2 {
+        return out;
+    }
+    // Against the arc each step ACTUALLY walks and never the nominal
+    // one: a Hermite is longer than the chord its steps were counted
+    // off, so `gap / steps` is more ground than a step covers and a
+    // ramp written on it is steeper than it says. Measured on the body,
+    // that was 3,331 of the 3,639 pieces left over the seven per cent.
+    let arc: Vec<f64> = out
+        .windows(2)
+        .map(|w| w[0].0.angle_between(w[1].0) * radius)
+        .collect();
+    let total: f64 = arc.iter().sum();
+    let step = mouth_h - out[0].1;
+    if !total.is_finite() || total <= 0.0 || !step.is_finite() {
+        return out;
+    }
+    let mut run = 0.0;
+    for (k, point) in out.iter_mut().enumerate() {
+        point.1 += step * (1.0 - run / total);
+        run += arc.get(k).copied().unwrap_or(0.0);
+    }
+    out
 }

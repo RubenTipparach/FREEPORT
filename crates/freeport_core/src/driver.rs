@@ -81,6 +81,35 @@ const STEEPEST: f64 = 1.200_5;
 /// What is left of the speed when the car hits something square on.
 const CRASH: f64 = 0.15;
 const GRAVITY: f64 = 9.81;
+/// The steepest grade the hill term is measured at, rise over run.
+///
+/// It is a GUARD and not a limit on what a car may climb: `resolve_body`
+/// has already refused anything past `walker::STAND`, so what reaches
+/// here is ground a body can stand on, and this only stops one frame
+/// that made a hand of ground over a step from reading as a cliff and
+/// taking the whole of the speed off in one go.
+const HILL: f64 = 2.0;
+/// How far past its own powered top speed gravity may carry a car
+/// downhill, as a multiple of it. A car does coast past what its engine
+/// can hold on a long descent, and it does not do so without limit.
+const RUNAWAY: f64 = 1.5;
+
+/// The steepest grade a car's own drive can HOLD against gravity, rise
+/// over run.
+///
+/// DERIVED and never chosen: the engine is `ACCEL` along the road and
+/// gravity takes `GRAVITY * sin(theta)` back, so the two balance at
+/// `sin(theta) = ACCEL / GRAVITY` and the grade there is
+/// `ACCEL / sqrt(GRAVITY^2 - ACCEL^2)`, which is **0.677, a one in
+/// 1.48**. Past it a car rolls backwards however hard the throttle is
+/// held, which is what a car does and is the whole of "torque against
+/// momentum": nothing refuses the climb, gravity simply wins it.
+///
+/// A highway is built at `road::STEEPEST`, which is a TENTH of this, so
+/// a car tops out on every road on the body.
+pub fn holds() -> f64 {
+    ACCEL / (GRAVITY * GRAVITY - ACCEL * ACCEL).sqrt()
+}
 /// How long the bodywork takes to lay itself on a new slope, seconds.
 /// Short, because a car on its springs settles in about this, and a car
 /// that snapped would flick over every seam in the mesh.
@@ -349,6 +378,36 @@ impl Driver {
         self.fwd = (self.fwd - got * self.fwd.dot(got)).normalize_or(DVec3::X);
         if made.abs() < asked.abs() * 0.7 {
             self.speed *= 0.85;
+        }
+        // And the HILL takes speed off, which is the whole of what a
+        // hill does to a car: torque against momentum, and nothing
+        // that refuses the climb outright.
+        //
+        // There was NO gravity along the slope at all, so a car held
+        // exactly its speed up a one in one and down it: the owner's
+        // "cars should be able to drive up hills, looks like you have
+        // some code blocking it" is the other half of that, because
+        // what a car actually does on a hill it cannot climb is SLOW
+        // and stop, not be refused a step. `GRAVITY * sin(theta)`
+        // along the way it is going is that, and it is signed off the
+        // travel rather than off the ground, so gravity opposes a climb
+        // whether the car is going forward up it or backing up it.
+        //
+        // Against `ACCEL` (5.5 m/s^2) it is worth nothing on a road and
+        // everything on a cliff: a highway's own seven per cent costs
+        // 0.69 m/s^2, so a car holds its top speed up one; a one in two
+        // costs 4.4 and the car climbs it slowly; a one in one costs
+        // 6.9 and the car stalls on it, which is a hill a car does not
+        // get up and is the right answer rather than a wall.
+        let rise = g - self.foot;
+        if made.abs() > 1e-6 {
+            let grade = (rise / made).clamp(-HILL, HILL);
+            self.speed -= GRAVITY * grade / (1.0 + grade * grade).sqrt() * dt;
+            // A car RUNS AWAY downhill and it does not run away for
+            // ever: `pedals` clamps what the engine can ask for and
+            // gravity is added after it, which is right, so the cap on
+            // the other side is what the wind and the wheels take back.
+            self.speed = self.speed.clamp(-REVERSE * RUNAWAY, TOP * RUNAWAY);
         }
         let drop = self.foot - g;
         self.h = if self.on_ground && drop <= CLIMB {

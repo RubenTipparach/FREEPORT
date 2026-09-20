@@ -461,6 +461,159 @@ pub fn slip_of(world: &World) -> Option<(usize, f64, f64, f64, f64, f64, f64)> {
     ))
 }
 
+/// Everything the harness has to SAY about the roads on this body, in
+/// one place.
+///
+/// It lived in `main.rs`, which is the arguments, the `App` and the
+/// schedule: a measurement's report belongs beside the measurement, and
+/// four log lines of it took that file over this project's own nine
+/// hundred.
+pub fn report(world: &World) {
+    let (steep, share, pieces, at_run, at_rise) = worst_grade(world);
+    bevy::log::info!(
+        "the steepest road piece on the body climbs at {:.1}% ({at_rise:.2} m over {at_run:.3} m) and {:.2}% of {pieces} pieces are over the {:.0}% a highway is allowed",
+        steep * 100.0,
+        share * 100.0,
+        freeport_core::road::STEEPEST * 100.0,
+    );
+    let (mouths, slipped, worst) = dead_ends(world);
+    bevy::log::info!(
+        "{slipped} slips carry a road's two ENDS into a town, and {mouths} mouths of tarmac are left bare where a road passes THROUGH a settlement; the worst stands {worst:.0} m from any paving"
+    );
+    if let Some((n, ran, mouth, end, meets, paved, buried)) = slip_of(world) {
+        bevy::log::info!(
+            "road 0's SLIP is {n} pieces over {ran:.0} m, from the highway's mouth {mouth:.0} m out of town 0 to {end:.0} m out, ending {meets:.2} m from the town's own paving, which reaches {paved:.0} m; the drawn ground stands {buried:.2} m over its own tarmac at the worst"
+        );
+    }
+}
+
+/// The steepest GRADE any road on the body is built at, and the share of
+/// its pieces over the limit a highway is allowed: rise over run, so 0.07
+/// is the seven per cent a motorway is designed to.
+///
+/// Between STATIONS of the refined centreline, which is what the tarmac
+/// is actually laid on and what a car actually drives: the router only
+/// ever looked at waypoints ten kilometres apart, and `road::smooth` is
+/// what is supposed to hold the promise between the pieces it did not
+/// look at.
+pub fn worst_grade(world: &World) -> (f64, f64, usize, f64, f64) {
+    let radius = world.planet.radius;
+    let (mut worst, mut over, mut all) = (0.0f64, 0usize, 0usize);
+    let (mut at_run, mut at_rise) = (0.0f64, 0.0f64);
+    // A slip's pieces are three metres and a highway's eighty five, so
+    // "a runt piece" is every slip piece by construction: the first cut
+    // of this counted them and reported its own `SLIP_PIECE`, which is
+    // the fourth time in this repository a harness has measured a
+    // constant it set itself. What tells the two apart is WHICH of them
+    // is steep, so each carries its own worst.
+    let (mut in_slip, mut short, mut on_road) = (0usize, 0.0f64, 0.0f64);
+    for route in &world.routes {
+        for k in 0..route.line.len().saturating_sub(1) {
+            let run = route.line[k].angle_between(route.line[k + 1]) * radius;
+            if run <= 0.0 {
+                continue;
+            }
+            let rise = route.run[k + 1] - route.run[k];
+            let grade = rise.abs() / run;
+            if grade > worst {
+                worst = grade;
+                at_run = run;
+                at_rise = rise;
+            }
+            all += 1;
+            // Against the limit PLUS what the file can express. The
+            // atlas rounds a height to the centimetre, so a piece whose
+            // two ends are each out by one reads up to `0.02 / run`
+            // steeper than it was baked: `road::smooth`'s envelope
+            // BINDS on most of a road at seven per cent, which puts
+            // tens of thousands of pieces exactly at the limit with
+            // half of them rounding over it by a hundredth of a per
+            // cent. Measuring them as defects is measuring the file's
+            // own precision.
+            let slack = freeport_core::road::STEEPEST + 0.02 / run;
+            if grade > slack {
+                over += 1;
+                if k < route.slip.0 || k >= route.line.len() - route.slip.1 {
+                    in_slip += 1;
+                    short = short.max(grade);
+                } else {
+                    on_road = on_road.max(grade);
+                }
+            }
+        }
+    }
+    bevy::log::info!(
+        "of {over} pieces over the limit, {in_slip} are in a SLIP and climb at up to {:.1}%, and {} are on the HIGHWAY itself at up to {:.1}%",
+        short * 100.0,
+        over - in_slip,
+        on_road * 100.0
+    );
+    (worst, over as f64 / all.max(1) as f64, all, at_run, at_rise)
+}
+
+/// Every DEAD END on the body: a place where a road's tarmac stops and
+/// nothing of the town's own paving carries on from it.
+///
+/// A road is cut by `road::open` at EVERY settlement it passes, not only
+/// at the two it joins, because `road::waysides` grows a village
+/// wherever a road has run a day's cart. Each of those is a gap with two
+/// mouths, and `world::splice_slip` lays a slip at the route's two ENDS
+/// and nowhere else: a road through a village stops short of it on one
+/// side and starts again past it on the other, which is two dead ends
+/// that no picture of road 0 would ever show.
+///
+/// It returns how many BARE mouths there are, how many route ends a slip
+/// carries in, and the worst distance from a bare mouth to the nearest
+/// paving any town laid, metres.
+pub fn dead_ends(world: &World) -> (usize, usize, f64) {
+    let radius = world.planet.radius;
+    let (mut mouths, mut slipped, mut worst) = (0usize, 0usize, 0.0f64);
+    for (r, route) in world.routes.iter().enumerate() {
+        let ends = (route.slip.0, route.line.len() - route.slip.1);
+        for k in 0..route.line.len().saturating_sub(1) {
+            // A MOUTH is where the tarmac starts or stops: the gate the
+            // ribbon lays a piece on is `open[k] && open[k + 1]`.
+            let (a, b) = (route.open[k], route.open[k + 1]);
+            if a == b {
+                continue;
+            }
+            let at = route.line[if a { k + 1 } else { k }];
+            mouths += 1;
+            worst = worst.max(to_paving(world, at, radius));
+        }
+        // A slip does not MARK a mouth, it takes one away: its points
+        // are open and so is the highway's first piece, so there is no
+        // longer a transition there to count. Counting them among the
+        // mouths reported nought of 2,756 carried by a slip on a body
+        // whose 308 roads each carry two, which is the harness reading
+        // its own fix as a failure. What a route HAS is what is counted.
+        slipped += usize::from(ends.0 > 0) + usize::from(ends.1 < route.line.len());
+        let _ = r;
+    }
+    (mouths, slipped, worst)
+}
+
+/// How far a direction stands from the nearest paving ANY town laid,
+/// metres: nought where it is already on a street.
+fn to_paving(world: &World, at: DVec3, radius: f64) -> f64 {
+    world
+        .towns
+        .iter()
+        .map(|town| {
+            let here = at * radius - town.dir * radius;
+            let (x, z) = (here.dot(town.east), here.dot(town.north));
+            town.pieces
+                .iter()
+                .map(|p| {
+                    ((p.x - x).abs() - p.w * 0.5)
+                        .max(0.0)
+                        .hypot(((p.z - z).abs() - p.d * 0.5).max(0.0))
+                })
+                .fold(f64::INFINITY, f64::min)
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// How far the ground a COARSE chunk draws stands over a road's own
 /// tarmac: the worst and the median, in metres, along the first road.
 ///

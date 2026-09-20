@@ -476,17 +476,28 @@ fn splice_slip(route: &mut Route, planet: &Planet, town: &freeport_core::town::T
         return;
     }
     let at = route.line[first];
+    let at_h = route.run[first];
     // The road's own heading at the mouth, pointing IN toward the town,
     // so the slip leaves the highway straight rather than kinking off it.
     let along = (at - route.line[first + 1]).normalize_or(at);
-    let slip = road::slip(planet, town, at, along, radius);
+    let slip = road::slip(planet, town, at, at_h, along, radius);
     if slip.len() < 2 {
         return;
     }
     // The slip runs mouth to crossing, and a route runs town OUT, so it
     // goes on the head the other way up.
+    //
+    // Its FIRST point IS the mouth, and the route already has that
+    // point: grafted whole, the line carried the mouth TWICE, once at
+    // the slip's own height and once at the highway's, a piece of no
+    // length at all with `EMBANK` across it. Measured on the body, that
+    // was the steepest road piece there is: **-0.50 m over 0.015 m, a
+    // grade of 3355%**. The highway's own point is the one that stays,
+    // because it is the one the baked profile and the corridor under it
+    // agree about.
     let rest = first;
-    let head = slip.len();
+    let head = slip.len() - 1;
+    let slip = &slip[1..];
     let lit = route.lit.get(first).copied().unwrap_or(false);
     route.line = slip
         .iter()
