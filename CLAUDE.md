@@ -2493,6 +2493,9 @@ because a chord raised at both ends has the slope it had. Measured on
 the rough test ball, the worst a road still cuts into its own ground:
 **16.84 m clamping both ways, 1.86 m rising with one probe a piece, and
 0.92 m with three** (`a_road_rides_over_the_ground_rather_than_cutting_into_it`).
+What the probes cost is the BAKE: 322.5 s against 99.7, four
+`surface_radius` marches a piece against one, and nothing at all
+afterwards, because what the atlas carries is the answer.
 
 **A road may FILL and a town may not**, and that is the one rule the two
 do not share. A town's level is the lowest its own survey found, so a site
