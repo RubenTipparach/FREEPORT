@@ -3990,6 +3990,7 @@ from the repository root, and published:
 
 - marching cubes: https://claude.ai/code/artifact/342b7f52-5a1f-4000-94b3-1d3967b527d1
 - hex terrain: https://claude.ai/code/artifact/87905fd8-d47b-4f2e-8cc3-8c226251a799
+- road mound: https://claude.ai/artifact/FMimcpVizLa3yttJYdBPtd
 
 They are the record of a decision rather than a picture of the game: the
 marched page still builds its buildings out of brushes in a field, which

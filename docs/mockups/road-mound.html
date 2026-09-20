@@ -1,0 +1,300 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Freeport Road Mound</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="mockup.css">
+<canvas id="c"></canvas>
+<div class="cross" id="cross" hidden></div>
+<div class="walkhud" id="walkhud" hidden><b>WASD</b> walk <b>Shift</b> run <b>Space</b> jump <b>mouse</b> look <b>Esc</b> back to orbit<span id="walkstat"></span></div>
+<aside class="panel">
+  <h1>Freeport <span>road mound</span></h1>
+  <p>Where does the ground under a highway come from? Three answers on one
+  stretch of country, judged against <b>the cell the mesher is actually
+  drawing at</b>. A road only ever <b>rises</b> (<code>road::smooth</code>
+  takes the max both ways), so its profile is never under the ground and a
+  <b>mound is the only shape it ever needs</b>: there is nothing to cut.</p>
+  <div class="hud" id="hud"></div>
+  <div class="controls">
+    <select id="mode">
+      <option value="0">1. the FIELD levels the ground</option>
+      <option value="1">2. mound COPIED off the field</option>
+      <option value="2" selected>3. mound IS road geometry</option>
+    </select>
+    <select id="cell">
+      <option value="0.5">0.5 m cells</option>
+      <option value="2">2 m cells</option>
+      <option value="8">8 m cells</option>
+      <option value="16" selected>16 m cells</option>
+      <option value="32">32 m cells</option>
+    </select>
+    <select id="fill">
+      <option value="0">no minimum fill</option>
+      <option value="1">1 m minimum fill</option>
+      <option value="2" selected>2 m minimum fill</option>
+      <option value="4">4 m minimum fill</option>
+    </select>
+    <select id="batter">
+      <option value="2">1:2 batter</option>
+      <option value="3" selected>1:3 batter</option>
+      <option value="6">1:6 batter</option>
+    </select>
+    <button id="walk">Walk it</button>
+    <button id="orbit" class="on">Orbit</button>
+    <button id="section" class="on">Section</button>
+    <button id="earth" class="on">Mound in earth</button>
+    <button id="wire">Wire</button>
+  </div>
+  <div class="look">What this found, which is why it was drawn before it was built:
+    <ul>
+      <li><b>modes 1 and 2 are the same number at every cell.</b> Measured:
+      -0.14, -0.05, +0.08, +0.28, +0.08 m of terrain over the tarmac at 0.5,
+      2, 8, 16 and 32 m cells, identically. A mound whose vertices are the
+      LEVELLED field is swallowed by exactly the thing that swallows the
+      levelling, so it buys <b>nothing at all</b> against this defect</li>
+      <li><b>mode 3 holds at every cell</b>, worst -1.43 m at 32 m cells,
+      and the ground under it is <b>never levelled</b>: no corridor, no
+      sites, untouched country</li>
+      <li><b>but the mound alone is not enough.</b> At no minimum fill mode 3
+      is still swallowed at 16 and 32 m cells (+0.20 and +0.57 m). The fill
+      is what makes it hold, and it is CHEAP: 0.25 m at a 16 m cell, 0.75 m
+      at 32 m, against a raw chord error of 1.74 m and 4.50 m, because the
+      embankment already stands proud where the chord is worst</li>
+      <li>walk off the verge and down the batter: the readout says whether
+      your feet are on <b>the road's own mound</b> or on the terrain. A 1:3
+      batter is walkable and 1:2 is not, which is the number
+      <code>docs/civil-engineering.md</code> gives</li>
+    </ul></div>
+</aside>
+<script type="module">
+import { THREE, makeScene, Walker, hud } from './common.js';
+import {
+  R, RELIEF, HALF, FLAT, LIFT, SPAN, STATION, MODE,
+  dirAt, localOf, bareAt, line, ground0, profileFor, onRoad, normalAt,
+  roadTop, moundTop, reachFor, levelled, buildLattice, drawnTerrain,
+  surfaceUnder, overTarmac, WIDE,
+} from './road-mound.js';
+
+// Everything in this file is THREE: the arithmetic is `road-mound.js`, so
+// what is drawn, what the feet stand on and what the HUD measures are one
+// set of numbers and a headless run can check the claims above.
+
+const canvas = document.getElementById('c');
+const { renderer, scene, camera, controls, sun } = makeScene(canvas);
+const $ = (id) => document.getElementById(id);
+const modeSel = $('mode'), cellSel = $('cell'), fillSel = $('fill'), batterSel = $('batter');
+const walkBtn = $('walk'), orbitBtn = $('orbit'), sectionBtn = $('section');
+const earthBtn = $('earth'), wireBtn = $('wire'), hudEl = $('hud');
+
+const v3 = (d, r) => new THREE.Vector3(d.x * r, d.y * r, d.z * r);
+const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0.0 });
+const wireMat = new THREE.MeshBasicMaterial({ color: 0x6ff0ff, wireframe: true, transparent: true, opacity: 0.35 });
+
+let profile = profileFor(2), batterGrade = 1 / 3, lattice = null;
+let terrain = null, road = null, wire = null, section = null;
+
+function geom(pos, col, idx) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+// The terrain, at the lattice the mesher is drawing it at.
+function terrainMesh() {
+  const { cell, nx, nz, x0, z0, h } = lattice;
+  const pos = [], col = [], idx = [];
+  const lo = new THREE.Color(0x46573a), hi = new THREE.Color(0x71805a);
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const x = x0 + i * cell, z = z0 + j * cell, y = h[j * nx + i];
+    const p = v3(dirAt(x, z), R + y);
+    pos.push(p.x, p.y, p.z);
+    const c = lo.clone().lerp(hi, Math.max(0, Math.min(1, (y + RELIEF * 0.4) / (RELIEF * 0.8))));
+    col.push(c.r, c.g, c.b);
+  }
+  // Wound so the face points OUT of the body. `EAST = Y x UP` and
+  // `NORTH = UP x EAST`, so `EAST x NORTH = UP`: a triangle taken east then
+  // north faces the sky, and one taken north then east faces the core. The
+  // first cut had it the other way round and the whole terrain was back face
+  // culled, so the picture came back as the mound alone floating in space,
+  // which is the mockups' own left handed lot frame a second time.
+  for (let j = 0; j + 1 < nz; j++) for (let i = 0; i + 1 < nx; i++) {
+    const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+    idx.push(a, b, c, b, d, c);
+  }
+  return geom(pos, col, idx);
+}
+
+// A point of the cross section, placed on its own patch of the sphere: the
+// mockups' own chord lesson, which is that anything long enough for the
+// ground to curve under it is placed in pieces.
+function seat(k, across, s, y) {
+  const p = line[k], n = normalAt(k);
+  const x = p.x + n.x * across * s, z = p.z + n.z * across * s;
+  return v3(dirAt(x, z), R + y(across, x, z));
+}
+
+// The tarmac, and the MOUND under it in whichever way the mode asks for.
+function roadMesh(mode) {
+  const pos = [], col = [], idx = [];
+  const tar = new THREE.Color(0x24282c), paint = new THREE.Color(0xc9ccc4);
+  const skin = earthBtn.classList.contains('on')
+    ? new THREE.Color(0x6b5138)     // the diagram's own brown, so it READS as road
+    : new THREE.Color(0x5a6a42);    // or matched to the grass, to judge the join
+  const put = (p, c) => { pos.push(p.x, p.y, p.z); col.push(c.r, c.g, c.b); return pos.length / 3 - 1; };
+  // `s` is which side of the centreline this quad is on, and it flips the
+  // winding: the across vector is mirrored there, so a quad taken in the same
+  // order on both sides faces the sky on one and the core on the other.
+  const quad = (p0, p1, p2, p3, c, s = 1) => {
+    const [q0, q1, q2, q3] = s > 0 ? [p0, p1, p2, p3] : [p3, p2, p1, p0];
+    const a = put(q0, c), b = put(q1, c), d = put(q2, c), e = put(q3, c);
+    idx.push(a, b, d, a, d, e);
+  };
+  const { reach } = reachFor(profile, batterGrade);
+  const BANDS = 12;
+  const tarmacY = (kk) => (aa) => roadTop(aa, profile[kk], batterGrade);
+  for (let k = 0; k + 1 < line.length; k++) {
+    for (const s of [-1, 1]) {
+      // The surfaced road, which is the road's own in every mode.
+      for (const [a0, a1] of [[0, HALF], [HALF, FLAT]]) {
+        quad(seat(k, a0, s, tarmacY(k)), seat(k, a1, s, tarmacY(k)),
+          seat(k + 1, a1, s, tarmacY(k + 1)), seat(k + 1, a0, s, tarmacY(k + 1)), tar, s);
+      }
+      if (mode === MODE.LEVEL) continue;             // no mound at all
+      for (let j = 0; j < BANDS; j++) {
+        const a0 = FLAT + (reach - FLAT) * (j / BANDS), a1 = FLAT + (reach - FLAT) * ((j + 1) / BANDS);
+        const y = (kk) => (aa, ax, az) => mode === MODE.ROAD
+          ? moundTop(aa, profile[kk], ax, az, batterGrade)   // the ROAD's own batter
+          : levelledAcross(kk, aa, s) - 0.15;                // a copy of the field, sunk
+        quad(seat(k, a0, s, y(k)), seat(k, a1, s, y(k)),
+          seat(k + 1, a1, s, y(k + 1)), seat(k + 1, a0, s, y(k + 1)), skin, s);
+      }
+    }
+    // The centreline, dashed: three metres of paint and six of nothing.
+    if (Math.floor((k * STATION) / 9) % 2 === 0) {
+      const y = (kk) => () => roadTop(0, profile[kk], batterGrade) + 0.004;
+      quad(seat(k, -0.07, 1, y(k)), seat(k, 0.07, 1, y(k)),
+        seat(k + 1, 0.07, 1, y(k + 1)), seat(k + 1, -0.07, 1, y(k + 1)), paint);
+    }
+  }
+  return geom(pos, col, idx);
+}
+
+// What the LEVELLED field reads at a station, a metres across: mode 2's mound.
+function levelledAcross(k, across, s) {
+  const p = line[k], n = normalAt(k);
+  return levelled(profile, p.x + n.x * across * s, p.z + n.z * across * s);
+}
+
+// The SECTION: the bare ground as a line across the road at the middle of the
+// stretch, so the fill a picture cannot otherwise show is visible.
+function sectionLine() {
+  const k = line.length >> 1, pts = [], p = line[k], n = normalAt(k);
+  for (let a = -70; a <= 70; a += 1) {
+    const x = p.x + n.x * a, z = p.z + n.z * a;
+    pts.push(v3(dirAt(x, z), R + bareAt(x, z) + 0.05));
+  }
+  const g = new THREE.BufferGeometry().setFromPoints(pts);
+  return new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xf5c542 }));
+}
+
+function rebuild() {
+  const mode = +modeSel.value;
+  batterGrade = 1 / +batterSel.value;
+  profile = profileFor(+fillSel.value);
+  lattice = buildLattice(profile, +cellSel.value, mode !== MODE.ROAD);
+  for (const m of [terrain, road, wire, section]) if (m) { scene.remove(m); m.geometry.dispose(); }
+  terrain = new THREE.Mesh(terrainMesh(), mat); scene.add(terrain);
+  road = new THREE.Mesh(roadMesh(mode), mat); scene.add(road);
+  wire = new THREE.Mesh(terrain.geometry.clone(), wireMat);
+  wire.visible = wireBtn.classList.contains('on'); scene.add(wire);
+  section = sectionLine();
+  section.visible = sectionBtn.classList.contains('on'); scene.add(section);
+  report(mode);
+}
+
+function report(mode) {
+  const { worst, median } = overTarmac(profile, lattice);
+  const { reach, deep } = reachFor(profile, batterGrade);
+  const tri = (terrain.geometry.index.count + road.geometry.index.count) / 3;
+  hud(hudEl, [
+    ['terrain over the tarmac, worst', `${worst >= 0 ? '+' : ''}${worst.toFixed(2)} m`],
+    ['the same, median', `${median >= 0 ? '+' : ''}${median.toFixed(2)} m`],
+    ['the road is swallowed', worst > 0 ? 'YES' : 'no'],
+    ['the ground is levelled', mode === MODE.ROAD ? 'NO, untouched' : 'yes, a 16 m corridor'],
+    ['the mound is', mode === MODE.LEVEL ? 'not drawn'
+      : mode === MODE.COPY ? 'the field, sunk 0.15 m' : "the road's own"],
+    ['deepest fill on the stretch', `${deep.toFixed(1)} m`],
+    ['the batter reaches', `${(reach - FLAT).toFixed(1)} m out`],
+    ['triangles', tri.toLocaleString('en-US')],
+  ]);
+}
+
+for (const el of [modeSel, cellSel, fillSel, batterSel]) el.addEventListener('change', rebuild);
+sectionBtn.addEventListener('click', () => { sectionBtn.classList.toggle('on'); section.visible = sectionBtn.classList.contains('on'); });
+wireBtn.addEventListener('click', () => { wireBtn.classList.toggle('on'); wire.visible = wireBtn.classList.contains('on'); });
+earthBtn.addEventListener('click', () => { earthBtn.classList.toggle('on'); rebuild(); });
+
+// --------------------------------------------------------------- on foot --
+// The walker's ground is `surfaceUnder`, which reads the same `moundTop` the
+// mesh above is built from: the mound is DRAWN and STOOD ON from one set of
+// numbers, which is the whole of what a mound being road geometry means.
+const walker = new Walker(camera, canvas, { radius: R, sea: R - 9999 }, {
+  ground: (dir) => {
+    const { x, z } = localOf(dir);
+    return R + surfaceUnder(profile, x, z, +modeSel.value, batterGrade).y;
+  },
+  // A battered mound has no vertical face anywhere on it, so there is
+  // nothing for a body to be pushed OUT of: what stops a walker is the slope
+  // test below and nothing else. Worth saying rather than left as an empty
+  // function, because it is the reason a mound wants no collision BOXES.
+  resolve: (dir) => dir,
+  canStand: (dir) => {
+    const { x, z } = localOf(dir), mode = +modeSel.value, e = 0.4;
+    const h = (dx, dz) => surfaceUnder(profile, x + dx, z + dz, mode, batterGrade).y;
+    const gx = (h(e, 0) - h(-e, 0)) / (2 * e), gz = (h(0, e) - h(0, -e)) / (2 * e);
+    return Math.hypot(gx, gz) <= 1.19;            // `walker::STAND`, fifty degrees
+  },
+  where: (dir) => {
+    const { x, z } = localOf(dir);
+    const s = surfaceUnder(profile, x, z, +modeSel.value, batterGrade);
+    if (!s.road) return `on the TERRAIN, ${s.across.toFixed(1)} m off the centreline`;
+    return s.across <= FLAT ? 'on the road itself'
+      : `on the ROAD'S OWN MOUND, ${s.across.toFixed(1)} m out`;
+  },
+});
+
+walkBtn.addEventListener('click', () => {
+  controls.enabled = false;
+  walkBtn.classList.add('on'); orbitBtn.classList.remove('on');
+  $('cross').hidden = false; $('walkhud').hidden = false;
+  const k = line.length >> 1;
+  walker.enter(new THREE.Vector3().copy(dirAt(line[k].x, line[k].z)),
+    new THREE.Vector3().copy(dirAt(line[k + 1].x, line[k + 1].z)).sub(new THREE.Vector3().copy(dirAt(line[k].x, line[k].z))));
+});
+function toOrbit() {
+  walker.exit(); walkBtn.classList.remove('on'); orbitBtn.classList.add('on');
+  $('cross').hidden = true; $('walkhud').hidden = true;
+  controls.enabled = true;
+  controls.target.copy(v3(dirAt(0, 0), R));
+  camera.position.copy(v3(dirAt(-170, -150), R + 105));
+  controls.sync();
+}
+orbitBtn.addEventListener('click', toOrbit);
+document.addEventListener('keydown', (e) => { if (e.code === 'Escape' && walker.active) toOrbit(); });
+
+rebuild();
+toOrbit();
+
+let last = performance.now();
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = (now - last) / 1000; last = now;
+  if (walker.active) { walker.update(dt); $('walkstat').textContent = walker.stat; }
+  else controls.update();
+  sun.position.copy(camera.position).addScaledVector(new THREE.Vector3(0.4, 0.85, 0.3).normalize(), 900);
+  renderer.render(scene, camera);
+});
+</script>
