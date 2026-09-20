@@ -70,22 +70,9 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
             return (ground + port.dir * over, ground);
         }
     }
-    // The port's own WATERLINE, looking out to sea. Solved and never
-    // hand aimed, which is this file's whole rule: two cameras pointed
-    // at this world's night sea by hand both landed on dry land, and
-    // the design file has carried a note ever since that the missing
-    // tool is exactly this.
     if let Some(up) = args.shore {
-        match shore(world) {
-            Some((at, out)) => {
-                let sea = world.sea.radius;
-                bevy::log::info!(
-                    "the shore camera stands {up:.1} m over the waterline {:.0} m from the port",
-                    at.angle_between(world.towns[0].dir) * world.planet.radius
-                );
-                let eye = at * (sea + up);
-                return (eye, eye + out * 1_000.0);
-            }
+        match waterline(world, up) {
+            Some(pair) => return pair,
             None => bevy::log::warn!("no shore within reach of the port to aim at"),
         }
     }
@@ -154,6 +141,31 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
         None => (eye, look),
     }
 }
+/// Where a camera stands to photograph the SHEET: out on the water off
+/// the port's own shore, `up` metres over the sea, looking out to it.
+///
+/// Its own function rather than an arm of `aim`, because `aim` is a
+/// chain of camera cases and each one that grows takes the whole of it
+/// over this project's hundred line limit. The list `shape.py` prints is
+/// work and never a reason to raise the limit.
+fn waterline(world: &World, up: f64) -> Option<(DVec3, DVec3)> {
+    let (at, out) = shore(world)?;
+    let sea = world.sea.radius;
+    // OUT on the water and not at the last dry step. The waterline is on
+    // the BEACH, so an eye a fraction of a metre over it is an eye under
+    // the beach's own crest and the frame comes back as sand: measured
+    // at 0.4 m, the lower two thirds of it is dune. `SHORE_OUT` puts the
+    // eye where a wader stands, which is where the owner's own picture
+    // of this was taken from.
+    let wet = (at + out * (SHORE_OUT / world.planet.radius)).normalize();
+    let eye = wet * (sea + up);
+    bevy::log::info!(
+        "the shore camera stands {up:.1} m over the sea, {SHORE_OUT:.0} m out from a waterline {:.0} m from the port",
+        at.angle_between(world.towns[0].dir) * world.planet.radius
+    );
+    Some((eye, eye + out * 1_000.0))
+}
+
 /// How far out to look for the sea, and how finely. Three kilometres in
 /// thirty metre steps: the port stands on a shore by construction
 /// (`town::coastal` is why it is the biggest settlement on the body), so
@@ -161,6 +173,9 @@ pub(crate) fn aim(world: &World, args: &Args) -> (DVec3, DVec3) {
 /// width.
 const SHORE_REACH: f64 = 3_000.0;
 const SHORE_STEP: f64 = 30.0;
+/// How far PAST the waterline the eye stands, metres: out on the water,
+/// which is where a picture of the sheet is taken from.
+const SHORE_OUT: f64 = 60.0;
 
 /// The port's own WATERLINE and which way the open sea is: the nearest
 /// point on any bearing where the ground falls under the sea.
