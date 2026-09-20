@@ -33,7 +33,7 @@ pub const HALF_STREET: f64 = STREET / 2.0;
 /// drawn over. A lane is 2.75 m and a car 1.6 across, so two passing
 /// cars have better than a metre between them; the pavement is 1.5 m
 /// and a person 0.45.
-const CAR_LANE: f64 = LANE * 0.5;
+pub const CAR_LANE: f64 = LANE * 0.5;
 const FOOT_LANE: f64 = LANE + WALK * 0.5;
 /// How tightly each turns a corner, metres. A fillet rather than a
 /// vertex: an agent walking the offset polyline straight would turn

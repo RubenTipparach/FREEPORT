@@ -266,53 +266,24 @@ pub fn drive_car(
     controls: Controls,
     script: Script,
     here: crate::world::Surface,
+    crowds: Option<Res<Crowds>>,
     mut thefts: ResMut<Thefts>,
-    mut eye: ResMut<Eye>,
-    mut status: ResMut<Status>,
+    mut dash: Dash,
     mut auto: Local<Auto>,
 ) {
     let Some(k) = thefts.at_wheel else { return };
-    let keys = &controls.keys;
-    let axis =
-        |neg: KeyCode, pos: KeyCode| (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f64;
-    let mut input = Drive {
-        throttle: axis(KeyCode::KeyS, KeyCode::KeyW),
-        // A is LEFT, and left is a turn toward the car's own port side,
-        // which is the negative of the right hand axis the heading turns
-        // about. Reading it the other way steered into the kerb.
-        steer: axis(KeyCode::KeyD, KeyCode::KeyA),
-        brake: keys.pressed(KeyCode::Space),
-    };
-    let mut dt = controls.time.delta_secs_f64();
-    // A scripted drive holds the throttle and steps a fixed sixtieth,
-    // which is `--walk`'s own rule and for the same reason: the frame's
-    // own delta on a software rasteriser is most of a second and a car
-    // that moves nine metres a frame measures nothing.
-    let run = auto.left.get_or_insert(script.args.drive);
+    let (input, dt, steps) = pedals(&controls, &script, &mut auto);
+    // The OTHER CARS, as boxes, so the one with somebody at the wheel is
+    // stopped by them. They are gathered BEFORE the field is borrowed
+    // and live as long as it does, which is what lets a `Built` carry
+    // the town's own walls and something that moves in one list.
+    let others = around(&crowds, &here, &thefts, k, controls.time.elapsed_secs_f64());
+    let standing = thefts.cars[k].car.dir;
+    let foot = thefts.cars[k].car.foot;
+    let mut field = here.underfoot(standing * foot, 12.0);
+    field.blocks.extend(others.iter());
     let car = &mut thefts.cars[k].car;
-    let mut steps = 1;
-    if *run > 0 {
-        // A scripted drive goes SOMEWHERE: the nearest settlement that
-        // is not the one it is standing in. Driving straight ahead
-        // measures the car and says nothing about whether the world has
-        // anywhere to drive TO, which is what the owner asked for.
-        input = Drive {
-            throttle: 1.0,
-            ..Default::default()
-        };
-        dt = 1.0 / 60.0;
-        // A whole SECOND of driving a rendered frame, in sixtieths. A
-        // frame of this world on a software rasteriser is most of a
-        // second, so a scripted drive stepped one sixtieth a frame
-        // covers 480 m in half an hour of rendering, and the nearest
-        // settlement is nine kilometres off: the flag could photograph
-        // a car and never a JOURNEY. The step stays a sixtieth, which
-        // is what keeps the drive the same drive on any machine.
-        steps = SUB_STEPS;
-        *run -= 1;
-    }
     let was = car.dir;
-    let field = here.underfoot(car.dir * car.foot, 12.0);
     // A car floats on nothing: the sea is where a stolen car stops, so
     // the bounds it drives against carry no water to be held up by.
     let bounds = Bounds {
@@ -341,7 +312,7 @@ pub fn drive_car(
     if steps > 1 {
         auto.say(car, was, script.goal.0, here.world().planet.radius);
     }
-    status.walker = format!(
+    dash.status.walker = format!(
         "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel{}",
         car.foot - here.world().planet.radius,
         car.speed.abs() * 3.6,
@@ -359,7 +330,50 @@ pub fn drive_car(
     // second ago in every picture the flag takes.
     let theft = &mut thefts.cars[k];
     let swing = theft.swung(dt * steps as f64);
-    eye.0 = WorldPos(here.centre() + chase(&theft.car, swing));
+    dash.eye.0 = WorldPos(here.centre() + chase(&theft.car, swing));
+}
+
+/// What the driver asked for this frame, how long the frame is and how
+/// many sub steps of it to take: the KEYS, or the scripted drive's own
+/// held throttle where one is running.
+///
+/// Its own function because reading the player and reading the flag are
+/// two things, and `drive_car` was over this project's own hundred lines
+/// carrying both.
+///
+/// A scripted drive holds the throttle and steps a fixed sixtieth, which
+/// is `--walk`'s own rule and for the same reason: the frame's own delta
+/// on a software rasteriser is most of a second and a car that moves
+/// nine metres a frame measures nothing. It takes a whole SECOND of
+/// driving per rendered frame, because a drive stepped one sixtieth a
+/// frame covers 480 m in half an hour of rendering and the nearest
+/// settlement is nine kilometres off: the flag could photograph a car
+/// and never a JOURNEY.
+fn pedals(controls: &Controls, script: &Script, auto: &mut Auto) -> (Drive, f64, usize) {
+    let keys = &controls.keys;
+    let axis =
+        |neg: KeyCode, pos: KeyCode| (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f64;
+    let run = auto.left.get_or_insert(script.args.drive);
+    if *run > 0 {
+        *run -= 1;
+        return (
+            Drive {
+                throttle: 1.0,
+                ..Default::default()
+            },
+            1.0 / 60.0,
+            SUB_STEPS,
+        );
+    }
+    let input = Drive {
+        throttle: axis(KeyCode::KeyS, KeyCode::KeyW),
+        // A is LEFT, and left is a turn toward the car's own port side,
+        // which is the negative of the right hand axis the heading turns
+        // about. Reading it the other way steered into the kerb.
+        steer: axis(KeyCode::KeyD, KeyCode::KeyA),
+        brake: keys.pressed(KeyCode::Space),
+    };
+    (input, controls.time.delta_secs_f64(), 1)
 }
 
 /// How long a scripted car has to have made no ground before it is
@@ -555,6 +569,75 @@ impl Auto {
             brake: false,
         }
     }
+}
+
+/// How far round a car the other cars are gathered as colliders,
+/// metres. Its own outline reaches 2.05 m and another car is 4.1 m long,
+/// so anything past this cannot be met inside one frame at any speed a
+/// car goes; and the list is the few a built town has out anyway.
+const CAR_REACH: f64 = 30.0;
+
+/// Every OTHER car near the one being driven, as the box each is: the
+/// traffic still on the rails, and any the player has parked.
+///
+/// The rails cars are asked the same `Crowds::cars_near` a theft asks,
+/// so a car that is collided with is at exactly where it is drawn: a
+/// second answer about where a car is would be a body stopped by
+/// nothing a player can see.
+///
+/// What is MISSING and is named rather than hidden: a car on the rails
+/// does not know this car is there. It is a closed form function of its
+/// town and the clock, and knowing would mean state, which is the one
+/// thing rails do not have. So the player is stopped by the traffic and
+/// the traffic drives on through the player.
+fn around(
+    crowds: &Option<Res<Crowds>>,
+    here: &crate::world::Surface,
+    thefts: &Thefts,
+    driving: usize,
+    now: f64,
+) -> Vec<freeport_core::field::Block> {
+    let radius = here.world().planet.radius;
+    let at = thefts.cars[driving].car.dir * thefts.cars[driving].car.foot;
+    let mut out = Vec::new();
+    if let Some(crowds) = crowds {
+        if crowds.on_body(here.body()) {
+            let built = here.fabric.standing();
+            let town = crowds.cars_near(radius, at, CAR_REACH, now, &built);
+            // And the ones out on the ROADS, which is where a car at
+            // 160 km/h actually meets another one.
+            let road = crowds.road_cars_near(here.world(), at, CAR_REACH, now);
+            for (_, _, place, fwd) in town.into_iter().chain(road) {
+                out.push(driver::car_box(place, fwd, place.normalize_or(DVec3::Y)));
+            }
+        }
+    }
+    // And the ones the player has already taken and left standing: a car
+    // you got out of is a car that is still there, so it is still
+    // something to drive into.
+    for (i, theft) in thefts.cars.iter().enumerate() {
+        if i == driving {
+            continue;
+        }
+        let car = &theft.car;
+        let place = car.dir * car.foot;
+        if place.distance(at) < CAR_REACH {
+            out.push(driver::car_box(place, car.fwd, car.dir));
+        }
+    }
+    out
+}
+
+/// What a frame at the wheel REPORTS: where the eye ends up, and the
+/// line of text that says what the car is doing.
+///
+/// One thing, because they are the two things this system WRITES and a
+/// system with eight arguments is a system missing a struct, which is
+/// this project's own rule.
+#[derive(SystemParam)]
+pub struct Dash<'w> {
+    pub eye: ResMut<'w, Eye>,
+    pub status: ResMut<'w, Status>,
 }
 
 /// What a SCRIPTED drive is: the flags it was given and where it is

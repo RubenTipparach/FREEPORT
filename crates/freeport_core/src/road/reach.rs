@@ -130,10 +130,29 @@ const SLIP_PIECE: f64 = 3.0;
 /// their own direction without looping.
 const EASE: f64 = 0.55;
 
+/// How much CLEARANCE a slip is laid with over the analytic surface it
+/// reads, metres, at its highway end.
+///
+/// `Planet::surface` is the relief with the sites applied and the
+/// mesher contours the FIELD, which carries the volumetric term
+/// wherever a site has not faded it: measured on the port's own slip,
+/// the drawn ground stood **0.34 m** over a tarmac laid at
+/// `ribbon::LIFT` alone. Half a metre clears that.
+///
+/// It was `road::EMBANK`, and that is a different number for a
+/// different reason. A slip's first point IS the highway's own mouth
+/// station, where the ground it reads is the corridor level the
+/// highway's tarmac is already laid on, so everything the slip adds
+/// past the tarmac's own lift is a STEP at the junction. At half a
+/// metre that step is half a metre and nothing has ever measured it;
+/// when `EMBANK` went to two metres to carry the road's own MOUND, it
+/// would have become two, which is a kerb a car cannot drive off.
+const SLIP_CLEAR: f64 = 0.5;
+
 /// What share of the slip the LIFT is tapered over, at the town end.
 ///
-/// A slip rides the highway's own `EMBANK` for the rest of it, and the
-/// reason is measured: the slip reads `Planet::surface`, which is the
+/// A slip rides `SLIP_CLEAR` for the rest of it, and the reason is
+/// measured: the slip reads `Planet::surface`, which is the
 /// ANALYTIC relief, and the mesher contours the field, which carries
 /// the volumetric term wherever a site has not faded it. On the port's
 /// own slip the drawn ground stands **0.34 m** over a tarmac laid at
@@ -141,7 +160,9 @@ const EASE: f64 = 0.55;
 /// was laid on and the picture showed its own curved SHADOW crossing an
 /// empty field. An embankment is what a road already has for exactly
 /// this: the ground beside it is LOWER than the road, so no chord
-/// between two lattice columns can close over it.
+/// between two lattice columns can close over it. It is a clearance of
+/// its own rather than the road's whole embankment, for the reason
+/// written at `SLIP_CLEAR`.
 ///
 /// The taper is over the last quarter and never the whole slip, because
 /// a lift that falls linearly from the mouth is under the burial for
@@ -264,7 +285,7 @@ pub fn slip(
             // centimetres over the last quarter, which is the 10 cm lip
             // this project's design gave as the reason not to run
             // tarmac into a town: a ramp rather than a step.
-            let high = super::ribbon::LIFT + super::EMBANK;
+            let high = super::ribbon::LIFT + SLIP_CLEAR;
             let ease = ((1.0 - t) / TAPER).clamp(0.0, 1.0);
             let lift = crate::town::LIFT + (high - crate::town::LIFT) * ease;
             (dir, ground + lift - super::ribbon::LIFT)

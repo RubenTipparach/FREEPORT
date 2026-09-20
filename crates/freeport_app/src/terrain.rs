@@ -455,15 +455,32 @@ pub fn chunk_mapping(
     sea: f64,
     shape: Option<biome::Shape>,
 ) -> impl Fn(Vec3) -> Vertex {
+    let map = ground_mapping(corner, sea, shape);
+    move |p: Vec3| map(corner + p.as_dvec3())
+}
+
+/// The same, from a planet relative WORLD position rather than from a
+/// chunk's own local one: what a road's MOUND is mapped with, since its
+/// triangles are in a stretch's frame and not in a chunk's.
+///
+/// `anchor` is any point near them, and it is what is reduced modulo the
+/// tile: the REDUCTION has to be constant over a mesh and the offset
+/// from it continuous, or a triangle straddling a tile boundary would
+/// have its coordinate wrap inside it, and a GPU picks its mip level off
+/// that coordinate's derivative. A stretch is 5.5 km across, so an `f32`
+/// of the offset holds a third of a millimetre.
+pub fn ground_mapping(
+    anchor: DVec3,
+    sea: f64,
+    shape: Option<biome::Shape>,
+) -> impl Fn(DVec3) -> Vertex {
     let tile = GROUND_TILE as f64;
-    let anchor = DVec3::new(
-        corner.x.rem_euclid(tile),
-        corner.y.rem_euclid(tile),
-        corner.z.rem_euclid(tile),
+    let base = DVec3::new(
+        anchor.x.rem_euclid(tile),
+        anchor.y.rem_euclid(tile),
+        anchor.z.rem_euclid(tile),
     );
-    move |p: Vec3| {
-        let local = p.as_dvec3();
-        let at = corner + local;
+    move |at: DVec3| {
         let over = at.length() - sea;
         // The climate at this vertex, so the ground a walker stands on is
         // the same biome the body's chart paints from orbit. It is asked
@@ -478,7 +495,7 @@ pub fn chunk_mapping(
             |s| s.climate(at.normalize_or(DVec3::Y), over),
         );
         Vertex {
-            map: (anchor + local).as_vec3(),
+            map: (base + (at - anchor)).as_vec3(),
             over_sea: over as f32,
             temp: weather.temp as f32,
             wet: weather.wet as f32,

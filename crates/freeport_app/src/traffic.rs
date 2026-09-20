@@ -22,6 +22,7 @@ use bevy::prelude::*;
 use freeport_core::dc::DcMesh;
 use freeport_core::figure;
 use freeport_core::pos::WorldPos;
+use freeport_core::road::commute;
 use freeport_core::town::{self, lot_frame, Town};
 use freeport_core::traffic::{Kind, Traffic};
 
@@ -197,6 +198,11 @@ pub struct Crowds {
     home: usize,
     /// A town of the world, and everybody out on it.
     towns: Vec<(Town, Traffic)>,
+    /// And everybody out on the ROADS between them, per road, in the
+    /// world's own order. A commuter is a number until something asks
+    /// where it is, which is the same rule a townsman keeps: this body
+    /// carries six thousand of them and draws a dozen.
+    roads: Vec<Vec<commute::Commuter>>,
     /// Per tint: the body, then the two legs.
     folk: Vec<[Handle<Mesh>; 3]>,
     /// Per tint: the car, less its lamps.
@@ -262,6 +268,50 @@ impl Crowds {
         out
     }
 
+    /// Every car out on a ROAD within `reach` of a place, as the road
+    /// and car it is, its tint, where it stands and which way it points.
+    ///
+    /// Every commuter on the body is asked, because asking one is a
+    /// lerp and two normalizes and there are six thousand of them: a
+    /// reject by road would want the stretch middles `roads::Network`
+    /// keeps, which is a second index for a walk that does not need
+    /// one.
+    pub fn road_cars_near(
+        &self,
+        world: &crate::world::World,
+        here: DVec3,
+        reach: f64,
+        now: f64,
+    ) -> Vec<((usize, usize), usize, DVec3, DVec3)> {
+        let radius = world.planet.radius;
+        let mut out = Vec::new();
+        for (r, cars) in self.roads.iter().enumerate() {
+            let Some(route) = world.routes.get(r) else {
+                continue;
+            };
+            let course = route.course();
+            for (k, car) in cars.iter().enumerate() {
+                let Some((at, fwd)) = commute::spot(course, radius, car, now) else {
+                    continue;
+                };
+                if at.distance(here) > reach {
+                    continue;
+                }
+                out.push(((r, k), car.id as usize % TINTS, at, fwd));
+            }
+        }
+        out
+    }
+
+    /// How far one of them has COME, metres, which is what turns its
+    /// wheels: its rate is in centreline points and a point is a piece.
+    pub fn road_car_gone(&self, road: usize, car: usize, now: f64) -> f64 {
+        self.roads
+            .get(road)
+            .and_then(|cars| cars.get(car))
+            .map_or(0.0, |c| c.rate.abs() * now * freeport_core::road::PIECE)
+    }
+
     /// One car in the world, with whatever marker the caller wants on
     /// it. The traffic's own cars and a STOLEN one are the same mesh in
     /// the same material with the same lamps hung off it, so there is
@@ -306,15 +356,26 @@ impl Crowds {
         self.home == body
     }
 
-    /// How many people and cars the built towns turn out in total.
-    pub fn count(&self) -> (usize, usize) {
+    /// How many people and cars the built towns turn out, and how many
+    /// cars are out on the ROADS between every settlement on the body.
+    ///
+    /// The road count is over the whole world and the town counts are
+    /// over what is BUILT, which is the honest pair rather than a tidy
+    /// one: a town turns nobody out until its buildings are there to
+    /// walk between, and a road carries its commuters from the first
+    /// frame because a road is drawn wherever the eye goes.
+    pub fn count(&self) -> (usize, usize, usize) {
         let of = |k: Kind| {
             self.towns
                 .iter()
                 .map(|(_, t)| t.agents.iter().filter(|a| a.kind == k).count())
                 .sum()
         };
-        (of(Kind::Foot), of(Kind::Car))
+        (
+            of(Kind::Foot),
+            of(Kind::Car),
+            self.roads.iter().map(Vec::len).sum(),
+        )
     }
 }
 
@@ -330,18 +391,39 @@ impl Crowds {
 pub fn turn_out(
     commands: &mut Commands,
     home: usize,
-    towns: &[Town],
+    world: &crate::world::World,
     seed: u32,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
     let person = figure::person();
     let car = figure::car();
+    let radius = world.planet.radius;
     let crowds = Crowds {
         home,
-        towns: towns
+        towns: world
+            .towns
             .iter()
             .map(|t| (t.clone(), Traffic::of(t, seed)))
+            .collect(),
+        // And the ROADS between them. A road's own length is summed off
+        // the refined centreline it is actually driven on rather than
+        // off the waypoints it was routed over: the curves fitted at
+        // every bend make the built road the shorter of the two, and
+        // how many cars are out on it is a fact about the road that is
+        // there.
+        roads: world
+            .routes
+            .iter()
+            .enumerate()
+            .map(|(r, route)| {
+                let metres: f64 = route
+                    .line
+                    .windows(2)
+                    .map(|w| w[0].distance(w[1]) * radius)
+                    .sum();
+                commute::plan(r, route.line.len(), metres, seed)
+            })
             .collect(),
         folk: (0..TINTS)
             .map(|k| {
@@ -389,12 +471,15 @@ pub fn turn_out(
             ..default()
         }),
     };
-    let (folk, cars) = crowds.count();
+    let (folk, cars, out) = crowds.count();
     info!(
-        "{} towns turn out {folk} on foot and {cars} driving, of which the nearest {} and {} are entities",
+        "{} towns turn out {folk} on foot and {cars} driving, of which the nearest {} and {} are entities, and {out} cars are out on the {} roads between them, of which the nearest {} within {:.0} m are",
         crowds.towns.len(),
         MOST_FOLK,
-        MOST_CARS
+        MOST_CARS,
+        crowds.roads.len(),
+        MOST_ROAD_CARS,
+        ROAD_REACH
     );
     commands.insert_resource(crowds);
 }
@@ -543,6 +628,115 @@ pub fn drive_traffic(
         }
         spawn(&mut commands, &crowds, frame, centre, radius, key, now);
     }
+}
+
+/// Which ROAD and which of its cars an entity is. A road's own index in
+/// the world's list, which never moves, and the car's in that road's
+/// own: a commuter is a function of those two and the clock, so there is
+/// nothing else to carry.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub struct Commuting(pub usize, pub usize);
+
+/// How far from the eye a car out on a road is an entity, metres, and
+/// how many are ever out at once.
+///
+/// Further than a town's `REACH`, because the country is open and a car
+/// coming the other way on a straight is seen a long way off; fewer of
+/// them, because a road carries a car every ten kilometres and the eye
+/// is never near many. Neither is a budget anybody has to spend: the
+/// nearest dozen of six thousand is what the function is asked about.
+const ROAD_REACH: f64 = 450.0;
+const MOST_ROAD_CARS: usize = 12;
+
+/// The cars out on the ROADS near the eye: spawned as they come within
+/// reach, despawned as they leave, and put where the clock says they are
+/// every frame.
+///
+/// It is `drive_traffic`'s own shape with one less thing in it, because
+/// a road has no pavement and so no pedestrians: what a road carries is
+/// cars. The same `Crowds::spawn_car` builds one, so a car on a highway
+/// and a car in a street are the same mesh in the same material with the
+/// same lamps, which is what keeps there being one place that knows how
+/// a car is put together.
+///
+/// What is MISSING, named rather than hidden: a commuter cannot be
+/// STOLEN. A theft names its car by the town and agent it was, and a car
+/// on a road is neither; giving it a kind is a change to what a `Theft`
+/// IS, which is more than a road's traffic is worth until somebody wants
+/// to hitch a ride.
+pub fn drive_highway(
+    mut commands: Commands,
+    here: Here,
+    crowds: Res<Crowds>,
+    mut out: Query<(Entity, &Commuting, &mut Transform)>,
+) {
+    let (eye, frame, ground, time, planets) = (
+        &here.eye,
+        &here.frame,
+        &here.ground,
+        &here.time,
+        &here.planets,
+    );
+    // A road's traffic belongs to ONE body, which is the crowd's own
+    // rule: off it, everybody goes home rather than being redrawn
+    // against another planet's radius and centre.
+    if planets.active != crowds.home {
+        for (e, _, _) in &out {
+            commands.entity(e).despawn();
+        }
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    let centre = ground.1;
+    let here_at = eye.0 .0 - centre;
+    let mut near = crowds.road_cars_near(&ground.0, here_at, ROAD_REACH, now);
+    near.sort_by(|a, b| {
+        a.2.distance(here_at)
+            .total_cmp(&b.2.distance(here_at))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    near.truncate(MOST_ROAD_CARS);
+    // A dozen at most, so which of them an entity is is a scan and not
+    // an index: sorting the near set by key to binary search it would be
+    // a sort a frame for twelve rows.
+    for (e, who, mut tf) in &mut out {
+        let key = (who.0, who.1);
+        let Some((_, _, place, fwd)) = near.iter().find(|c| c.0 == key) else {
+            commands.entity(e).despawn();
+            continue;
+        };
+        tf.translation = frame.0.local(WorldPos(centre + *place));
+        tf.rotation = facing(*place, *fwd);
+        commands
+            .entity(e)
+            .insert(Travelled(crowds.road_car_gone(who.0, who.1, now)));
+    }
+    let have: Vec<(usize, usize)> = out.iter().map(|(_, w, _)| (w.0, w.1)).collect();
+    for (key, tint, place, fwd) in near {
+        if have.contains(&key) {
+            continue;
+        }
+        crowds.spawn_car(
+            &mut commands,
+            tint,
+            Transform {
+                translation: frame.0.local(WorldPos(centre + place)),
+                rotation: facing(place, fwd),
+                scale: Vec3::ONE,
+            },
+            Commuting(key.0, key.1),
+        );
+    }
+}
+
+/// Which way a car on a road is turned: the figure's own frame, x to its
+/// right, y the way it is going and z up, which is the same right handed
+/// basis a town's traffic and a stolen car are both placed in.
+fn facing(at: DVec3, fwd: DVec3) -> Quat {
+    let up = at.normalize_or(DVec3::Y);
+    let f = (fwd - up * fwd.dot(up)).normalize_or(DVec3::X);
+    let right = f.cross(up).normalize_or(DVec3::Z);
+    Quat::from_mat3(&Mat3::from_cols(right.as_vec3(), f.as_vec3(), up.as_vec3()))
 }
 
 /// Which agents are near enough to be worth an entity: the nearest

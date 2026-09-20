@@ -197,12 +197,131 @@ fn ring() -> [DVec2; 12] {
 /// only: up and down are the other two rules' business.
 pub fn resolve(field: &dyn Density, bounds: &Bounds, to: DVec3, foot: f64) -> DVec3 {
     let heights = [STEP + 0.08, 1.1, HEAD - 0.08];
-    resolve_body(field, bounds, to, foot, DVec3::X, &ring(), &heights)
+    let shape = Shape {
+        ring: &ring(),
+        heights: &heights,
+    };
+    resolve_body(field, bounds, to, foot, DVec3::X, shape)
 }
 
-/// The same push, for a body of any SHAPE: `ring` is where its own points
-/// stand in its tangent frame, right and forward in metres, and `heights`
-/// how far over its feet they are tested.
+/// What a BODY is to the collider: the ring of points round it, right
+/// and forward in its own tangent frame, and the heights over its feet
+/// they are tested at.
+///
+/// One struct rather than two slices, because the two are what a body IS
+/// and every function here that takes one takes the other; handing them
+/// separately took the car's own collision over this project's own limit
+/// on a signature.
+#[derive(Clone, Copy)]
+pub struct Shape<'a> {
+    pub ring: &'a [DVec2],
+    pub heights: &'a [f64],
+}
+
+/// The way OUT of whatever a point is inside, or nothing where it stands
+/// in air or on ground a body can STAND on.
+///
+/// It is the one place that decides what a WALL is, which is what lets
+/// `resolve_body` push out of one and `swept` refuse a step through one
+/// without the two being able to disagree about what they are looking
+/// at. `up` is the body's own local up.
+///
+/// The `STAND` test is the whole of it: a body walks and drives over
+/// anything it can stand on and is stopped by a slab over its head by
+/// `ceiling` rather than by being shoved sideways out from under it. It
+/// was `push.length() < 0.25`, which is that rule at fourteen and a half
+/// degrees rather than fifty, and a CAR is 4.1 m long, so its ring
+/// reaches 2.05 m forward and one in four was already a wall to it: ten
+/// seconds up a one in two hill threw it 164 m back DOWN the slope.
+fn out_of(field: &dyn Density, p: DVec3, up: DVec3) -> Option<(DVec3, f64)> {
+    let dens = field.at(p);
+    if dens <= 0.0 {
+        return None;
+    }
+    let grad = gradient(field, p);
+    let len = grad.length();
+    if len < 1e-6 {
+        return None;
+    }
+    let lean = -grad.dot(up) / len;
+    if lean.abs() > STAND {
+        return None;
+    }
+    let mut push = -grad / len;
+    push -= up * push.dot(up);
+    if push.length() < 1e-6 {
+        return None;
+    }
+    // The gradient is a difference over twice the step; the field is a
+    // distance where it matters, so the way out is the density over the
+    // slope, plus a little.
+    Some((push, dens / (len / (2.0 * EPS)) + CLEAR))
+}
+
+/// Whether a body's own outline passes THROUGH a wall on its way from
+/// one direction to another: the SWEPT test, which is what stops a fast
+/// body tunnelling.
+///
+/// A push out of a signed distance box goes out of the NEAREST face, and
+/// once a point is past the box's own mid plane the nearest face is the
+/// FAR one: measured on a 0.35 m wall, a car whose bumper landed 0.03 m
+/// past the middle was pushed 0.15 m FORWARD, out the other side, and
+/// drove on at 160 km/h without so much as slowing. No sub step short of
+/// half the wall's thickness fixes that, and nothing knows how thin the
+/// next wall is.
+///
+/// So a step whose sweep crosses a wall is REFUSED rather than resolved.
+/// The two ENDS are left out: a body that is touching a wall it is
+/// sliding along is clear by `CLEAR` at both, and refusing on the
+/// endpoints would glue it to the first wall it brushed, which is this
+/// project's own oldest collision defect.
+pub fn swept(
+    field: &dyn Density,
+    bounds: &Bounds,
+    span: (DVec3, DVec3),
+    foot: f64,
+    fwd: DVec3,
+    shape: Shape<'_>,
+) -> bool {
+    let (from, to) = span;
+    let gone = (to - from).length() * bounds.radius;
+    if !gone.is_finite() || gone <= SWEEP {
+        return false;
+    }
+    let steps = ((gone / SWEEP).ceil() as usize).min(MOST_SWEEP);
+    (1..steps).any(|k| {
+        let t = k as f64 / steps as f64;
+        let d = from.lerp(to, t).normalize_or(to);
+        let (f, r) = frame_of(d, fwd);
+        shape.heights.iter().any(|h| {
+            shape
+                .ring
+                .iter()
+                .any(|off| out_of(field, d * (foot + h) + r * off.x + f * off.y, d).is_some())
+        })
+    })
+}
+
+/// How finely a sweep is sampled, metres, and a cap on the count.
+///
+/// A tenth of a metre is well inside `model::WALL`, which is 0.35 m and
+/// the thinnest thing a body ever has to be stopped by; the cap is what
+/// keeps a garbage step from hanging a frame, which is this project's
+/// rule about guarding an expression where it can leave its domain.
+const SWEEP: f64 = 0.1;
+const MOST_SWEEP: usize = 64;
+
+/// A body's own tangent frame at a direction: forward as it was handed
+/// in, squared to the local up, and right across it.
+fn frame_of(d: DVec3, fwd: DVec3) -> (DVec3, DVec3) {
+    let pole = if d.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+    let f = (fwd - d * fwd.dot(d)).normalize_or(pole.cross(d).normalize());
+    (f, f.cross(d).normalize())
+}
+
+/// The same push, for a body of any SHAPE (`Shape`: where its own points
+/// stand in its tangent frame and how far over its feet they are
+/// tested).
 ///
 /// A walker is a circle of one radius and a car is four metres long and
 /// one and a half wide, so one ring cannot serve both: a circle round a
@@ -216,60 +335,23 @@ pub fn resolve_body(
     to: DVec3,
     foot: f64,
     fwd: DVec3,
-    ring: &[DVec2],
-    heights: &[f64],
+    shape: Shape<'_>,
 ) -> DVec3 {
     let mut d = to;
     for _ in 0..3 {
-        // The body's own axes on the sphere: forward as it was handed in,
-        // squared to the local up, and right across it.
-        let pole = if d.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
-        let f = (fwd - d * fwd.dot(d)).normalize_or(pole.cross(d).normalize());
-        let r = f.cross(d).normalize();
+        let (f, r) = frame_of(d, fwd);
         let mut pushed = false;
-        for &h in heights {
-            for off in ring {
+        for &h in shape.heights {
+            for off in shape.ring {
                 let p = d * (foot + h) + r * off.x + f * off.y;
-                let dens = field.at(p);
-                if dens <= 0.0 {
+                // What a WALL is, and the one place it is decided: a
+                // body walks and drives over anything it can STAND on,
+                // and `out_of` is what `swept` asks too, so a step
+                // refused and a push applied cannot be looking at two
+                // different worlds.
+                let Some((push, out)) = out_of(field, p, d) else {
                     continue;
-                }
-                let grad = gradient(field, p);
-                let len = grad.length();
-                if len < 1e-6 {
-                    continue;
-                }
-                // The gradient is a difference over twice the step; the
-                // field is a distance where it matters, so the way out is
-                // the density over the slope, plus a little.
-                let out = dens / (len / (2.0 * EPS)) + CLEAR;
-                // GROUND rather than a wall, or a CEILING rather than
-                // one: a body walks and drives over anything it can
-                // STAND on, and is stopped by a slab over its head by
-                // `ceiling` rather than by being shoved sideways out
-                // from under it. It is the same `STAND` `can_stand`
-                // reads, asked of the surface's own normal, so a body
-                // is pushed out of exactly what it cannot stand on.
-                //
-                // It was `push.length() < 0.25`, which is that rule at
-                // fourteen and a half degrees rather than fifty. A
-                // WALKER never met the difference: it is 35 cm across,
-                // so ground rising its own 60 cm step within 35 is a
-                // slope of 1.7 and far past `STAND` anyway. A CAR is
-                // 4.1 m long, so its ring reaches 2.05 m forward and
-                // one in four was already a wall to it: measured, ten
-                // seconds up a one in two hill threw it 164 m back
-                // DOWN the slope. That is the owner's "my car cannot
-                // drive up slopes".
-                let lean = -grad.dot(d) / len;
-                if lean.abs() > STAND {
-                    continue;
-                }
-                let mut push = -grad / len;
-                push -= d * push.dot(d);
-                if push.length() < 1e-6 {
-                    continue;
-                }
+                };
                 d = (d + push * (out / bounds.radius)).normalize();
                 pushed = true;
             }

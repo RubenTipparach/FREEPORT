@@ -360,8 +360,16 @@ fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
             continue;
         }
         let frame = ribbon::frame(l, r, planet.radius);
-        let whole = vec![(0.0, 1.0); l.len().saturating_sub(1)];
-        let m = ribbon::stretch(&frame, l, r, o, t, planet.radius);
+        let course = ribbon::Course {
+            line: l,
+            run: r,
+            open: o,
+            graded: o,
+            lit: t,
+        };
+        let m = ribbon::stretch(&frame, course, planet.radius, &|dir| {
+            levelled.surface(dir).0
+        });
         assert!(m.solids.is_empty(), "tarmac collides with nothing");
         // The road SURFACE alone: a lamp post stands seven metres up and
         // is not tarmac, which is what the material byte is for.
@@ -416,8 +424,17 @@ fn lit_run(radius: f64, points: usize) -> (crate::model::Model, Vec<DVec3>) {
         .collect();
     let (run, open, on) = (vec![0.0; points], vec![true; points], vec![true; points]);
     let frame = ribbon::frame(&line, &run, radius);
-    let whole = vec![(0.0, 1.0); points.saturating_sub(1)];
-    let model = ribbon::stretch(&frame, &line, &run, &open, &on, radius);
+    let course = ribbon::Course {
+        line: &line,
+        run: &run,
+        open: &open,
+        // No corridor, so no MOUND: this fixture is for what is PAINTED
+        // on a road and what stands beside it, and a mound of ground
+        // would put terrain triangles in every count below.
+        graded: &[],
+        lit: &on,
+    };
+    let model = ribbon::stretch(&frame, course, radius, &|_| 0.0);
     let local = line
         .iter()
         .map(|d| frame.local(*d * (radius + ribbon::LIFT)))
@@ -653,5 +670,95 @@ fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
     assert!(
         worst_float <= ribbon::LIFT + crate::road::EMBANK + 1e-9,
         "a slip stands {worst_float:.3} m over its own ground, past the highway's own embankment"
+    );
+}
+
+/// THE MOUND IS THE GROUND THE FIELD LEVELS. A road carries its own
+/// embankment now, because past a couple of kilometres the terrain's own
+/// cell is wider than the corridor and the mesher draws the hill that
+/// was there before the road; the tarmac is laid to nine kilometres
+/// whatever the terrain does.
+///
+/// What makes that safe is that the mound is drawn from the SAME
+/// `Planet::surface` the mesher contours and the walker and the car
+/// collide against, sunk `ribbon::BURIED` so the terrain wins wherever
+/// it is really drawn. So this holds every one of its vertices to that
+/// surface: never above it, and never further under it than the sink.
+/// A mound drawn from anything else would be a road standing on ground
+/// nobody can walk on.
+#[test]
+fn the_mound_is_the_ground_the_field_levels() {
+    use crate::road::ribbon;
+    let (planet, sea, towns) = world();
+    let mut levelled = crate::field::Planet {
+        sites: towns.iter().map(crate::town::site_of).collect(),
+        ..planet.clone()
+    };
+    let roads = connect(&levelled, sea, &towns, SPACING);
+    let road = roads.first().expect("a road");
+    let run = survey(&levelled, road, sea - planet.radius + DRY);
+    let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
+    let mut sites: Vec<_> = discs.iter().copied().collect();
+    sites.extend(corridor(road, &run, planet.radius, &discs));
+    levelled.sites = sites.into();
+    let line = centreline(road, planet.radius);
+    let open = open(&line, planet.radius, &discs);
+    let lamps = lit(&line, planet.radius, &discs);
+    let at = ribbon::span(0, line.len());
+    let (l, r) = (&line[at.clone()], &run[at.clone()]);
+    let (o, t) = (&open[at.clone()], &lamps[at]);
+    let frame = ribbon::frame(l, r, planet.radius);
+    let course = ribbon::Course {
+        line: l,
+        run: r,
+        open: o,
+        graded: o,
+        lit: t,
+    };
+    let m = ribbon::stretch(&frame, course, planet.radius, &|dir| {
+        levelled.surface(dir).0
+    });
+    let mut worst: (f64, f64) = (f64::NEG_INFINITY, f64::INFINITY);
+    let mut widest = 0.0f64;
+    let mut vertices = 0;
+    let middle = l[l.len() / 2];
+    for (tri, material) in m.mesh.indices.chunks(3).zip(&m.mesh.materials) {
+        if *material != crate::field::TERRAIN {
+            continue;
+        }
+        for i in tri {
+            let p = glam::Vec3::from(m.mesh.positions[*i as usize]).as_dvec3();
+            let world = frame.world(p);
+            let dir = world.normalize();
+            let over = world.length() - (planet.radius + levelled.surface(dir).0);
+            worst = (worst.0.max(over), worst.1.min(over));
+            widest = widest.max(dir.angle_between(middle).sin() * planet.radius);
+            vertices += 1;
+        }
+    }
+    assert!(vertices > 100, "{vertices} vertices is not a mound");
+    println!(
+        "the mound stands {:.3} m to {:.3} m off the field's own surface over {vertices} vertices",
+        worst.1, worst.0
+    );
+    // A millimetre of slack, which is what an `f32` holds at the far end
+    // of a 5.5 km frame; everything else here is exact by construction.
+    const SLACK: f64 = 0.02;
+    assert!(
+        worst.0 <= ribbon::BURIED + SLACK,
+        "the mound stands {:.3} m OVER the ground it is drawn from",
+        worst.0
+    );
+    assert!(
+        worst.1 >= ribbon::BURIED - SLACK,
+        "the mound sinks {:.3} m under it",
+        worst.1
+    );
+    // And it reaches the whole of what the corridor levelled, which is
+    // what carries the road through the terrain's own LOD.
+    let reach = crate::road::CORRIDOR + crate::field::ARC_SKIRT;
+    assert!(
+        widest > reach * 0.5,
+        "the mound is {widest:.0} m wide against a corridor of {reach:.0}"
     );
 }

@@ -51,6 +51,10 @@ pub(crate) struct Route {
     pub line: Vec<DVec3>,
     pub run: Vec<f64>,
     pub open: Vec<bool>,
+    /// Which points this road's own CORRIDOR was cut at, which is
+    /// `open` before the slip is spliced on: a slip stands on ground the
+    /// TOWN levelled and has no embankment of its own to draw.
+    pub graded: Vec<bool>,
     /// Which points are near enough a settlement to carry a lamp.
     pub lit: Vec<bool>,
     /// How many points at each END of the line are the SLIP that joins
@@ -117,6 +121,17 @@ pub(crate) struct Fabric {
 pub(crate) struct Surface<'w> {
     pub ground: Res<'w, Ground>,
     pub fabric: Res<'w, Fabric>,
+    /// Which BODY that ground belongs to, because a crowd and a stolen
+    /// car belong to one and asking this planet's questions of another
+    /// planet's townsmen is the mistake `show_cars` already guards.
+    ///
+    /// OPTIONAL, because a `SystemParam` that demands a resource is a
+    /// resource every harness that uses it has to insert: three of the
+    /// fly camera's own tests build an app with a ground and no system
+    /// of planets, and they had nothing to do with what this was added
+    /// for. A world with no list of bodies is the HOME body, which is
+    /// the one `turn_out` is handed.
+    pub planets: Option<Res<'w, crate::planets::Planets>>,
 }
 
 impl Surface<'_> {
@@ -133,6 +148,11 @@ impl Surface<'_> {
     /// Where that world's centre is.
     pub fn centre(&self) -> DVec3 {
         self.ground.1
+    }
+
+    /// Which body is active, and the HOME body where there is no list.
+    pub fn body(&self) -> usize {
+        self.planets.as_ref().map_or(0, |p| p.active)
     }
 }
 
@@ -290,6 +310,7 @@ pub(crate) fn build(args: &Args) -> World {
         let route = Route {
             line,
             run: run.clone(),
+            graded: open.clone(),
             open,
             lit,
             slip: (0, 0),
@@ -446,12 +467,31 @@ pub(crate) fn shore(world: &World, eye: DVec3) -> Option<DVec3> {
 }
 
 impl Route {
+    /// The whole of it as the CORE's own view of a road
+    /// (`ribbon::Course`), which is what the ribbon, the mound and the
+    /// traffic on it all read.
+    pub fn course(&self) -> freeport_core::road::ribbon::Course<'_> {
+        self.stretch(0..self.line.len())
+    }
+
+    /// One span of it, the same way.
+    pub fn stretch(&self, at: std::ops::Range<usize>) -> freeport_core::road::ribbon::Course<'_> {
+        freeport_core::road::ribbon::Course {
+            line: &self.line[at.clone()],
+            run: &self.run[at.clone()],
+            open: &self.open[at.clone()],
+            graded: &self.graded[at.clone()],
+            lit: &self.lit[at],
+        }
+    }
+
     /// The same road walked the other way, so one head splice serves
     /// both ends.
     fn flip(&mut self) {
         self.line.reverse();
         self.run.reverse();
         self.open.reverse();
+        self.graded.reverse();
         self.lit.reverse();
         self.slip = (self.slip.1, self.slip.0);
     }
@@ -501,13 +541,17 @@ fn splice_slip(route: &mut Route, planet: &Planet, town: &freeport_core::town::T
         .chain(route.run[rest..].iter().copied())
         .collect();
     // A slip is INSIDE the town's own levelling, so it cuts no corridor
-    // of its own; `open` is what `road::corridor` reads AND what the
-    // ribbon lays tarmac on, so the slip is marked open to be DRAWN
-    // while the corridor list was built before this splice and never
-    // sees it. One flag doing two jobs is the thing to watch here, and
-    // it is safe only because the sites are already fixed by now.
+    // of its own; `open` is what the ribbon lays TARMAC on, so the slip
+    // is marked open to be drawn.
     route.open = std::iter::repeat_n(true, head)
         .chain(route.open[rest..].iter().copied())
+        .collect();
+    // And NOT graded: the corridor list was built before this splice and
+    // never sees the slip, so the road has no embankment there and the
+    // ribbon must not draw one. `open` and `graded` are the two jobs one
+    // flag used to do.
+    route.graded = std::iter::repeat_n(false, head)
+        .chain(route.graded[rest..].iter().copied())
         .collect();
     route.lit = std::iter::repeat_n(lit, head)
         .chain(route.lit[rest..].iter().copied())

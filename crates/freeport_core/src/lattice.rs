@@ -173,23 +173,71 @@ impl Rings {
         self.centre.len() as u8
     }
 
-    /// Adapt the finest ring to height above the surface, with hysteresis.
-    /// The finest box stays filled and every neighbour still differs by at
-    /// most one level. Height and the lattice are in absolute world metres.
-    pub fn adapt(&mut self, lat: &Lattice, height: f64) -> bool {
+    /// How long the FINEST ring is asked to last, seconds.
+    ///
+    /// A box at level L reaches `reach(L)` either way, so a body going
+    /// `v` crosses it in `reach(L) / v`, and every crossing is a whole
+    /// layout re-planned and re-contoured: the streamer publishes a
+    /// layout only once every chunk in it is ready, so a finest box that
+    /// is gone before it is built is a layout that never lands and a
+    /// world that stays at the last one it managed.
+    ///
+    /// On the harness planet the finest box is 32 m either way. On foot
+    /// that is six seconds; at the car's own 44.4 m/s it is under one,
+    /// which is what the owner is looking at when a drive down a highway
+    /// takes a long time to load. Four seconds is what it takes to drop
+    /// the finest level to a 2 m cell at the top speed and to leave a
+    /// walker and a runner on the half metre one they always had.
+    ///
+    /// It is the same rule as the HEIGHT term beside it and not a second
+    /// one: both say that a box too small for what the eye is doing is a
+    /// box not worth streaming, and both are read through one demand.
+    const DWELL: f64 = 4.0;
+
+    /// Adapt the finest ring to the height above the surface AND to how
+    /// fast the eye is going, with hysteresis.
+    ///
+    /// The finest box stays filled and every neighbour still differs by
+    /// at most one level. Height, pace and the lattice are in absolute
+    /// world metres; `pace` is metres a second.
+    pub fn adapt(&mut self, lat: &Lattice, height: f64, pace: f64) -> bool {
         if !height.is_finite() || self.levels() == 0 {
             return false;
         }
+        // ONE demand, in metres: how far the eye is off the ground, or
+        // how far it will have gone by the time a layout could be built,
+        // whichever asks for the coarser ring.
+        let want = height.max(if pace.is_finite() {
+            pace * Self::DWELL
+        } else {
+            0.0
+        });
         let old = self.min_level;
         let reach = |level| lat.cell(level) * CH as f64 * HALF as f64;
-        while self.min_level + 1 < self.levels() && height > reach(self.min_level + 1) * 1.2 {
+        while self.min_level + 1 < self.levels() && want > reach(self.min_level + 1) * 1.2 {
             self.min_level += 1;
         }
-        while self.min_level > 0 && height < reach(self.min_level) * 0.8 {
+        while self.min_level > 0 && want < reach(self.min_level) * 0.8 {
             self.min_level -= 1;
         }
         old != self.min_level
     }
+
+    /// How far AHEAD of itself the eye's boxes are centred, as a time:
+    /// the ground a body is driving into is streamed before it gets
+    /// there rather than after.
+    ///
+    /// A box is centred on what it follows, so half of the finest one is
+    /// always BEHIND the eye and is ground already driven over. Leading
+    /// by a second and a half of travel spends that half on the way the
+    /// eye is going instead, which at the car's top speed is 66 m of
+    /// road arriving before the bonnet does.
+    ///
+    /// It is CAPPED at half the finest active box's own reach, because a
+    /// lead longer than that would put the eye outside its own finest
+    /// ring: what the lead may buy is the half of the box that was
+    /// behind, and never more.
+    const LEAD: f64 = 1.5;
 
     /// How much of the COARSEST box's own half width is kept for the
     /// eye's altitude. The rest is what is left to reach out across the
@@ -211,15 +259,30 @@ impl Rings {
     /// triangles` over it, and nothing said the terrain was missing
     /// rather than merely coarse.
     ///
-    /// `height` is how far the eye stands over the ground, in metres.
-    pub fn focus(&self, lat: &Lattice, eye: DVec3, height: f64) -> DVec3 {
+    /// `height` is how far the eye stands over the ground and `pace` how
+    /// fast it is going, both in metres (a second), in the body's frame.
+    pub fn focus(&self, lat: &Lattice, eye: DVec3, height: f64, pace: DVec3) -> DVec3 {
         let top = self.levels().saturating_sub(1);
         let keep = lat.cell(top) * CH as f64 * HALF as f64 * Self::KEEP;
-        if !height.is_finite() || height <= keep {
-            return eye;
+        let at = if !height.is_finite() || height <= keep {
+            eye
+        } else {
+            let up = eye.normalize_or(DVec3::Y);
+            eye - up * (height - keep)
+        };
+        at + self.lead(lat, pace)
+    }
+
+    /// How far the boxes stand ahead of the eye, as a vector: `LEAD`
+    /// seconds of the way it is going, capped at half the finest active
+    /// box's own reach.
+    fn lead(&self, lat: &Lattice, pace: DVec3) -> DVec3 {
+        let speed = pace.length();
+        if !speed.is_finite() || speed <= 0.0 {
+            return DVec3::ZERO;
         }
-        let up = eye.normalize_or(DVec3::Y);
-        eye - up * (height - keep)
+        let reach = lat.cell(self.min_level) * CH as f64 * HALF as f64;
+        pace / speed * (speed * Self::LEAD).min(reach * 0.5)
     }
 
     /// The eye's place at a level, in that level's chunks.
@@ -417,8 +480,8 @@ mod tests {
         for height in [0.0, 50.0, 1_200.0, 12_000.0, 49_400.0, 400_000.0] {
             let eye = DVec3::Y * (radius + height);
             let mut rings = Rings::around(&lat, eye, levels);
-            let focus = rings.focus(&lat, eye, height);
-            rings.adapt(&lat, height);
+            let focus = rings.focus(&lat, eye, height, DVec3::ZERO);
+            rings.adapt(&lat, height, 0.0);
             rings.follow(&lat, focus);
             // The box at the coarsest level, in metres, and the ground
             // right under the eye.
@@ -441,17 +504,92 @@ mod tests {
         let lat = Lattice::new(DVec3::ZERO, 0.25);
         let mut rings = Rings::around(&lat, DVec3::ZERO, 8);
         let full = rings.chunks().len();
-        assert!(rings.adapt(&lat, 500.0));
+        assert!(rings.adapt(&lat, 500.0, 0.0));
         assert!(rings.min_level > 0);
         assert!(rings.chunks().len() < full);
         assert_eq!(rings.level_at([0; 3]), Some(rings.min_level));
         for id in rings.chunks() {
             assert_eq!(rings.level_at(id.f0()), Some(id.level));
         }
-        assert!(!rings.adapt(&lat, 500.1));
-        assert!(rings.adapt(&lat, 0.0));
+        assert!(!rings.adapt(&lat, 500.1, 0.0));
+        assert!(rings.adapt(&lat, 0.0, 0.0));
         assert_eq!(rings.min_level, 0);
         assert_eq!(rings.chunks().len(), full);
+    }
+
+    /// A FAST EYE GETS A COARSER FINEST RING, which is the same rule the
+    /// height term keeps and is what a drive down a highway needed.
+    ///
+    /// The finest box on this planet is 32 m either way, so at the car's
+    /// own top speed it is crossed in under a second and every crossing
+    /// is a whole layout the streamer has to build before it may publish
+    /// any of it. A walker and a runner are left exactly where they were.
+    #[test]
+    fn a_fast_eye_streams_a_coarser_ring_than_a_walker() {
+        let lat = Lattice::new(DVec3::splat(-0.25), 0.5);
+        let mut rings = Rings::around(&lat, DVec3::Y * 1_000_000.0, 14);
+        let mut at = |pace: f64| {
+            rings.adapt(&lat, 0.0, pace);
+            rings.min_level
+        };
+        assert_eq!(at(0.0), 0, "standing still is the finest ring there is");
+        assert_eq!(at(5.0), 0, "and so is walking");
+        assert_eq!(at(8.5), 0, "and running");
+        let driving = at(crate::driver::TOP);
+        println!(
+            "standing and walking keep a {:.2} m cell reaching {:.0} m; at {:.1} m/s the finest ring is level {driving}, a {:.2} m cell reaching {:.0} m",
+            lat.cell(0),
+            lat.cell(0) * CH as f64 * HALF as f64,
+            crate::driver::TOP,
+            lat.cell(driving),
+            lat.cell(driving) * CH as f64 * HALF as f64,
+        );
+        assert!(driving >= 2, "at 160 km/h the finest ring is {driving}");
+        // And it comes back DOWN when the car stops, which is what the
+        // hysteresis is for: a rule that only ever coarsened would be a
+        // walker standing in a field of 2 m cells.
+        assert_eq!(at(0.0), 0, "and it comes back when the car stops");
+    }
+
+    /// THE BOXES LEAD THE EYE. Half of the finest box is behind a body
+    /// that is going somewhere, which is ground it has already driven
+    /// over; leading spends that half on the way it is going.
+    #[test]
+    fn the_boxes_stand_ahead_of_a_moving_eye() {
+        let lat = Lattice::new(DVec3::splat(-0.25), 0.5);
+        let eye = DVec3::Y * 1_000_000.0;
+        let mut rings = Rings::around(&lat, eye, 14);
+        assert_eq!(
+            rings.focus(&lat, eye, 0.0, DVec3::ZERO),
+            eye,
+            "still is still"
+        );
+        let way = DVec3::X;
+        // ADAPTED first, which is the order `Streamer::want` asks them
+        // in: the cap is half the finest ACTIVE box, so a test that led
+        // a ring it had not coarsened would print a cap the game never
+        // uses. Measured either way it is the same rule and a different
+        // number: 16 m off an unadapted level 0 and 64 m off the level 2
+        // the same speed actually streams.
+        rings.adapt(&lat, 0.0, crate::driver::TOP);
+        let led = rings.focus(&lat, eye, 0.0, way * crate::driver::TOP) - eye;
+        let reach = lat.cell(rings.min_level) * CH as f64 * HALF as f64;
+        assert!(led.dot(way) > 0.0, "a lead is the way the eye is going");
+        assert!(
+            led.length() <= reach * 0.5 + 1e-9,
+            "a lead of {:.0} m is past half the finest box's own {reach:.0} m",
+            led.length()
+        );
+        println!(
+            "at {:.1} m/s the boxes stand {:.0} m ahead of the eye, capped at half the finest box's own {reach:.0} m",
+            crate::driver::TOP,
+            led.length()
+        );
+        // And a crawl is led by what it will actually cover, not by the
+        // cap: a body doing a metre a second is led a metre and a half.
+        rings.adapt(&lat, 0.0, 1.0);
+        let slow = rings.focus(&lat, eye, 0.0, way) - eye;
+        assert!((slow.length() - Rings::LEAD).abs() < 1e-9, "{slow:?}");
     }
 
     #[test]
