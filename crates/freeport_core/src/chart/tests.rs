@@ -285,3 +285,59 @@ fn a_charted_slope_leans_the_normal_away_from_its_hill() {
         "worst lean {worst_lean:.4} is not downhill"
     );
 }
+
+/// A MARK IS A COVERAGE AND A LIGHT, and never a colour painted into the
+/// albedo.
+///
+/// A city is drawn 2.2 texels across and a road 0.9, which on the harness
+/// planet is 13.5 km and 5.5 km of ground against a town 185 m across and
+/// a road 6.9 m wide: 73 and 800 times over. That is a deliberate lie and
+/// a necessary one from orbit, where a texel is about a pixel; it is a
+/// lie that SHOWS the moment the streamed chunks draw the same ground
+/// beside it, and the owner asked for the two to match.
+///
+/// A mark that is painted INTO the albedo cannot be taken away again, so
+/// it is carried as a coverage in the slope map's own spare lane with the
+/// night light beside it, and `distant.wgsl` composites the two and fades
+/// them out where the chart is being magnified past what it knows. What
+/// this holds is the half that lives here: the albedo under a city is the
+/// GROUND's own colour and nothing else, the coverage says a city or a
+/// road is there, and ground with neither carries no mark at all.
+#[test]
+fn a_mark_is_a_coverage_and_a_light_and_leaves_the_albedo_alone() {
+    let (planet, sea) = world();
+    let site = *planet.sites.iter().next().expect("a town");
+    let roads = [crate::road::Road {
+        from: 0,
+        to: 0,
+        line: vec![
+            (DVec3::new(1.0, 0.2, 0.0).normalize(), 0.0),
+            (DVec3::new(1.0, 0.2, 0.4).normalize(), 0.0),
+        ],
+    }];
+    let bare = Chart::bake(&planet, sea, 512, 256, &[]);
+    let chart = Chart::bake(&planet, sea, 512, 256, &roads);
+    assert_eq!(
+        bare.albedo, chart.albedo,
+        "the roads moved the albedo, so a mark cannot be taken away again"
+    );
+    // The CITY: covered, and its light at full cover is a city's.
+    let i = chart.texel(site.dir).expect("the town's own texel");
+    let (cover, light) = (chart.normal[i + 3], chart.normal[i + 2]);
+    assert!(cover > 200, "a town covers {cover} of its own texel");
+    assert!(light > 0, "a town's own texel burns at nothing");
+    // The ROAD, at the middle of its own line, well away from that town.
+    let on = roads[0].line[0].0.lerp(roads[0].line[1].0, 0.5).normalize();
+    let j = chart.texel(on).expect("the road's own texel");
+    let (cover, light) = (chart.normal[j + 3], chart.normal[j + 2]);
+    assert!(cover > 200, "a road covers {cover} of its own texel");
+    let lit = light as f64 / cover as f64;
+    assert!(
+        (lit - ROAD_LIGHT).abs() < 0.05,
+        "a road's own texel burns at {lit:.2} and a road burns at {ROAD_LIGHT}"
+    );
+    // And ground with neither on it carries no mark at all.
+    let away = DVec3::new(-0.6, -0.7, 0.4).normalize();
+    let k = chart.texel(away).expect("a texel");
+    assert_eq!(chart.normal[k + 3], 0, "empty ground carries a mark");
+}

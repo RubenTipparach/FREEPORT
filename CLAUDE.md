@@ -599,6 +599,107 @@ two is the thing the owner could see.
   planet's own texture is a picture, and a picture nobody can open is a
   buffer nobody can check.
 
+## A CLIMB is what finds a LOD cliff, and a mark has to be able to go away
+
+The owner asked to fly up a kilometre at a time and see a seamless
+transition, with the roads on the chart the width of the roads on the
+ground and a city's outline the city's. The climb is `--over N`, which
+stands N metres over the port and looks straight down, and it found three
+things, none of which any number in this file had.
+
+**THE HAND OVER WAS A CLIFF, and it was twenty four fold.** At ten levels
+a ring reaches 16.4 km from the eye and its coarsest cell is 256 m; the
+chart's texel was 6,136 m. From 33 km up the picture was a sharp 32 km
+ISLAND of terrain floating over a blur, and from 49 km the blur was its
+own texels at a hundred and nine pixels each with the island shrinking
+in the middle of them. Nothing in between existed.
+
+**Fourteen levels is what closes it.** A level's box doubles, so four
+more take the ring from 16.4 km to 262 km and the coarsest cell from
+256 m to 4,096 m, which is within one and a half of a chart texel: a step
+an eye cannot find. Measured at 49 km: 282 chunks and 177,897 triangles
+against 148 and 54,625, and the frame is terrain to its edges. The floor
+of the climb is unchanged, because `Rings::follow` drops the fine levels
+by height anyway: at 2 km it is 2,050 chunks, which is what ten levels
+built there too.
+
+**The chart POKED THROUGH the terrain, and the sink was never the
+problem.** From 150 km up the coarse ground was riddled with pale
+patches. The sphere is sunk `SINK` (a hundredth of the relief, 80 m)
+under the ground and that is plenty; what was wrong is that it sampled
+the ground at its own VERTICES, which at Bevy's icosphere cap stand
+13 km apart on this body, and strung a triangle between them. The relief's
+HILLS term has a wavelength of 13 km, so the chord aliases it completely:
+measured as a curvature, an interpolated chord over 13 km of that term
+stands up to 3.3 km ABOVE the ground it spans, which is forty times the
+sink.
+
+`distant::floor` is the answer and it is one word: the sphere is displaced
+to the LOWEST ground a vertex can see rather than the ground at it, a ring
+of eight bearings at the vertex spacing. That makes the impostor an
+envelope UNDER the body rather than a surface through it, so it cannot
+poke through whatever the terrain does between two of its vertices. What
+it costs is the SILHOUETTE, which sits at the local low ground rather than
+at the ridge: four kilometres of a thousand, 0.4% of the limb. It is asked
+of a BARE planet, which is `Chart::bake_bare`'s own rule and for the same
+two reasons: a town is 483 m across against a 13 km vertex, and a planet
+carrying 190,000 corridor sites would be walked at every one of the
+560,000 samples.
+
+**And the chart was HALF the width its own comment claimed.** The doc said
+"a thousand kilometre planet at 2,048 wide is a texel every three
+kilometres" and the constant said 1,024. It is 2,048 now: a texel is
+3,068 m rather than 6,136, the bake is 3.3 s rather than 1.0, and the
+marks on it lie by half as much, since both are measured in TEXELS.
+
+**A MARK HAS TO BE ABLE TO GO AWAY, so it is not painted into the
+albedo.** A city is drawn `CITY_TEXELS` (2.2) across and a road
+`ROAD_TEXELS` (0.9), which is 6.7 km and 2.8 km of ground against a town
+483 m across and a road 6.9 m wide: **14 and 400 times over**. This file
+already called that "a LIE about the ground and a deliberate one", and it
+is: from orbit a texel is about a pixel and a true width is nothing at
+all. It is a lie that SHOWS the moment the streamed chunks draw the same
+ground beside it, which is what the owner asked to have fixed.
+
+A colour painted into the albedo cannot be taken back, so `Chart::blot`
+paints no colour. It writes how much of a texel a mark COVERS into the
+slope map's own spare lane, with the night light beside it, and
+`distant.wgsl` composites the two over the biome colour and fades them
+out where the chart is being magnified past what it knows. The lane was
+filled with 255, which every `max` a mark took lost against, so a bare
+body's coverage is nought now.
+
+**And the fade's two numbers are read off the RING rather than chosen.**
+The coarsest box reaches 262 km, so looking down a 45 degree frame the
+chart first appears beside the streamed ground at 356 km up, where a
+texel is 7.5 px: `MARK_FAT` is 6, so there is no altitude at which a fat
+mark and the real ground are in one picture. From two and a half radii,
+which is what a body from orbit is framed at, a texel is 1.78 px and the
+marks have to be whole: `MARK_HONEST` is 1.5. At 30 km a texel is 89 px
+and at 5 km it is 533, so the whole of the climb the owner asked about is
+mark free and what the chart shows there is the same biome colour the
+ground beside it is carrying.
+
+**And the SMALLER derivative is what says how fat a mark is.** A round
+mark foreshortened to a pixel one way and ten the other is a ten pixel
+streak, and what decides that is the axis whose own pixel covers the
+least ground. Taking the LARGER read a limb texel as sub pixel, so the
+marks came back along the whole edge of the disk in a picture from 400 km
+up where the streamed ground beside them had none: 12.7% of that limb
+band moved when it was changed, against 0.03% of the middle, which is
+what says the fix landed where the defect was and nowhere else.
+
+**What is MISSING, named rather than hidden.** A city and a road share ONE
+grey on the chart now (0.30/0.29/0.27, between `Kind::City`'s and
+`Kind::Road`'s), because telling them apart would want a second number in
+a lane there is not one of: the obvious one, the light over the coverage,
+is not it, since a city's light is scaled by how big the city IS and a
+wayside village's share is a road's own 0.34. And a mark still does not
+MATCH the ground it stands for, it merely never contradicts it: at the
+ranges it survives, the true city is half a pixel and the true road is a
+five hundredth of one, so what the chart says is THAT there is a city and
+where the roads run, which is what a map says.
+
 **A camera for a picture is SOLVED, and `--sunward N` is that.** Three
 renders here were aimed by hand at a planet that turned out to be a
 different one in its own night, and a fourth used a shore read off an
@@ -3157,6 +3258,23 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 # The game reads it at startup and plans the body itself, slowly and with
 # no roads, only when there is no atlas that fits.
 ./target/release/freeport_app --bake-atlas
+# The CLIMB. `--over N` stands N metres over the port and looks straight
+# DOWN at it, which is the one camera a LOD ladder can be judged from:
+# the town holds still in the middle and everything else is how the
+# ground gets coarser round it. A kilometre a step is the owner's own
+# ask, and what it found was a twenty four fold cliff at the chart.
+#
+# The floor of it is the slow end, because the fine rings are all in
+# play: 2,050 chunks and 131 s to settle at 2 km against 282 and 25 s at
+# 49. The OCTAVES are left alone, like the drive's and the road's,
+# because the atlas is refused at any count but the one it was baked at.
+for k in $(seq 1 20); do
+  ./target/release/freeport_app --fly --over $((k * 1000)) --hour 11 \
+      --frames 20 --shot climb_$k.png
+done
+# And the HAND OVER itself, which is past the coarsest ring (262 km at
+# fourteen levels) and so only in frame from about 356 km up.
+./target/release/freeport_app --fly --over 400000 --hour 11 --frames 20 --shot handover.png
 # The ROAD between two towns, along itself. `--road N` stands N metres
 # over the tarmac a kilometre out of the port and looks down it: a
 # camera for a picture is solved and never hand aimed, and where a road
@@ -3393,6 +3511,28 @@ Numbers in the commit message. What is measured so far:
   The last is the car flat out on a country road for ten minutes, and
   its distance to the goal does not close, because it is following the
   road it reached rather than routing over the network.
+- **The CLIMB, a kilometre a step over the port, straight down.** The
+  chunk count and the triangles fall monotonically with no cliff in
+  them: 2,654 chunks and 578,924 triangles at 1 km, 1,051 and 414,969 at
+  5, 683 and 335,544 at 10, 461 and 258,132 at 20, and the settle goes
+  208 s to 38 s on lavapipe. At 5 km a pixel is 5.75 m, so the road out
+  of the port is 1.2 px of tarmac and draws as one, and the port is 85 px
+  across for 483 m of ground: both at their own width, with no chart mark
+  anywhere in the frame to disagree. Ten levels put a sharp 32 km ISLAND
+  of terrain over a blur from 33 km up; fourteen fill the frame to 49 km
+  and past it. The A/B at 32 km moved 53.55% of the picture.
+- **What a chart mark is worth against the ground it stands for.** A city
+  is 2.2 texels and a road 0.9, which at 2,048 wide is 6.7 km and 2.8 km
+  against a town 483 m across and a road 6.9 m wide: 14 and 400 times
+  over, and it was 73 and 800 at 1,024. Faded on the chart's own
+  resolution the marks are whole from 2.6 radii, where the road network
+  reads across every continent, and nought at 356 km and below, which is
+  every altitude at which the streamed ground is in the same frame.
+- **The impostor poking through**: sampled at its own 13 km vertices the
+  sphere stood up to 3.3 km OVER the ground between them, forty times its
+  own 80 m sink, and the coarse terrain was riddled with chart at 150 km
+  up. Displaced to the LOWEST ground a vertex can see it cannot, and the
+  silhouette drops by at most the relief, 4 km of 1,000.
 - **The atlas re-baked on the corrected town rules**: 1084 settlements
   (160 cities and 924 villages) and 310 roads over 63,840 km joining 153
   of them, planned in 23.9 s and read back in 34 ms. The nearest

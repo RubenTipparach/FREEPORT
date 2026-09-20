@@ -43,6 +43,50 @@ struct Distant {
 // brightest thing there.
 const NIGHT_FLOOR: f32 = 0.05;
 
+// What a mark is painted, linear. It is HERE rather than in the chart's
+// own albedo because a mark has to be able to go away: see `MARK_HONEST`
+// below.
+//
+// ONE grey for a city and a road both, between
+// `freeport_core::biome::Kind::City`'s 0.35/0.34/0.33 and `Kind::Road`'s
+// 0.20/0.18/0.16, and the loss is named rather than hidden. Telling the
+// two apart would mean a second number in a lane there is not one of:
+// the obvious one, the light over the coverage, is not it, because a
+// city's light is scaled by how BIG the city is (`CITY_LIGHT * share`)
+// and a wayside village's share is a road's own 0.34. What the two
+// colours differ by is 0.15 of luminance on a neutral grey, at a range
+// where the mark is about a pixel wide.
+const MARK_GREY: vec3<f32> = vec3<f32>(0.30, 0.29, 0.27);
+
+// How many PIXELS wide a chart texel may be before the marks on it are a
+// lie, and how wide before they are gone.
+//
+// A city and a road are drawn 2.2 and 0.9 TEXELS across, which on the
+// harness planet is 6.7 km and 2.8 km of ground against a town 483 m
+// across and a road 6.9 m wide: 14 and 400 times over. That is a
+// deliberate lie and a necessary one from orbit, where a texel is about
+// a pixel and true width is nothing at all; it is a lie that SHOWS the
+// moment the same ground is drawn by the streamed chunks beside it, and
+// the owner asked for the two to match.
+//
+// So the marks live only while the chart is being drawn at about its own
+// resolution. Past that the chart is being magnified past what it knows
+// and the marks go with it, which leaves the biome colour the streamed
+// ground is carrying anyway.
+//
+// Both numbers are read off the RING rather than chosen. The coarsest
+// box at fourteen levels reaches 262 km from the eye, so looking down a
+// 45 degree frame the chart first appears beside the streamed ground at
+// 356 km up, where a 3,068 m texel is 7.5 px: past that there is no
+// altitude at which a fat mark and the real ground are in one picture,
+// so `MARK_FAT` is 6. And from two and a half radii, which is what a
+// body from orbit is framed at, a texel is 1.78 px and the marks have to
+// be whole, so `MARK_HONEST` is 1.5. At 30 km a texel is 89 px and at
+// 5 km it is 533, which is the whole of the climb the owner asked about
+// and every bit of it mark free.
+const MARK_HONEST: f32 = 1.5;
+const MARK_FAT: f32 = 6.0;
+
 // Where the terminator falls, in the cosine between the ground's own
 // radial and the sun. It is a BAND rather than a line because a planet
 // has air: the sun sets over a few degrees of longitude and a hard edge
@@ -131,13 +175,35 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // and not in the air above it, which is what softens a terminator on
     // a planet with weather and leaves one on an airless moon sharp.
     let night = 1.0 - smoothstep(DUSK_TO, DUSK_FROM, dot(d, distant.sun.xyz));
+
+    // The MARKS, composited here rather than baked into the albedo, so
+    // that they can go away where the ground they stand for is drawn by
+    // the streamed chunks at its own size. `slope.a` is how much of the
+    // texel a city or a road covers and `slope.b` is what it burns at
+    // night.
+    // The SMALLER derivative, which is the one that says how FAT a mark
+    // gets: a round mark foreshortened to a pixel one way and ten the
+    // other is a ten pixel streak, and what decides that is the axis
+    // whose own pixel covers the least ground. Taking the larger read a
+    // limb texel as sub pixel, so the marks came back along the whole
+    // edge of the disk in a picture from 400 km up where the streamed
+    // ground beside them had none.
+    let texels = f32(textureDimensions(chart).x);
+    let across = min(length(dx), length(dy)) * texels;
+    let honest = 1.0 - smoothstep(MARK_HONEST, MARK_FAT, 1.0 / max(across, 1e-9));
+    let cover = slope.a * honest;
+    let ground = mix(albedo.rgb, MARK_GREY, cover);
+
     pbr_input.material.base_color =
-        vec4<f32>(albedo.rgb * mix(1.0, NIGHT_FLOOR, night), 1.0);
+        vec4<f32>(ground * mix(1.0, NIGHT_FLOOR, night), 1.0);
     // And the LIGHTS on it: the chart's own city and road mask, burning
     // only where the sun is not. They are EMISSIVE, so nothing about the
-    // lighting takes them away, which is the whole point of a light.
+    // lighting takes them away, which is the whole point of a light. They
+    // fade on the same rule the marks do, because a town's own lit
+    // windows and street lamps are what light it once it is built, and a
+    // 13.5 km glow over a 185 m village is the same lie by night.
     pbr_input.material.emissive =
-        vec4<f32>(LAMP * (slope.b * night * distant.sun.w), 1.0);
+        vec4<f32>(LAMP * (slope.b * honest * night * distant.sun.w), 1.0);
     // Water is smooth and everything else is not, which is the whole of
     // why the mask is worth carrying: an ocean has to catch the sun where
     // the land beside it does not.

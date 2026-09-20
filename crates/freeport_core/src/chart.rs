@@ -215,8 +215,8 @@ impl Chart {
         // town's own centre, so painted the other way round each road
         // erased the city it serves: 37 city texels survived of 160, and
         // the 123 missing were exactly the towns a road reaches.
-        chart.lay_roads(planet, sea, roads);
-        chart.stamp(planet, sea);
+        chart.lay_roads(roads);
+        chart.stamp(planet);
         chart
     }
 
@@ -232,8 +232,7 @@ impl Chart {
     /// texel across is: what the chart is for is saying THAT there is a
     /// road and where it runs, and a mark under a texel wide would say
     /// neither. The ground's own roads are the real width.
-    pub fn lay_roads(&mut self, planet: &Planet, sea: f64, roads: &[Road]) {
-        let relief = planet.shape().relief;
+    pub fn lay_roads(&mut self, roads: &[Road]) {
         let texel = std::f64::consts::TAU / self.width as f64;
         for road in roads {
             for pair in road.line.windows(2) {
@@ -243,13 +242,7 @@ impl Chart {
                 for k in 0..=steps {
                     let t = k as f64 / steps as f64;
                     let dir = (a.0 + (b.0 - a.0) * t).normalize_or(DVec3::Y);
-                    let h = a.1 + (b.1 - a.1) * t;
-                    let spot = Spot {
-                        over_sea: planet.radius + h - sea,
-                        kind: Kind::Road,
-                        water: 0.0,
-                    };
-                    self.blot(dir, &spot, relief, ROAD_TEXELS, ROAD_LIGHT);
+                    self.blot(dir, ROAD_TEXELS, ROAD_LIGHT);
                 }
             }
         }
@@ -267,7 +260,7 @@ impl Chart {
     ///
     /// The light is MAXED rather than written, so a road crossing another
     /// road is not dimmed by the second one's own falloff.
-    fn blot(&mut self, dir: DVec3, spot: &Spot, relief: f64, texels: f64, light: f64) {
+    fn blot(&mut self, dir: DVec3, texels: f64, light: f64) {
         let d = dir.normalize_or(DVec3::Y);
         let rows = (self.height as f64 * (0.5 - d.y.clamp(-1.0, 1.0).asin() / std::f64::consts::PI))
             .floor() as isize;
@@ -276,7 +269,6 @@ impl Chart {
         let reach = texels * std::f64::consts::PI / self.height as f64;
         let lat = (1.0 - d.y * d.y).max(1e-6).sqrt();
         let wide = ((texels / lat).ceil() as isize).min(self.width as isize / 2);
-        let c = spot_colour(spot, relief);
         for y in rows - texels.ceil() as isize..=rows + texels.ceil() as isize {
             if y < 0 || y >= self.height as isize {
                 continue;
@@ -289,15 +281,19 @@ impl Chart {
                 }
                 let i =
                     ((y as usize) * self.width + x.rem_euclid(self.width as isize) as usize) * 4;
-                for (k, v) in c.iter().enumerate() {
-                    self.albedo[i + k] = to_srgb(*v);
-                }
                 self.albedo[i + 3] = 0;
                 // Brightest at the middle and out to nothing at the rim,
                 // so a city is a glow with a core rather than a disc with
-                // an edge on it.
-                let lit = light * (1.0 - (off / reach).clamp(0.0, 1.0).powi(2));
-                self.normal[i + 2] = self.normal[i + 2].max(to_byte(lit));
+                // an edge on it, and the COVERAGE falls off with it so
+                // the two are one number seen twice: the shader divides
+                // them to get the light back at full cover, which is
+                // what says a road from a city.
+                let cover = 1.0 - (off / reach).clamp(0.0, 1.0).powi(2);
+                if to_byte(cover) <= self.normal[i + 3] {
+                    continue;
+                }
+                self.normal[i + 3] = to_byte(cover);
+                self.normal[i + 2] = to_byte(light * cover);
             }
         }
     }
@@ -317,8 +313,7 @@ impl Chart {
     /// on the ground, which is what makes it a place a player can SEE
     /// from orbit and steer at rather than a thing they have to be told
     /// about.
-    pub fn stamp(&mut self, planet: &Planet, sea: f64) {
-        let relief = planet.shape().relief;
+    pub fn stamp(&mut self, planet: &Planet) {
         // The biggest city on the body is `CITY_TEXELS` and every other
         // is the square root of its share of that one's ground, which is
         // the honest scaling: a mark's AREA is what reads as how big a
@@ -332,16 +327,9 @@ impl Chart {
             .fold(f64::MIN_POSITIVE, f64::max);
         for site in &planet.sites {
             let d = site.dir.normalize_or(DVec3::Y);
-            let spot = Spot {
-                over_sea: planet.radius + site.h - sea,
-                kind: Kind::City,
-                water: 0.0,
-            };
             let share = (site.r / biggest).clamp(0.0, 1.0).sqrt();
             self.blot(
                 d,
-                &spot,
-                relief,
                 (CITY_TEXELS * share).max(SMALLEST_CITY),
                 CITY_LIGHT * share,
             );
@@ -373,7 +361,10 @@ impl Chart {
             // are what write this channel, and what `distant.wgsl` burns
             // on the night side.
             normal[i * 4 + 2] = 0;
-            normal[i * 4 + 3] = 255;
+            // NOUGHT and not opaque: the lane carries how much of this
+            // texel a city or a road COVERS, and a map that started full
+            // is a map every mark loses its own `max` against.
+            normal[i * 4 + 3] = 0;
         }
         Chart {
             width: w,

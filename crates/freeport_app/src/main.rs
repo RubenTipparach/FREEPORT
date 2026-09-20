@@ -161,9 +161,23 @@ const TOWNS_BUILT: usize = 8;
 const TOWNS_REACH: f64 = 200_000.0;
 /// The world's seed.
 const SEED: u32 = 7;
-/// Ten levels at 0.5 m preserve the previous 32.8 km streaming box while
-/// removing the unnecessarily dense 0.25 m tier. Distant meshes fill the disk.
-const LEVELS: u8 = 10;
+/// How many LOD levels of terrain the harness streams, finest 0.5 m.
+///
+/// Fourteen, and the four past ten are what closes the gap between the
+/// ground and the CHART. A level's box is `2 * HALF * CH` cells across,
+/// so ten levels reach 16.4 km from the eye and fourteen reach 262 km,
+/// and the coarsest cell goes from 256 m to 4,096 m against a chart texel
+/// of 6,136 m on this body.
+///
+/// The owner asked for a seamless climb and the pictures said why there
+/// was not one: at 33 km up, ten levels drew a sharp 32 km island of
+/// terrain floating over a chart magnified a hundred times, a 24 fold
+/// cliff in detail with nothing in between. At fourteen the same frame is
+/// terrain to its edges, and the coarsest cell and the chart's texel are
+/// within one and a half of each other, which is a step an eye cannot
+/// find. Measured: 282 chunks and 177,897 triangles at 49 km, against 148
+/// and 54,625.
+const LEVELS: u8 = 14;
 /// Frames a second the loop is held to by default. Vsync is the MONITOR's
 /// cap and not a cap at all: a scene this cheap to simulate draws at the
 /// refresh rate and holds the card at full clock the whole time, which is
