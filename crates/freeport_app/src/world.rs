@@ -69,6 +69,10 @@ pub(crate) struct Route {
     /// The sea's radius, which is what a vertex's height is measured off
     /// for the shore band the ground shader reads.
     pub sea: f64,
+    /// The GAS STATIONS along it, by the piece each stands on
+    /// (`road::station::plan`), planned once the slips are spliced so
+    /// the pieces they name are the pieces that are drawn.
+    pub pumps: Vec<road::station::Station>,
 }
 
 /// One BUILT town: the boxes its models were drawn from, the lamps in
@@ -93,12 +97,16 @@ pub(crate) struct Raised {
 /// mesher's workers hold: the PLANET never changes (every town on the
 /// body levels its own ground from the first frame, whether or not
 /// anybody has built it), and the buildings come and go with the eye.
-/// One BUILT stretch of road: which it is and the lamps on it. It
-/// carries no boxes, because tarmac stops nothing and a lamp post only
-/// draws, and no entity, because the entity carries `roads::Paved` and
-/// the query IS the record of what is standing.
+/// One BUILT stretch of road: which it is, the lamps on it, and the
+/// boxes of whatever stands on it, which is a gas station's pumps,
+/// pillars and kiosk: tarmac stops nothing and a lamp post only draws,
+/// but a pump is a thing a car pulls up to and a walker walks up to. No
+/// entity, because the entity carries `roads::Paved` and the query IS
+/// the record of what is standing.
 pub(crate) struct Verge {
     pub which: (usize, usize),
+    pub blocks: Vec<Block>,
+    pub bounds: (DVec3, DVec3),
     /// Each lamp's own index ALONG THE ROAD, where it is and how far it
     /// throws. The index is along the road and not along the stretch,
     /// because a stretch streams and an index into one would name a
@@ -163,11 +171,18 @@ impl Fabric {
     pub fn underfoot<'a>(&'a self, planet: &'a Planet, p: DVec3, reach: f64) -> Built<'a> {
         let (lo, hi) = (p - DVec3::splat(reach), p + DVec3::splat(reach));
         let mut blocks = Vec::new();
-        for t in &self.towns {
-            if !(t.bounds.0.cmple(hi).all() && t.bounds.1.cmpge(lo).all()) {
+        // The towns' walls and the roads' stations, which are the two
+        // things standing on this world that stop a body.
+        let built = self
+            .towns
+            .iter()
+            .map(|t| (&t.bounds, &t.blocks))
+            .chain(self.verges.iter().map(|v| (&v.bounds, &v.blocks)));
+        for (bounds, held) in built {
+            if !(bounds.0.cmple(hi).all() && bounds.1.cmpge(lo).all()) {
                 continue;
             }
-            for b in &t.blocks {
+            for b in held {
                 let (blo, bhi) = b.bounds();
                 if blo.cmple(hi).all() && bhi.cmpge(lo).all() {
                     blocks.push(b);
@@ -265,6 +280,63 @@ pub(crate) fn bake_atlas(args: &Args) {
         ),
         Err(e) => eprintln!("atlas not written: {e}"),
     }
+    say_shore(&planet, &atlas);
+}
+
+/// How far the body's land and its towns stand from the SEA, which is
+/// the measurement `town::COAST` is set against: the median over the
+/// land, and the towns by size, biggest quarter against smallest.
+fn say_shore(planet: &Planet, atlas: &crate::atlas::Atlas) {
+    let shore = town::Shore::of(planet, SEA);
+    let bare = planet.bare();
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    let mut land: Vec<f64> = (0..20_000)
+        .map(|i| {
+            let y = 1.0 - 2.0 * (i as f64 + 0.5) / 20_000.0;
+            let s = (1.0 - y * y).max(0.0).sqrt();
+            let a = golden * i as f64;
+            DVec3::new(s * a.cos(), y, s * a.sin())
+        })
+        .filter(|d| bare.surface(*d).0 + planet.radius >= SEA)
+        .map(|d| shore.distance(d))
+        .collect();
+    land.sort_by(f64::total_cmp);
+    let median = land.get(land.len() / 2).copied().unwrap_or(0.0);
+    let mut towns: Vec<(f64, f64)> = atlas
+        .towns
+        .iter()
+        .map(|t| (t.r, shore.distance(DVec3::from_array(t.dir))))
+        .collect();
+    towns.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let quarter = (towns.len() / 4).max(1);
+    let mean = |q: &[(f64, f64)]| q.iter().map(|t| t.1).sum::<f64>() / q.len().max(1) as f64;
+    println!(
+        "the land stands a median {:.0} km from the sea; the biggest quarter of the {} settlements a mean {:.0} km from it and the smallest quarter {:.0} km, the port {:.0} km",
+        median / 1000.0,
+        towns.len(),
+        mean(&towns[..quarter.min(towns.len())]) / 1000.0,
+        mean(&towns[towns.len().saturating_sub(quarter)..]) / 1000.0,
+        towns.first().map_or(0.0, |t| t.1) / 1000.0,
+    );
+}
+
+/// One road's ROUTE before its slips and its stations are on it: the
+/// centreline the atlas's waypoints fit to, the ground the corridor was
+/// cut to, and which of its points carry tarmac and which a lamp.
+fn route_of(road: &Road, run: &[f64], radius: f64, discs: &freeport_core::field::Sites) -> Route {
+    let line = road::centreline(road, radius);
+    let open = road::open(&line, radius, discs);
+    let lit = road::lit(&line, radius, discs);
+    Route {
+        line,
+        run: run.to_vec(),
+        graded: open.clone(),
+        open,
+        lit,
+        slip: (0, 0),
+        sea: SEA,
+        pumps: Vec::new(),
+    }
 }
 
 /// Build it: the planet, its towns, the roads between them, and the
@@ -304,19 +376,7 @@ pub(crate) fn build(args: &Args) -> World {
     let mut routes = Vec::with_capacity(roads.len());
     for (road, run) in roads.iter().zip(&runs) {
         sites.extend(road::corridor(road, run, planet.radius, &discs));
-        let line = road::centreline(road, planet.radius);
-        let open = road::open(&line, planet.radius, &discs);
-        let lit = road::lit(&line, planet.radius, &discs);
-        let route = Route {
-            line,
-            run: run.clone(),
-            graded: open.clone(),
-            open,
-            lit,
-            slip: (0, 0),
-            sea: SEA,
-        };
-        routes.push(route);
+        routes.push(route_of(road, run, planet.radius, &discs));
     }
     let corridors = sites.len() - towns.len();
     planet.sites = sites.into();
@@ -340,15 +400,24 @@ pub(crate) fn build(args: &Args) -> World {
             route.flip();
         }
     }
+    // And the GAS STATIONS, after the slips, so the pieces they stand
+    // on are the pieces that are drawn.
+    let mut pumps = 0;
+    for route in &mut routes {
+        route.pumps = road::station::plan(route.course(), planet.radius);
+        pumps += route.pumps.len();
+    }
+    say_pumps(&routes, planet.radius);
     let planned = t0.elapsed();
     say_port(&towns);
     info!(
-        "{} towns {} in {:.0} ms with {} roads cut into {} levelled corridor pieces; the nearest {} to the eye are BUILT and follow it",
+        "{} towns {} in {:.0} ms with {} roads cut into {} levelled corridor pieces and {} gas stations; the nearest {} to the eye are BUILT and follow it",
         towns.len(),
         if baked.is_some() { "read" } else { "planned" },
         planned.as_secs_f64() * 1000.0,
         roads.len(),
         corridors,
+        pumps,
         crate::TOWNS_BUILT,
     );
     let (floor, roof) = planet.band();
@@ -400,6 +469,30 @@ pub(crate) fn raise_one(library: &crate::buildings::Library, town: &Town) -> Lif
     }
 }
 
+/// Where the first gas station out of the port stands, so a picture can
+/// be aimed at it and a drive can be checked against it.
+fn say_pumps(routes: &[Route], radius: f64) {
+    let Some((r, route, pump)) = routes
+        .iter()
+        .enumerate()
+        .find_map(|(r, route)| route.pumps.first().map(|p| (r, route, p)))
+    else {
+        return;
+    };
+    let Some(middle) = road::station::middle(route.course(), pump, radius) else {
+        return;
+    };
+    info!(
+        "the first gas station is on road {r} at piece {}, its forecourt at {:.0}, {:.1} km along the road",
+        pump.piece,
+        middle,
+        (0..pump.piece)
+            .map(|k| route.line[k].angle_between(route.line[k + 1]) * radius)
+            .sum::<f64>()
+            / 1000.0
+    );
+}
+
 /// Where the port is, so a picture can be aimed at it: its middle, its
 /// levelled ground and how far that reaches, and what its first lot
 /// carries.
@@ -417,8 +510,8 @@ fn say_port(towns: &[Town]) {
     let Some(lot) = port.lots.first() else {
         return;
     };
-    let f = lot_frame(RADIUS, port, lot.x, lot.z);
-    let outside = f.world(DVec3::new(0.0, -town::BLOCK / 2.0 - 2.5, 1.7));
+    let f = lot_frame(RADIUS, port, lot.x, lot.z).turned(lot.yaw);
+    let outside = f.world(DVec3::new(0.0, -lot.w / 2.0 - 2.5, 1.7));
     let inside = f.world(DVec3::new(0.0, 0.0, 1.7));
     info!(
         "the port's first lot is a {} of {} storeys; its door from {:.2} looking at {:.2}",
@@ -481,7 +574,9 @@ impl Route {
             run: &self.run[at.clone()],
             open: &self.open[at.clone()],
             graded: &self.graded[at.clone()],
-            lit: &self.lit[at],
+            lit: &self.lit[at.clone()],
+            pumps: &self.pumps,
+            first: at.start,
         }
     }
 
@@ -494,6 +589,14 @@ impl Route {
         self.graded.reverse();
         self.lit.reverse();
         self.slip = (self.slip.1, self.slip.0);
+        // A station keeps its place on the ground: its piece counts from
+        // the other end now and its side is the other side of a road
+        // walked the other way.
+        let n = self.line.len();
+        for p in &mut self.pumps {
+            p.piece = n.saturating_sub(2).saturating_sub(p.piece);
+            p.side = -p.side;
+        }
     }
 }
 

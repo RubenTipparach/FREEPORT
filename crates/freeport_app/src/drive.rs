@@ -24,6 +24,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::driver::{self, Drive, Driver};
+use freeport_core::field::hash3;
+use freeport_core::fuel::Tank;
 use freeport_core::pos::WorldPos;
 use freeport_core::town::{self, lot_frame};
 use freeport_core::traffic::Streets;
@@ -213,7 +215,9 @@ pub fn board(
             };
             let dir = at.normalize();
             let field = street.fabric.underfoot(&ground.0.planet, here, 8.0);
-            let car = Driver::board(&field, &ground.0.bounds, dir, fwd);
+            let mut car = Driver::board(&field, &ground.0.bounds, dir, fwd);
+            // With whatever was in its tank: nobody parks full.
+            car.tank = Tank::part(hash3(who.0 as i64, who.1 as i64, 0x7A, 0x9A5));
             let swing = car.fwd;
             thefts.cars.push(Theft {
                 who,
@@ -232,7 +236,7 @@ pub fn board(
 }
 
 /// The nearest car the player already owns, if one is within reach.
-fn nearest_parked(thefts: &Thefts, here: DVec3) -> Option<usize> {
+pub(crate) fn nearest_parked(thefts: &Thefts, here: DVec3) -> Option<usize> {
     thefts
         .cars
         .iter()
@@ -313,7 +317,7 @@ pub fn drive_car(
         auto.say(car, was, script.goal.0, here.world().planet.radius);
     }
     dash.status.walker = format!(
-        "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel{}",
+        "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel{} | {}",
         car.foot - here.world().planet.radius,
         car.speed.abs() * 3.6,
         if car.on_ground { "" } else { ", airborne" },
@@ -322,6 +326,7 @@ pub fn drive_car(
             script.goal.1,
             car.dir.angle_between(g) * here.world().planet.radius / 1000.0
         )),
+        crate::fuel::gauge(car, &dash.wallet, &dash.roads),
     );
     // The camera eases over the DRIVING this frame carried, which on a
     // scripted run is `steps` sixtieths and not the frame's own delta: a
@@ -638,6 +643,9 @@ fn around(
 pub struct Dash<'w> {
     pub eye: ResMut<'w, Eye>,
     pub status: ResMut<'w, Status>,
+    /// What the gauge reads: the purse and where the next pump is.
+    pub wallet: Res<'w, crate::fuel::Wallet>,
+    pub roads: Res<'w, crate::roads::Network>,
 }
 
 /// What a SCRIPTED drive is: the flags it was given and where it is

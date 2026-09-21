@@ -22,6 +22,14 @@ use glam::{DVec2, DVec3};
 pub struct Lot {
     pub x: f64,
     pub z: f64,
+    /// Its FOOTPRINT, metres a side: one `LOT`, or two of them for the
+    /// large buildings downtown and round the square.
+    pub w: f64,
+    /// How far its own frame is turned about the up, radians, so its
+    /// DOOR faces the street it fronts: a lot on the north side of a
+    /// block opens north, and a building drawn with its door on its
+    /// own south wall is turned half round to do it.
+    pub yaw: f64,
     pub storeys: u32,
     pub kind: Kind,
     /// A number of its own, for what a model hashes.
@@ -70,10 +78,27 @@ impl Frame {
     pub fn world(&self, l: DVec3) -> DVec3 {
         self.dir * self.base + self.east * l.x + self.north * l.y + self.dir * l.z
     }
+
+    /// The same frame turned `yaw` radians about its own up, anticlockwise
+    /// seen from above: what a lot's model is written in so its door
+    /// faces the street it fronts.
+    pub fn turned(&self, yaw: f64) -> Frame {
+        let (s, c) = yaw.sin_cos();
+        Frame {
+            dir: self.dir,
+            east: (self.east * c + self.north * s).normalize_or(self.east),
+            north: (self.north * c - self.east * s).normalize_or(self.north),
+            base: self.base,
+        }
+    }
 }
 
-/// How far the levelling reaches past a town's radius.
-const APRON: f64 = 12.0;
+/// How far the levelling reaches past a town's outline: half a block and
+/// a street, which is how far the far kerb of the outermost street can
+/// stand past the middle of the outermost block. It was twelve metres
+/// when a block was ten, and at forty the first street laid past the
+/// edge stood on bare relief eight centimetres over the town's level.
+const APRON: f64 = BLOCK * 0.5 + STREET;
 /// How many directions are looked at for a town site. It is also the
 /// densest cities can ever be: 20,000 points on a thousand kilometre
 /// planet are about 25 km apart, which is a world with a town over most
@@ -89,16 +114,23 @@ pub(crate) const BETWEEN: f64 = 200.0;
 /// them towns and most of them villages.
 ///
 /// How fast a town's size falls off as it stands further from the sea,
-/// in the WINDOW's own units: the share of the way up a body's habitable
-/// band at which a town is halfway down to the smallest.
+/// as a share of the body's own RADIUS: the distance from the water at
+/// which a town is halfway down to the smallest. Three hundredths is
+/// thirty kilometres on the harness planet, which is where its land's
+/// MEDIAN distance from the sea falls (the bake prints it: 31 km), so
+/// half the interior is nearer the coast than the halfway point and
+/// half is further, which is what spreads the sizes; at a tenth the
+/// bake came back with 199 settlements against 521, because nearly
+/// every site was asked to be a city and a city needs a plain. It is
+/// thirty metres on a one kilometre test ball. Measured in the body's
+/// own size rather than in metres, so the law spreads the same way on
+/// any body.
 ///
-/// A share of the RELIEF is what this was and it is wrong on a small
-/// body: the window a town may stand in is 3 m to three tenths of the
-/// relief, so on a two kilometre test ball that is 3 m to 12 and a fall
-/// off length of a twentieth of the relief is two metres. Every town on
-/// it came out the same size, which is the thing this replaces. Measured
-/// in the window, the law spreads the same way on any body.
-const COAST: f64 = 0.22;
+/// A share of the RELIEF is what this was first, and then a share of the
+/// habitable WINDOW, and both were reading the HEIGHT over the sea as a
+/// stand in for the distance to it. `shore::Shore` is the distance
+/// itself.
+const COAST: f64 = 0.03;
 /// How sharply it falls: over one at the shore and flat inland, which is
 /// the shape of what a port is worth against what a market town is.
 const COAST_BIAS: f64 = 1.7;
@@ -146,33 +178,6 @@ const CUT: f64 = 15.0;
 /// shore, so the coastal law still shapes it and this is what keeps it
 /// from competing with the cities the road joins.
 pub(crate) const WAYSIDE: f64 = 0.42;
-
-/// How many of a suburb's blocks carry a house at all. A suburb is a town
-/// with SPACE in it, and what says so is the space rather than the house:
-/// at one it is the same grid as downtown with shorter buildings on it,
-/// which is what this was.
-const SUBURB_FILL: f64 = 0.55;
-/// How much of DOWNTOWN is a plaza, a yard or a car park rather than a
-/// building, on the same hash and thinned by the same grain.
-const PLAZA: f64 = 0.15;
-/// How far a suburban house WANTS to stand off the middle of its own
-/// block, metres either way, against a town house's own small jitter. A
-/// setback and a garden are the other thing that says suburb.
-///
-/// What it GETS is whatever its own block leaves once the building is on
-/// it, which is `Kind::covers`: a block is `BLOCK` across and the
-/// street's inner kerb stands exactly `BLOCK / 2` from its middle, so a
-/// building covering its whole block may not move at all. Every variant
-/// in the baked library is `BLOCK` square today, so this is nought on
-/// the ground and is the number that comes back the day a house is baked
-/// smaller. A wall is one oriented box that is DRAWN and COLLIDED, so a
-/// setback taken off a block it does not fit on is a wall standing in
-/// the middle of the road, which is what the owner photographed.
-const SUBURB_SETBACK: f64 = 4.5;
-/// How far a town house stands off the middle of its own block, metres
-/// either way: enough that a terrace is not a ruler and no more, and
-/// bounded by the same block.
-const TOWN_JITTER: f64 = 1.0;
 
 /// East and north at a direction on the sphere.
 pub fn frame_at(dir: DVec3) -> (DVec3, DVec3) {
@@ -306,8 +311,8 @@ fn in_order(mut cands: Vec<(DVec3, f64, usize)>, seed: u32) -> Vec<(DVec3, f64)>
         .collect()
 }
 
-/// How big a town standing `over_sea` metres over the sea is, as a share
-/// of the biggest on a body with `relief` of it.
+/// How big a town standing `shore` metres from the SEA is, as a share
+/// of the biggest on the body.
 ///
 /// **A big city is COASTAL.** That is the owner's own observation and it
 /// is most of economic geography: a port trades with the whole world and
@@ -317,24 +322,26 @@ fn in_order(mut cands: Vec<(DVec3, f64, usize)>, seed: u32) -> Vec<(DVec3, f64)>
 /// puts them in an arbitrary place: the biggest city on the body was
 /// wherever the hash happened to accept first.
 ///
-/// The measure is the height over the SEA rather than the distance to the
-/// nearest water, which would be a search. On this world they are nearly
-/// the same question by construction: the continent term is a plateau
-/// with a steep shelf (`biome::shelf`), so low ground IS the coastal
-/// fringe and the interior stands a kilometre up. `COAST` is the fall off
-/// length as a share of the body's own relief.
-pub fn coastal(over_sea: f64, planet: &Planet) -> f64 {
-    let (low, high) = window(planet);
-    let reach = ((high - low) * COAST).max(f64::MIN_POSITIVE);
-    let up = ((over_sea - low) / reach).max(0.0);
-    SMALLEST + (1.0 - SMALLEST) / (1.0 + up.powf(COAST_BIAS))
+/// The measure is the DISTANCE to the nearest water (`Shore`), and it
+/// was the height over the sea for a long time on the reasoning that
+/// the continent term is a plateau with a steep shelf, so low ground IS
+/// the coastal fringe. Measured on the atlas that gave: not one of 521
+/// settlements with open water within three kilometres and the port's
+/// own nearest sea 15.7 km off, because `CUT` caps how deep a site may
+/// cut and the flattest big sites are inland basins. A proxy that
+/// disagrees with the thing it stands for is what the owner read off
+/// the map as cities that were not on the coast.
+pub fn coastal(shore: f64, planet: &Planet) -> f64 {
+    let reach = (planet.radius * COAST).max(f64::MIN_POSITIVE);
+    let out = (shore / reach).max(0.0);
+    SMALLEST + (1.0 - SMALLEST) / (1.0 + out.powf(COAST_BIAS))
 }
 
 /// A town's own size, metres: the coastal share of the biggest on the
 /// body, with its own jitter so two towns on one shore are not twins.
-pub fn size_of(biggest: f64, over_sea: f64, planet: &Planet, index: usize, seed: u32) -> f64 {
+pub fn size_of(biggest: f64, shore: f64, planet: &Planet, index: usize, seed: u32) -> f64 {
     let jitter = 1.0 + (hash3(index as i64, 17, 3, seed) - 0.5) * 2.0 * SIZE_JITTER;
-    biggest * coastal(over_sea, planet) * jitter
+    biggest * coastal(shore, planet) * jitter
 }
 
 /// What the natural ground does across a town's own site.
@@ -447,6 +454,9 @@ pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) ->
         cands.push((dir, h, i));
     }
     let cands = in_order(cands, seed);
+    // Where the water is, once for the body: a town's size is how far
+    // it stands from it.
+    let shore = Shore::of(planet, sea);
     let mut placed: Vec<Placement> = Vec::new();
     for (dir, h) in cands {
         if placed.len() >= count {
@@ -455,7 +465,7 @@ pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) ->
         // Its size is its OWN, off how near the sea it stands, so the
         // great cities come out on the coast and the interior carries
         // market towns. It was the rank it happened to be accepted at.
-        let radius = size_of(biggest, h, planet, placed.len(), seed);
+        let radius = size_of(biggest, shore.distance(dir), planet, placed.len(), seed);
         // Apart by BOTH their radii, because they are not the same size:
         // one figure for the gap would stand a village as far off its
         // neighbour as a city stands off its own.
@@ -586,8 +596,7 @@ pub fn lay(dir: DVec3, h: f64, radius: f64, along: DVec2, index: usize, seed: u3
     // way.
     let n = ((radius * OUTLINE) / PITCH).ceil() as i64;
     let seed = town_seed(seed, index);
-    let (lots, built) = plot(n, radius, along, seed);
-    let pieces = streets_of(n, &built);
+    let Plan { lots, pieces } = plot(n, radius, along, seed);
     Town {
         dir,
         east,
@@ -599,128 +608,6 @@ pub fn lay(dir: DVec3, h: f64, radius: f64, along: DVec2, index: usize, seed: u3
         pieces,
         index,
         seed,
-    }
-}
-
-/// Which SIDES of a block want a street: west, east, south and north.
-pub(super) mod fronts {
-    pub const WEST: u8 = 1;
-    pub const EAST: u8 = 2;
-    pub const SOUTH: u8 = 4;
-    pub const NORTH: u8 = 8;
-    pub const ALL: u8 = WEST | EAST | SOUTH | NORTH;
-}
-
-/// Which block of a town's grid carries what, and which sides of each
-/// block want a street, which is what the streets are then laid along.
-fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> (Vec<Lot>, Vec<u8>) {
-    let wide = (2 * n + 1) as usize;
-    let mut built = vec![0u8; wide * wide];
-    let mut lots = Vec::new();
-    let hash = |i: i64, j: i64, k: i64| hash3(i, j, k, seed);
-    for i in -n..=n {
-        for j in -n..=n {
-            let (cx, cz) = (i as f64 * PITCH, j as f64 * PITCH);
-            let want = demand(cx, cz, radius, along, seed);
-            let zone = Zone::of(want);
-            if zone == Zone::Away {
-                continue;
-            }
-            // A plaza downtown, a field in the suburbs: the same hash,
-            // read against what the place can afford to leave empty.
-            let empty = if zone == Zone::Suburb {
-                1.0 - SUBURB_FILL
-            } else {
-                PLAZA
-            };
-            // And the GRAIN thins as well as frays. A town's empty
-            // ground had no structure at all: a flat coin toss a
-            // block, which from the air is static inside a fractal
-            // outline. The bite is the same number `demand` subtracts,
-            // so the holes in a suburb are the shape of the holes in
-            // its own edge and there is ONE rule about where a town is
-            // not rather than two.
-            let thin = shape::bite(cx, cz, radius, along, seed);
-            if hash(i, j, 0) < empty + (1.0 - empty) * thin {
-                continue;
-            }
-            // How far INTO the town proper this block stands, nought at
-            // its own edge and one at the middle, which is what the
-            // skyline is a function of.
-            //
-            // The raw demand is what it read, so moving `TOWN_AT` to
-            // fix the MIX moved the SKYLINE with it: at 0.58 the
-            // shallowest block of the town proper came out at three
-            // storeys and the two storey house stopped existing. A
-            // zone's own share of its own range is the number that
-            // means something here, and the square law over it is the
-            // one this always had.
-            let up = ((want - TOWN_AT) / (1.0 - TOWN_AT)).clamp(0.0, 1.0);
-            let tall = match zone {
-                // A suburb is ONE storey whatever the hash says. What
-                // makes it a suburb is that nothing on it is tall.
-                Zone::Suburb => 1,
-                _ => 1 + ((hash(i, j, 3) * 0.4 + up * up) * 7.0).floor() as u32,
-            };
-            let (kind, storeys) = choose(tall, hash(i, j, 6));
-            // A lot may move within its own BLOCK and no further,
-            // because the street's inner kerb is `BLOCK / 2` from the
-            // block's middle and what stands past it is a wall in the
-            // road. The room is what the building does not cover, and
-            // the zone says how much of that room it wants.
-            let room = BLOCK * 0.5 * (1.0 - kind.covers()).max(0.0);
-            let want = if zone == Zone::Suburb {
-                SUBURB_SETBACK
-            } else {
-                TOWN_JITTER
-            };
-            let jitter = 2.0 * want.min(room);
-            built[(i + n) as usize * wide + (j + n) as usize] |= if zone == Zone::Suburb {
-                faces(i, j)
-            } else {
-                fronts::ALL
-            };
-            // And the road to it is paved all the way IN. A frontage on
-            // its own is a driveway: it paves the one street beside the
-            // block and stops, so a lone suburban house stood at an
-            // isolated rectangle of tarmac that joined nothing.
-            home_run(i, j, |k, m, side| {
-                built[(k + n) as usize * wide + (m + n) as usize] |= side;
-            });
-            lots.push(Lot {
-                x: cx + (hash(i, j, 4) - 0.5) * jitter,
-                z: cz + (hash(i, j, 5) - 0.5) * jitter,
-                storeys,
-                kind,
-                id: ((i + 64) as u32) << 8 | (j + 64) as u32,
-            });
-        }
-    }
-    (lots, built)
-}
-
-/// What kind of building a lot of a wanted height gets, and how many
-/// storeys it ends up with: towers in the middle, one floor houses at the
-/// edge, and the odd hangar among them.
-fn choose(tall: u32, pick: f64) -> (Kind, u32) {
-    if tall >= 4 {
-        if pick < 0.6 {
-            (Kind::Block, tall.clamp(4, 8))
-        } else {
-            (Kind::Tower, tall.clamp(3, 5))
-        }
-    } else if tall == 1 {
-        if pick < 0.45 {
-            (Kind::Bungalow, 1)
-        } else if pick < 0.7 {
-            (Kind::House, 1)
-        } else {
-            (Kind::Hangar, 1)
-        }
-    } else if pick < 0.85 {
-        (Kind::House, tall)
-    } else {
-        (Kind::Block, tall.max(4))
     }
 }
 
@@ -745,16 +632,25 @@ pub fn ground_at(planet: &dyn Density, dir: DVec3, near: f64, far: f64) -> f64 {
 mod shape;
 pub use shape::*;
 
+/// Which block carries what, and the lots on each.
+mod plot;
+use plot::Plan;
+pub use plot::*;
+
 /// The box counting dimension of a town's own plan, which is a
 /// measurement and not a feature.
 mod fractal;
+
+/// How far a place stands from the sea, which is what sizes it.
+mod shore;
+pub use shore::*;
 
 mod site;
 pub use site::*;
 
 mod street;
 pub use street::*;
-use street::{faces, home_run, streets_of};
+use street::{home_run, streets_of};
 
 #[cfg(test)]
 mod tests;

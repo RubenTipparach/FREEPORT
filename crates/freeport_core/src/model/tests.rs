@@ -1,6 +1,6 @@
 use super::*;
-use crate::field::{Density, Planet, TERRAIN};
-use crate::town::{self, arm, frame_at, Piece, BLOCK};
+use crate::field::{Density, Planet, PAINT, STREET, TERRAIN};
+use crate::town::{self, arm, frame_at, Piece, BLOCK, LIFT};
 
 #[test]
 fn box_faces_point_outward_and_match_collision_faces() {
@@ -565,7 +565,7 @@ fn a_walker_walks_a_street_and_is_stopped_by_a_wall() {
     // between two is a way through.
     let lot = &town.lots[town.lots.len() / 2];
     let f = town::lot_frame(planet.radius, &town, lot.x, lot.z);
-    let out = BLOCK / 2.0 + 3.0;
+    let out = lot.w / 2.0 + 3.0;
     let start = f.world(DVec3::new(out, 0.0, 1.7));
     let west = f.world(DVec3::new(0.0, 0.0, 1.7)) - start;
     let (w, gone) = walk_town(&planet, &fab.blocks, start, west, 150);
@@ -587,6 +587,7 @@ fn a_house_and_an_office_are_built_of_different_trades() {
     use crate::field::{BRICK, CONCRETE, CURTAIN, MARBLE, STONE, VINYL, WOOD};
     let houses = [WOOD, BRICK, VINYL];
     let offices = [BRICK, CONCRETE, MARBLE, CURTAIN, STONE];
+    let shops = [BRICK, CONCRETE, STONE, VINYL];
     let mut seen: Vec<(Kind, Vec<u8>)> = Vec::new();
     for kind in Kind::all() {
         let mut had: Vec<u8> = Vec::new();
@@ -601,6 +602,7 @@ fn a_house_and_an_office_are_built_of_different_trades() {
             let allowed: &[u8] = match kind {
                 Kind::House | Kind::Bungalow => &houses,
                 Kind::Block | Kind::Tower => &offices,
+                Kind::Shop => &shops,
                 Kind::Hangar => &[CONCRETE],
             };
             assert!(
@@ -619,6 +621,7 @@ fn a_house_and_an_office_are_built_of_different_trades() {
         let want = match kind {
             Kind::House | Kind::Bungalow => 3,
             Kind::Block | Kind::Tower => 5,
+            Kind::Shop => 4,
             Kind::Hangar => 1,
         };
         assert_eq!(

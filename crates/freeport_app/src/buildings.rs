@@ -3,7 +3,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::dc::DcMesh;
 use freeport_core::model::{self, Model, Solid};
-use freeport_core::town::{Lot, BLOCK};
+use freeport_core::town::{Lot, LOT};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -92,7 +92,7 @@ impl Library {
                 .0
                 .insert((entry.kind, entry.storeys), bake.models(kind)?);
         }
-        for kind in model::Kind::all() {
+        for kind in model::Kind::all().into_iter().filter(|k| k.baked()) {
             let (lo, hi) = kind.storeys();
             for n in lo..=hi {
                 if !library.0.contains_key(&(kind.name().into(), n)) {
@@ -112,20 +112,27 @@ impl Library {
     /// `model::Kind::skin` is the one table that answers it. The
     /// procedural fallback below builds its skin in directly, because it
     /// is making the walls anyway and knows a wall from a floor.
+    ///
+    /// A bake is ONE lot square, so a lot of two by two (the large
+    /// buildings downtown and round the square) is built parametrically
+    /// at its own footprint, as is any kind the library does not carry.
     pub fn model(&self, lot: &Lot, lod: usize, seed: u32) -> Model {
         let (lo, hi) = lot.kind.storeys();
         let dice = seed ^ lot.id;
-        match self
-            .0
-            .get(&(lot.kind.name().into(), lot.storeys.clamp(lo, hi)))
-        {
+        let baked = ((lot.w - LOT).abs() < 1e-6)
+            .then(|| {
+                self.0
+                    .get(&(lot.kind.name().into(), lot.storeys.clamp(lo, hi)))
+            })
+            .flatten();
+        match baked {
             Some(models) => {
                 let mut m = models[lod.min(2)].clone();
                 m.reskin(freeport_core::field::CONCRETE, lot.kind.skin(dice));
                 m
             }
             None => {
-                let w = lot.kind.covers() * BLOCK;
+                let w = lot.kind.covers() * lot.w;
                 model::building(lot.kind, w, w, lot.storeys, dice)
             }
         }
@@ -142,7 +149,7 @@ impl Bake {
     /// the building does not have. The two are one number and this is
     /// where they are held together.
     fn models(self, kind: model::Kind) -> Result<[Model; 3], String> {
-        let covers = kind.covers() * BLOCK;
+        let covers = kind.covers() * LOT;
         if self.schema != 1
             || self.lods.len() != 3
             || !self.width.is_finite()

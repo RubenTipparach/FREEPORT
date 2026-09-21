@@ -783,3 +783,42 @@ fn a_fast_car_cannot_tunnel_through_a_wall() {
         assert!(got > AT - 20.0, "it never reached the wall: {got:.2} m");
     }
 }
+
+/// A car BURNS what it drives: eighty kilometres on a tank, taken off
+/// the ground the wheels actually make, and a car that has run dry rolls
+/// to a stop and will not pull away however hard the throttle is held,
+/// until somebody fills it.
+#[test]
+fn a_car_burns_the_ground_it_makes_and_a_dry_one_will_not_pull_away() {
+    use crate::fuel::{Tank, RANGE};
+    let b = bounds();
+    let field = world(&[]);
+    let mut d = car(&field, &b);
+    let go = Drive {
+        throttle: 1.0,
+        ..Drive::default()
+    };
+    let gone = drive(&mut d, &field, &b, go, 10.0);
+    let burned = 1.0 - d.tank.0;
+    println!(
+        "ten seconds went {gone:.1} m and burned {:.2}% of a tank, which is {:.1} m of range",
+        burned * 100.0,
+        burned * RANGE
+    );
+    assert!(gone > 100.0, "the car did not go anywhere");
+    assert!(
+        (burned * RANGE - gone).abs() < gone * 0.02,
+        "burned {:.1} m of range for {gone:.1} m driven",
+        burned * RANGE
+    );
+    // Run it dry: the throttle does nothing and the car coasts to a
+    // stop, then a fill brings it back.
+    d.tank = Tank(0.0);
+    d.speed = 0.0;
+    let stuck = drive(&mut d, &field, &b, go, 5.0);
+    assert!(stuck < 0.01, "a dry car went {stuck:.2} m on the throttle");
+    assert!(d.tank.empty());
+    d.tank.fill();
+    let again = drive(&mut d, &field, &b, go, 5.0);
+    assert!(again > 50.0, "a filled car went only {again:.1} m");
+}

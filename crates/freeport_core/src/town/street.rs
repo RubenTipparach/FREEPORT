@@ -18,7 +18,7 @@
 //!
 //! Coordinates are the town's, x east and z north in metres.
 
-use super::fronts;
+use super::plot::{fronts, square_piece};
 
 /// Which ARMS a crossing has: the four ways a street can leave it.
 ///
@@ -30,6 +30,9 @@ pub mod arm {
     pub const EAST: u8 = 2;
     pub const SOUTH: u8 = 4;
     pub const NORTH: u8 = 8;
+    /// Not a crossing at all: the market SQUARE, one piece of paving
+    /// with no street through it.
+    pub const SQUARE: u8 = 16;
 }
 
 /// The three BANDS a street is cut into ACROSS it: the pavement, the
@@ -97,6 +100,11 @@ impl Piece {
         self.arms == 0
     }
 
+    /// Whether this is the market SQUARE.
+    pub fn square(&self) -> bool {
+        self.arms & arm::SQUARE != 0
+    }
+
     /// Whether a run points north and south rather than east and west.
     /// A run is a piece of a street and a street is `STREET` across, so
     /// which of its two sizes IS the street says which way it lies.
@@ -124,7 +132,15 @@ impl Piece {
 /// that have to agree, they are one number said three ways.
 pub const LANE: f64 = 2.75;
 pub const WALK: f64 = 1.5;
-pub const BLOCK: f64 = 10.0;
+/// A LOT is one house's ground, and a BLOCK is `SIDE` of them a side
+/// with streets only round the outside: four by four, which is what
+/// `docs/mockups/city-blocks.html` measured against six real plans and
+/// the owner approved. One building a block, which is what this was,
+/// put a street on every side of every house and 27% of the ground
+/// under buildings against the 40 to 55% a real city carries.
+pub const LOT: f64 = 10.0;
+pub const SIDE: usize = 4;
+pub const BLOCK: f64 = SIDE as f64 * LOT;
 pub const STREET: f64 = 2.0 * (LANE + WALK);
 pub const PITCH: f64 = BLOCK + STREET;
 
@@ -145,30 +161,6 @@ pub const LIFT: f64 = 0.05;
 /// A street's RUN between two crossings is laid in pieces about this
 /// long, each on its own patch of the sphere.
 pub const PIECE: f64 = 3.5;
-/// The one side a suburban block fronts: the side its road home is on.
-///
-/// A suburb block used to front all four sides like a downtown one, and
-/// a lone house with nothing built beside it then stood in a square ring
-/// of its own tarmac: a moat.
-///
-/// What replaced that fronted the side FACING the middle of town, and
-/// that is the wrong side, because the street on it RUNS ACROSS the way
-/// home: a house far out along east fronted west, which paves a NORTH
-/// SOUTH street beside it, and nothing on that street leads west. Every
-/// suburban house came out with an isolated rectangle of tarmac at its
-/// door, which is what the owner's picture showed. The side to front is
-/// the one whose street runs ALONG the axis the middle of town is down,
-/// and `home_run` is then what carries that street all the way in.
-pub(super) fn faces(i: i64, j: i64) -> u8 {
-    if i.abs() >= j.abs() {
-        // Far out along east: the road home runs east and west, which is
-        // the street on this block's own south side.
-        fronts::SOUTH
-    } else {
-        fronts::WEST
-    }
-}
-
 /// Every block whose frontage has to be paved so that the block at
 /// `(i, j)` can be DRIVEN TO from the middle of town, as an L: out along
 /// the axis it stands furthest down, then in along the other.
@@ -204,13 +196,19 @@ pub(super) fn home_run(i: i64, j: i64, mut mark: impl FnMut(i64, i64, u8)) {
 /// paving was a circle whatever shape the town itself came out, so the
 /// outline the lobes cut was hidden under a perfectly round grid of
 /// tarmac. A street that serves nothing is not a street.
-pub(super) fn streets_of(n: i64, built: &[u8]) -> Vec<Piece> {
+///
+/// And never THROUGH the market square: the blocks facing it front it,
+/// so the streets round it are laid, and the lines between two of its
+/// own cells carry nothing.
+pub(super) fn streets_of(n: i64, built: &[u8], square: i64) -> Vec<Piece> {
     let wide = (2 * n + 1) as usize;
     let at = |i: i64, j: i64, side: u8| {
         (-n..=n).contains(&i)
             && (-n..=n).contains(&j)
             && built[(i + n) as usize * wide + (j + n) as usize] & side != 0
     };
+    let through =
+        |a: (i64, i64), b: (i64, i64)| at(a.0, a.1, fronts::SQUARE) && at(b.0, b.1, fronts::SQUARE);
     // Along the block's own edge: the line between block i - 1 and i.
     let line = |i: i64| i as f64 * PITCH - BLOCK / 2.0 - STREET / 2.0;
     // A run spans the BLOCK it serves and stops at the crossing squares
@@ -224,8 +222,12 @@ pub(super) fn streets_of(n: i64, built: &[u8]) -> Vec<Piece> {
     // Every street between block i - 1 and block i, as far as the blocks
     // either side of it are built on: the paving is continuous along a
     // run of built blocks and stops with them.
-    let northerly = |i: i64, j: i64| at(i - 1, j, fronts::EAST) || at(i, j, fronts::WEST);
-    let easterly = |i: i64, j: i64| at(i, j - 1, fronts::NORTH) || at(i, j, fronts::SOUTH);
+    let northerly = |i: i64, j: i64| {
+        !through((i - 1, j), (i, j)) && (at(i - 1, j, fronts::EAST) || at(i, j, fronts::WEST))
+    };
+    let easterly = |i: i64, j: i64| {
+        !through((i, j - 1), (i, j)) && (at(i, j - 1, fronts::NORTH) || at(i, j, fronts::SOUTH))
+    };
     for i in -n..=n + 1 {
         for j in -n..=n {
             if !northerly(i, j) {
@@ -292,5 +294,6 @@ pub(super) fn streets_of(n: i64, built: &[u8]) -> Vec<Piece> {
             });
         }
     }
+    pieces.extend(square_piece(square));
     pieces
 }

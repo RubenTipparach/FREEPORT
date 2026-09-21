@@ -23,6 +23,7 @@ use bevy::camera::visibility::NoAutoAabb;
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::field::TERRAIN;
+use freeport_core::model::Model;
 use freeport_core::pos::WorldPos;
 use freeport_core::road::ribbon;
 
@@ -54,11 +55,25 @@ const OFF_ROAD: f64 = 400.0;
 pub struct Network {
     /// Which road, which stretch of it, and where its middle is.
     stretches: Vec<(usize, usize, DVec3)>,
+    /// Every GAS STATION on the body: the middle of its forecourt in the
+    /// planet's frame, which is what a car pulls up beside.
+    pumps: Vec<DVec3>,
 }
 
 impl Network {
-    /// Every stretch of every road on a body.
+    /// Every stretch of every road on a body, and every gas station.
     pub fn of(world: &World) -> Network {
+        let radius = world.planet.radius;
+        let pumps = world
+            .routes
+            .iter()
+            .flat_map(|route| {
+                route
+                    .pumps
+                    .iter()
+                    .filter_map(|p| freeport_core::road::station::middle(route.course(), p, radius))
+            })
+            .collect();
         let mut stretches = Vec::new();
         for (r, route) in world.routes.iter().enumerate() {
             for k in 0..ribbon::count(route.line.len()) {
@@ -73,12 +88,27 @@ impl Network {
                 stretches.push((r, k, route.line[(at.start + at.end) / 2]));
             }
         }
-        Network { stretches }
+        Network { stretches, pumps }
     }
 
     /// How many stretches there are, for the log.
     pub fn len(&self) -> usize {
         self.stretches.len()
+    }
+
+    /// How many gas stations there are, for the log.
+    pub fn pumps(&self) -> usize {
+        self.pumps.len()
+    }
+
+    /// The nearest gas station to a point in the planet's frame: how far
+    /// off its forecourt's middle is, metres, and where it is.
+    pub fn nearest_pump(&self, at: DVec3) -> Option<(f64, DVec3)> {
+        self.pumps
+            .iter()
+            .map(|&p| ((p - at).length(), p))
+            .filter(|(d, _)| d.is_finite())
+            .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
     /// Where on a ROAD to steer for: `look` metres along the tarmac from
@@ -317,11 +347,17 @@ fn lay(
             kid.insert((bounds, NoAutoAabb));
         }
     });
-    // The lamps in the BODY's own frame, each carrying its index along
-    // the whole road: a stretch streams, so an index into one would name
-    // a different lamp the moment a neighbour arrived. The stretch's own
-    // number times `ribbon::LAMPS`, which is more than a stretch can
-    // hold, is what makes a place in one a place along the road.
+    Some(verge_of(&model, &frame, which))
+}
+
+/// What a stretch puts in the WORLD besides its picture: its lamps and
+/// whatever stands on it, in the body's own frame.
+fn verge_of(model: &Model, frame: &freeport_core::town::Frame, which: Paved) -> Verge {
+    // The lamps each carrying their index along the whole road: a
+    // stretch streams, so an index into one would name a different lamp
+    // the moment a neighbour arrived. The stretch's own number times
+    // `ribbon::LAMPS`, which is more than a stretch can hold, is what
+    // makes a place in one a place along the road.
     let lamps = model
         .lamps
         .iter()
@@ -335,10 +371,23 @@ fn lay(
             )
         })
         .collect();
-    Some(Verge {
+    // And whatever STANDS on the stretch, which is a gas station's pumps,
+    // pillars and kiosk: boxes in the body's frame, the same boxes the
+    // walls of a town are, so a car is stopped by a pump the way it is
+    // stopped by a wall.
+    let blocks = model.blocks(frame);
+    let bounds = blocks
+        .iter()
+        .fold((DVec3::INFINITY, DVec3::NEG_INFINITY), |(lo, hi), b| {
+            let (blo, bhi) = b.bounds();
+            (lo.min(blo), hi.max(bhi))
+        });
+    Verge {
         which: (which.0, which.1),
+        blocks,
+        bounds,
         lamps,
-    })
+    }
 }
 
 fn mesh_points(mesh: &freeport_core::dc::DcMesh) -> impl Iterator<Item = Vec3> + '_ {
@@ -423,7 +472,7 @@ pub fn mouth_of(world: &World) -> Option<(usize, usize, DVec3, f64)> {
 /// so is how far the slip's own end stands from the crossing it was laid
 /// to. Everything else about it (the mouth, the length) is what says
 /// which end is short when it is not.
-pub fn slip_of(world: &World) -> Option<(usize, f64, f64, f64, f64, f64, f64)> {
+pub fn slip_of(world: &World) -> Option<Slip> {
     let route = world.routes.first()?;
     let town = world.towns.get(world.roads.first()?.from)?;
     let radius = world.planet.radius;
@@ -437,7 +486,17 @@ pub fn slip_of(world: &World) -> Option<(usize, f64, f64, f64, f64, f64, f64)> {
         })
         .fold(0.0f64, f64::max);
     if n < 2 {
-        return Some((0, 0.0, 0.0, 0.0, f64::NAN, paved, 0.0));
+        return Some(Slip {
+            n: 0,
+            ran: 0.0,
+            mouth: 0.0,
+            end: 0.0,
+            meets: f64::NAN,
+            paved,
+            buried: 0.0,
+            at: 0,
+            weight: 0.0,
+        });
     }
     let head = &route.line[..n];
     let ran: f64 = head
@@ -463,23 +522,49 @@ pub fn slip_of(world: &World) -> Option<(usize, f64, f64, f64, f64, f64, f64)> {
     // visible: the slip reads the analytic surface and the mesher
     // contours the field, and the two part company wherever the
     // volumetric term still bites.
-    let buried = (0..n)
+    // WHICH piece and how far into the town's own plateau it stands,
+    // because a slip crosses the skirt where the volumetric term comes
+    // back, and a number with no place on it cannot be looked for.
+    let site = freeport_core::town::site_of(town);
+    let (buried, at, weight) = (0..n)
         .map(|k| {
             let dir = route.line[k];
-            let here =
-                freeport_core::town::surface_radius(&world.planet.around(dir, 1e-9), dir) - radius;
-            here - (route.run[k] + ribbon::LIFT)
+            let near = world.planet.around(dir, 1e-9);
+            let here = freeport_core::town::surface_radius(&near, dir) - radius;
+            (
+                here - (route.run[k] + ribbon::LIFT),
+                k,
+                near.site_weight(&site, dir),
+            )
         })
-        .fold(f64::NEG_INFINITY, f64::max);
-    Some((
+        .fold(
+            (f64::NEG_INFINITY, 0, 0.0),
+            |a, b| if b.0 > a.0 { b } else { a },
+        );
+    Some(Slip {
         n,
         ran,
-        out(head[n - 1]),
-        out(head[0]),
-        to_paving,
+        mouth: out(head[n - 1]),
+        end: out(head[0]),
+        meets: to_paving,
         paved,
         buried,
-    ))
+        at,
+        weight,
+    })
+}
+
+/// What `slip_of` measures about road 0's slip.
+pub(crate) struct Slip {
+    pub n: usize,
+    pub ran: f64,
+    pub mouth: f64,
+    pub end: f64,
+    pub meets: f64,
+    pub paved: f64,
+    pub buried: f64,
+    pub at: usize,
+    pub weight: f64,
 }
 
 /// Everything the harness has to SAY about the roads on this body, in
@@ -501,9 +586,10 @@ pub fn report(world: &World) {
     bevy::log::info!(
         "{slipped} slips carry a road's two ENDS into a town, and {mouths} mouths of tarmac are left bare where a road passes THROUGH a settlement; the worst stands {worst:.0} m from any paving"
     );
-    if let Some((n, ran, mouth, end, meets, paved, buried)) = slip_of(world) {
+    if let Some(s) = slip_of(world) {
         bevy::log::info!(
-            "road 0's SLIP is {n} pieces over {ran:.0} m, from the highway's mouth {mouth:.0} m out of town 0 to {end:.0} m out, ending {meets:.2} m from the town's own paving, which reaches {paved:.0} m; the drawn ground stands {buried:.2} m over its own tarmac at the worst"
+            "road 0's SLIP is {} pieces over {:.0} m, from the highway's mouth {:.0} m out of town 0 to {:.0} m out, ending {:.2} m from the town's own paving, which reaches {:.0} m; the drawn ground stands {:.2} m over its own tarmac at the worst, at piece {} of {} where the town's plateau weighs {:.2}",
+            s.n, s.ran, s.mouth, s.end, s.meets, s.paved, s.buried, s.at, s.n, s.weight
         );
     }
 }
@@ -554,7 +640,12 @@ pub fn worst_grade(world: &World) -> (f64, f64, usize, f64, f64) {
             let slack = freeport_core::road::STEEPEST + 0.02 / run;
             if grade > slack {
                 over += 1;
-                if k < route.slip.0 || k >= route.line.len() - route.slip.1 {
+                // A piece with EITHER end in a slip is the slip's: the
+                // tail's join piece runs from the highway's own last
+                // point to the slip's first, and counted off its head
+                // end alone it read as the highway's, 28 pieces at up
+                // to 26.2% on a body whose highways are held to seven.
+                if k < route.slip.0 || k + 1 >= route.line.len() - route.slip.1 {
                     in_slip += 1;
                     short = short.max(grade);
                 } else {

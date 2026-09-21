@@ -206,8 +206,16 @@ fn touching_rough_ground_can_take_off_without_a_recovery_teleport() {
     use freeport_core::town;
     let planets = rough_system();
     let planet = &planets.bodies[0].world.planet;
-    let port = planet.sites[0].dir;
-    let skirt = (port + town::frame_at(port).0 * 86.5e-6).normalize();
+    let site = &planet.sites[0];
+    let port = site.dir;
+    // Just off the edge of the port's own plateau, where its SKIRT
+    // starts, read off the site rather than written as a number: eighty
+    // six metres was that edge on a forty metre town with a twelve metre
+    // apron, and is the middle of the plateau now.
+    let east = town::frame_at(port).0;
+    let probe = (port + east * (site.r / planet.radius)).normalize();
+    let out = site.level_r(probe) + 0.5;
+    let skirt = (port + east * (out / planet.radius)).normalize();
     let wilderness = DVec3::new(0.4, 0.8, 0.3).normalize();
     for direction in [port, wilderness, skirt] {
         let ground = town::surface_radius(planet, direction);
@@ -219,6 +227,10 @@ fn touching_rough_ground_can_take_off_without_a_recovery_teleport() {
         );
         let (departed, _) = planets.advance(contact, direction, 2e6, 6.0, 0.5, 1.0 / 60.0);
         let distance = (departed - contact).length();
+        println!(
+            "took off {distance:.3} m into a density of {:.3}",
+            planet.at(departed)
+        );
         assert!(
             (0.09..0.15).contains(&distance),
             "takeoff moved {distance} m"

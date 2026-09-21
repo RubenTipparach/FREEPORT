@@ -18,6 +18,7 @@ pub mod driver;
 pub mod field;
 pub mod figure;
 pub mod flight;
+pub mod fuel;
 pub mod lattice;
 pub mod march;
 pub mod model;

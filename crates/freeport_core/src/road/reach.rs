@@ -205,13 +205,24 @@ const SLIP_CLEAR: f64 = 0.5;
 /// town's levelling there is no cell error to hide, because the ground
 /// there is a plane the audit holds to two millimetres, so the street's
 /// own five centimetres is enough and the taper is the ramp between.
-fn riding(local: &crate::field::Planet, site: &crate::town::Site, dir: DVec3, radius: f64) -> f64 {
+fn riding(
+    local: &crate::field::Planet,
+    site: &crate::town::Site,
+    dir: DVec3,
+    radius: f64,
+) -> (f64, f64) {
     let top = radius + local.surface(dir).0 + local.overhang;
     let ground = crate::town::surface_radius_from(local, dir, top) - radius;
     let high = super::ribbon::LIFT + SLIP_CLEAR;
     let ease = 1.0 - local.site_weight(site, dir);
     let lift = crate::town::LIFT + (high - crate::town::LIFT) * ease;
-    ground + lift - super::ribbon::LIFT
+    // And the FLOOR the ramp may not take the point under: the street's
+    // own lift over the ground, which is the least any tarmac here
+    // stands over what it is laid on.
+    (
+        ground + lift - super::ribbon::LIFT,
+        ground + crate::town::LIFT - super::ribbon::LIFT,
+    )
 }
 
 /// The piece of a town's own paving a slip is laid to REACH: the
@@ -248,7 +259,7 @@ fn crossing<'a>(
     let pick = |firm: bool| {
         town.pieces
             .iter()
-            .filter(|p| !p.run() && (!firm || level(p)))
+            .filter(|p| !p.run() && !p.square() && (!firm || level(p)))
             .min_by(|a, b| near(a).total_cmp(&near(b)))
     };
     pick(true).or_else(|| pick(false)).or_else(|| {
@@ -333,7 +344,7 @@ pub fn slip(
     // file's own oldest rule, which is that a survey along one
     // direction filters the body once and not once a sample.
     let local = planet.around(mouth, gap * 2.0 / radius + 1e-9);
-    let out: Vec<(DVec3, f64)> = (0..=steps)
+    let out: Vec<(DVec3, f64, f64)> = (0..=steps)
         .map(|k| {
             let t = k as f64 / steps as f64;
             let (t2, t3) = (t * t, t * t * t);
@@ -344,7 +355,8 @@ pub fn slip(
                 + p1 * (-2.0 * t3 + 3.0 * t2)
                 + m1 * (t3 - t2);
             let dir = (town.dir * radius + town.east * q.x + town.north * q.y).normalize();
-            (dir, riding(&local, &site, dir, radius))
+            let (h, floor) = riding(&local, &site, dir, radius);
+            (dir, h, floor)
         })
         .collect();
     grade(out, mouth_h, radius)
@@ -381,7 +393,9 @@ pub fn slip(
 /// inside 7% when the ground between them is not. A slip is as steep as
 /// the apron it is laid on, and what would fix that is the TOWN's
 /// skirt rather than the road's.
-fn grade(mut out: Vec<(DVec3, f64)>, mouth_h: f64, radius: f64) -> Vec<(DVec3, f64)> {
+fn grade(out: Vec<(DVec3, f64, f64)>, mouth_h: f64, radius: f64) -> Vec<(DVec3, f64)> {
+    let floors: Vec<f64> = out.iter().map(|p| p.2).collect();
+    let mut out: Vec<(DVec3, f64)> = out.into_iter().map(|p| (p.0, p.1)).collect();
     if out.len() < 2 {
         return out;
     }
@@ -399,9 +413,18 @@ fn grade(mut out: Vec<(DVec3, f64)>, mouth_h: f64, radius: f64) -> Vec<(DVec3, f
     if !total.is_finite() || total <= 0.0 || !step.is_finite() {
         return out;
     }
+    // And never UNDER the ground a point stands on. The mouth's own
+    // tarmac is the highway's `LIFT` over its corridor and the slip's
+    // first point wants `SLIP_CLEAR` more, so the step is half a metre
+    // DOWN and the ramp drags every point after it by a share of that:
+    // measured on the port, the drawn ground stood 0.12 m over the slip
+    // at piece 5 of 15, where the ramp still took 0.33 m off a point
+    // whose own lift, most of the way into the plateau, was 0.09. The
+    // floor is the street's own lift, which is the least any tarmac
+    // here stands over what it is laid on.
     let mut run = 0.0;
     for (k, point) in out.iter_mut().enumerate() {
-        point.1 += step * (1.0 - run / total);
+        point.1 = (point.1 + step * (1.0 - run / total)).max(floors[k]);
         run += arc.get(k).copied().unwrap_or(0.0);
     }
     out
