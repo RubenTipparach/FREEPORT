@@ -39,8 +39,10 @@ mod drive;
 mod flight_bench;
 mod fly;
 mod fuel;
+mod hud;
 mod lamps;
 mod lod_debug;
+mod map;
 mod meshing;
 mod planet_view;
 mod planets;
@@ -48,6 +50,7 @@ mod ram;
 mod render_probe;
 mod roads;
 mod sky;
+mod status;
 mod stream;
 mod terrain;
 mod traffic;
@@ -74,6 +77,7 @@ use freeport_core::pos::WorldPos;
 use freeport_core::town;
 use freeport_core::walker::Walker;
 use lamps::{dim_lamps, light_lamps};
+pub(crate) use status::Status;
 use std::sync::Arc;
 use std::time::Instant;
 use stream::{rebase_origin, stream, Frame, Streamer};
@@ -255,9 +259,19 @@ fn main() {
     .init_resource::<fuel::Wallet>()
     .init_resource::<fuel::Jerrycan>()
     .init_resource::<flight_bench::Benchmark>()
+    .init_resource::<map::MapView>()
+    .init_resource::<map::Markers>()
+    .init_gizmo_group::<map::MapGizmos>()
     .add_systems(
         Startup,
-        (compute::init_compute, spawn_world, flight_bench::setup).chain(),
+        (
+            compute::init_compute,
+            spawn_world,
+            hud::spawn_hud,
+            map::spawn_map,
+            flight_bench::setup,
+        )
+            .chain(),
     )
     .add_systems(
         PreUpdate,
@@ -328,7 +342,21 @@ fn tick(app: &mut App) {
                     dim_lamps,
                     sky::rebake_env,
                     sky::drift_sky,
-                    show_status,
+                    // The driver's HUD and the map, each its own pair or
+                    // chain for the twenty: the HUD is read after the
+                    // car has been driven and the sun turned, and the
+                    // map's mouse before it is drawn.
+                    (hud::show_hud, hud::turn_compass).chain(),
+                    (
+                        map::toggle_map,
+                        map::work_map,
+                        map::sea_layer,
+                        map::draw_map,
+                        map::show_route,
+                        map::press_clear,
+                    )
+                        .chain(),
+                    status::show_status,
                     lod_debug::apply,
                     take_shot,
                     flight_bench::finish,
@@ -379,16 +407,6 @@ impl Controls<'_, '_> {
 /// Where the eye is, in the world frame: the walker's or the fly camera's.
 #[derive(Resource, Default)]
 pub(crate) struct Eye(pub WorldPos);
-
-/// The status line's parts.
-#[derive(Resource, Default)]
-pub(crate) struct Status {
-    pub walker: String,
-}
-
-/// The line of text that says where the walker stands.
-#[derive(Component)]
-struct Stat;
 
 #[derive(SystemParam)]
 struct WorldAssets<'w> {
@@ -478,7 +496,7 @@ fn spawn_world(
     // two places are lit the same and only the camera moved. The light,
     // the dome and the fog are handed one direction worked out once.
     spawn_light(&mut commands, sun);
-    spawn_status(&mut commands);
+    status::spawn_status(&mut commands);
     clock::spawn_menu(&mut commands);
     let env = spawn_sky(
         &mut commands,
@@ -648,26 +666,6 @@ fn spawn_light(commands: &mut Commands, sun: DVec3) {
     ));
 }
 
-/// The line of text along the bottom that says where the eye is.
-fn spawn_status(commands: &mut Commands) {
-    commands.spawn((
-        Text::new(""),
-        TextFont {
-            font_size: 15.0,
-            ..default()
-        },
-        TextColor(Color::srgb(0.92, 0.9, 0.85)),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(12.0),
-            right: Val::Px(12.0),
-            bottom: Val::Px(10.0),
-            ..default()
-        },
-        Stat,
-    ));
-}
-
 /// The camera, flying from `eye` toward `look`, or on foot at the spot
 /// under `eye` facing `look`.
 fn spawn_camera(
@@ -712,6 +710,10 @@ fn spawn_camera(
                 ..default()
             },
             sky::StaticEnvironment,
+            // The UI's own camera, said outright: the map's overlay is a
+            // second camera on this window, and two cameras with no
+            // word on which draws the UI is a warning and a guess.
+            IsDefaultUiCamera,
             fly,
         ))
         // The TORCH, a child of the camera so it points wherever the eye
@@ -738,6 +740,7 @@ fn grab_mouse(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     menu: Res<clock::TimeMenu>,
+    map: Res<map::MapView>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
     let Ok(mut cursor) = cursor.single_mut() else {
@@ -745,8 +748,9 @@ fn grab_mouse(
     };
     // A panel a player has to PRESS is a panel the cursor has to be
     // free for: a left click on one of its buttons must not also be the
-    // click that takes the mouse back off him.
-    if buttons.just_pressed(MouseButton::Left) && !menu.open {
+    // click that takes the mouse back off him. The map is the same: a
+    // click on it sets a marker.
+    if buttons.just_pressed(MouseButton::Left) && !menu.open && !map.open {
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
     }
@@ -783,25 +787,6 @@ fn place_eye(
         }
         (None, None) => Transform::from_translation(at).with_rotation(fly.rotation),
     };
-}
-
-fn show_status(
-    status: Res<Status>,
-    streamer: Option<Res<Streamer>>,
-    walker: Option<Res<OnFoot>>,
-    weather: Res<sky::Weather>,
-    mut text: Query<&mut Text, With<Stat>>,
-) {
-    let what = streamer.map(|s| s.status()).unwrap_or_default();
-    let mode = if walker.is_some() { "fly" } else { "walk" };
-    if let Ok(mut text) = text.single_mut() {
-        text.0 = format!(
-            "{}\n{}   |   {}   |   F {mode}, G gas, H time, T torch, Tab wire, L LOD, Esc mouse",
-            status.walker,
-            what,
-            clock::reading(&weather)
-        );
-    }
 }
 
 /// Hold the loop to `--fps`. It is a DEADLINE rather than a fixed sleep,

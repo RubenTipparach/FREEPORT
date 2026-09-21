@@ -732,12 +732,16 @@ const AHEAD: f64 = 400.0;
 #[derive(Resource, Default)]
 pub struct Goal(pub Option<DVec3>, pub String);
 
-/// Pick that goal, once, when a scripted drive begins.
+/// Pick that goal, once, when a scripted drive begins, and MARK it on
+/// the map, which is what a player does before setting off and what a
+/// headless run has no pointer to do: the compass strip's tick and the
+/// map's first leg are then in the picture.
 pub fn aim_drive(
     args: Res<Args>,
     here: crate::world::Surface,
     thefts: Res<Thefts>,
     mut goal: ResMut<Goal>,
+    mut markers: ResMut<crate::map::Markers>,
 ) {
     if args.drive == 0 || goal.0.is_some() {
         return;
@@ -759,6 +763,9 @@ pub fn aim_drive(
     }
     let Some((gone, k)) = best else { return };
     *goal = Goal(Some(here.world().towns[k].dir), format!("town {k}"));
+    if markers.0.is_empty() {
+        markers.0.push(here.world().towns[k].dir);
+    }
     info!(
         "driving for town {k}, {:.2} km off over the ground",
         gone / 1000.0

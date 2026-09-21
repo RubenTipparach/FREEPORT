@@ -66,6 +66,9 @@ pub(crate) struct Args {
     /// It runs BEFORE any of Bevy is built, so a bake needs no window, no
     /// device and no Xvfb: it is arithmetic and a file.
     pub(crate) bake_atlas: bool,
+    /// Open the MAP once the world is up, or once a scripted drive is at
+    /// the wheel, so a picture can be taken of it.
+    pub(crate) map: bool,
     pub(crate) levels: u8,
     pub(crate) shot: Option<String>,
     pub(crate) frames: u32,
@@ -114,6 +117,7 @@ impl Default for Args {
             shore: None,
             approach: None,
             bake_atlas: false,
+            map: false,
             levels: LEVELS,
             shot: None,
             frames: 30,
@@ -156,6 +160,7 @@ pub(crate) fn parse_args() -> Args {
             "--approach" => args.approach = it.next().and_then(|v| v.parse().ok()),
             "--hour" => args.hour = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,
+            "--map" => args.map = true,
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),
             "--levels" => {

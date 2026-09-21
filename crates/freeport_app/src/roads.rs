@@ -111,6 +111,20 @@ impl Network {
             .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
+    /// Every gas station's forecourt middle, in the planet's frame, which
+    /// is what the map draws a pump at.
+    pub fn pump_sites(&self) -> &[DVec3] {
+        &self.pumps
+    }
+
+    /// The road a direction stands on, if it stands within `OFF_ROAD` of
+    /// any: what the map brightens under the car.
+    pub fn nearest_road(&self, world: &World, at: DVec3, radius: f64) -> Option<usize> {
+        let (r, near) = self.nearest(world, at)?;
+        let route = world.routes.get(r)?;
+        (route.line[near].angle_between(at) * radius <= OFF_ROAD).then_some(r)
+    }
+
     /// Where on a ROAD to steer for: `look` metres along the tarmac from
     /// the point nearest the car, in whichever direction gets nearer
     /// `goal`.

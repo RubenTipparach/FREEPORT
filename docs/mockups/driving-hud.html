@@ -123,14 +123,15 @@
   .gauge-fill { color: var(--ok); }
   .gauge-fill.low { color: var(--amber); }
   .gauge-fill.dry { color: var(--alarm); }
-  /* top left, under the keys: the purse, at the size of a readout; bottom left: the next pump */
+  /* top left: the purse, at the size of a readout; bottom left: the next pump. No key legend:
+     M and E are easy enough to find, and G is a prompt. */
   .purse, .station {
     left: 2.2%;
     padding: 6px 10px 5px;
     min-width: 150px;
     display: grid; gap: 3px;
   }
-  .purse { top: calc(3.5% + 38px); }
+  .purse { top: 3.5%; }
   .station { bottom: 3.5%; }
   .purse .row, .station .row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; }
   .purse .cash { font-size: 15px; font-weight: 600; line-height: 1.2; }
@@ -159,13 +160,6 @@
   .corner .clock { font-size: 17px; font-weight: 600; line-height: 1.2; color: var(--hud); }
   .corner .fps { font-size: 12px; color: var(--hud-dim); }
   .corner .fps b { color: var(--hud); font-weight: 500; }
-  .keys {
-    left: 2.2%; top: 3.5%;
-    padding: 5px 9px;
-    font-size: 12px; color: var(--hud-dim);
-    display: flex; gap: 12px;
-  }
-  .keys b { color: var(--hud); font-weight: 600; }
   .toast {
     position: absolute; left: 50%; bottom: 26%; transform: translateX(-50%);
     padding: 6px 12px; font-size: 14px;
@@ -243,9 +237,7 @@
     .dial .big { font-size: 16px; }
     .dial .label { top: 22px; }
     .purse, .station { min-width: 120px; }
-    .purse { top: 3.5%; } /* the keys are hidden on a phone, so the purse takes their corner */
     .compass { width: 60%; min-width: 0; height: 36px; }
-    .keys { display: none; }
   }
 </style>
 
@@ -269,7 +261,6 @@
   <div class="screen" id="screen" tabindex="0" aria-label="the driving screen">
     <canvas id="scene"></canvas>
     <div class="hud">
-      <div class="panel keys"><span><b>M</b> map</span><span><b>E</b> out</span></div>
       <div class="panel corner mono"><div class="clock" id="clock">10:03</div><div class="fps" id="fps"><b>60</b> fps <span id="ms">16.7 ms</span></div></div>
       <div class="panel compass"><canvas id="compass"></canvas><div class="lubber"></div><div class="goal mono" id="goal"></div></div>
       <div class="panel dials">
