@@ -435,5 +435,6 @@ pub(crate) fn clock_of(args: &Args, sun: DVec3, here: DVec3, body: &planets::Bod
         now: start,
         day: day::DAY,
         here,
+        frozen: false,
     }
 }

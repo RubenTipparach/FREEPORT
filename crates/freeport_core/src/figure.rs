@@ -177,6 +177,10 @@ pub fn person() -> Figure {
 /// the paving.
 pub const CAR_LONG: f64 = 4.1;
 pub const CAR_WIDE: f64 = 1.6;
+/// And how TALL, metres: the top of the cabin's own roof panel, read off
+/// the model this file draws rather than chosen beside it, so the box a
+/// car is to another body is the car that is drawn.
+pub const CAR_HIGH: f64 = 1.31;
 
 /// A town car: one part, because nothing on it has to move. A wheel that
 /// turned would be a second entity each for a thing a metre and a half

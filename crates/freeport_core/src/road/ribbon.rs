@@ -15,10 +15,52 @@
 //! time, because it is hundreds of kilometres long and a town is eighty
 //! metres across.
 
-use crate::field::{CONCRETE, PAINT, STREET};
+use crate::field::{ARC_SKIRT, CONCRETE, PAINT, STREET, TERRAIN};
 use crate::model::Model;
 use crate::town::{Frame, LANE};
 use glam::DVec3;
+
+/// One run of a road, as the four things the ribbon reads about it: the
+/// refined centreline, the level the corridor was cut to under each
+/// point, which points are outside every town's own levelling, and which
+/// are near enough a settlement to carry a lamp.
+///
+/// One struct rather than four slices, because they are indexed together
+/// at every line of this file and a fifth would be the fifth place to get
+/// an index wrong; it is the app's own `Route` said in the core's terms.
+#[derive(Clone, Copy)]
+pub struct Course<'a> {
+    pub line: &'a [DVec3],
+    pub run: &'a [f64],
+    /// Where TARMAC is laid, which includes the slip a highway runs into
+    /// a town on.
+    pub open: &'a [bool],
+    /// Where this road's own CORRIDOR was cut, which the slip is not:
+    /// a slip stands on ground the TOWN levelled, so the road has no
+    /// embankment to draw there and a 32 m apron over somebody's streets
+    /// is not an embankment. One flag doing both jobs is the thing this
+    /// pair replaces, and the comment in the app's own splice already
+    /// named it as the thing to watch.
+    pub graded: &'a [bool],
+    /// Which points are near enough a settlement to carry a lamp.
+    pub lit: &'a [bool],
+}
+
+impl Course<'_> {
+    /// Whether every lane of it is the same length and there is a piece
+    /// in it at all.
+    fn sound(&self) -> bool {
+        self.line.len() >= 2
+            && self.run.len() == self.line.len()
+            && self.open.len() == self.line.len()
+    }
+
+    /// Whether the corridor was cut at a point, which is false past the
+    /// end of a lane an older caller did not fill.
+    fn cut(&self, k: usize) -> bool {
+        self.graded.get(k).copied().unwrap_or(false)
+    }
+}
 
 /// How high the carriageway stands over the ground it was levelled onto,
 /// metres: the depth of the surfacing on its base course.
@@ -47,7 +89,7 @@ pub const LIFT: f64 = 0.15;
 /// in a town (sunk 15 cm, for the same reason: an underside lying
 /// exactly on the ground flecks along its whole length).
 const SHOULDER: f64 = 0.7;
-const BURIED: f64 = -0.15;
+pub const BURIED: f64 = -0.15;
 
 /// How wide the tarmac is either side of the centreline: one lane each
 /// way, read off `town::LANE` rather than written again, so a country
@@ -108,37 +150,38 @@ pub const LAMP_REACH: f64 = 26.0;
 pub const STRETCH: usize = 64;
 
 /// The tarmac for a run of corridor points, in a frame of its own:
-/// carriageway, a dashed centreline and a solid line down each edge.
+/// carriageway, a dashed centreline, a solid line down each edge, and
+/// the MOUND the whole of it stands on.
 ///
-/// `line` is the refined centreline (`road::centreline`) and `run` the
-/// ground under it (`road::survey`), which is the level the corridor was
-/// cut to, so the tarmac sits `LIFT` over a plane rather than over
-/// whatever the hill used to be.
+/// `course.line` is the refined centreline (`road::centreline`) and
+/// `course.run` the ground under it (`road::survey`), which is the level
+/// the corridor was cut to, so the tarmac sits `LIFT` over a plane
+/// rather than over whatever the hill used to be.
+///
+/// `ground` is the field's own surface at a direction, metres over the
+/// mean radius, and it is what the mound is drawn from: the batter this
+/// road stands on is the corridor's own skirt, so handing the ribbon the
+/// same function the mesher and the walker read is what makes the drawn
+/// mound and the collided one one surface (`mound`).
 pub fn stretch(
     frame: &Frame,
-    line: &[DVec3],
-    run: &[f64],
-    open: &[bool],
-    lit: &[bool],
+    course: Course<'_>,
     radius: f64,
+    ground: &dyn Fn(DVec3) -> f64,
 ) -> Model {
     let mut m = Model::new();
-    if line.len() < 2 || run.len() != line.len() || open.len() != line.len() {
+    if !course.sound() {
         return m;
     }
-    // Every point in the stretch's own frame, with its own across.
-    let at = |k: usize| frame.local(line[k] * (radius + run[k] + LIFT));
-    let across = |k: usize| {
-        let ahead = if k + 1 < line.len() { k + 1 } else { k };
-        let back = k.saturating_sub(1);
-        let along = at(ahead) - at(back);
-        // The frame's up is its own z, so across is what is square to
-        // the road in the frame's own tangent plane.
-        DVec3::new(along.y, -along.x, 0.0).normalize_or(DVec3::X)
-    };
+    let (open, lit) = (course.open, course.lit);
+    let station = stations(frame, course, radius);
+    // The MOUND first, so the tarmac's own triangles are laid over it in
+    // the same mesh and a reader of the model meets the ground before
+    // what stands on it.
+    mound(&mut m, frame, course, &station, radius, ground);
     let mut along = 0.0;
-    for k in 0..line.len() - 1 {
-        let run_m = (at(k + 1) - at(k)).length();
+    for k in 0..station.len() - 1 {
+        let run_m = (station[k + 1].0 - station[k].0).length();
         // A piece outside every town's levelling is the road's to pave,
         // and `road::open` is the same answer the CORRIDOR is cut by, so
         // the tarmac and the ground under it end in the same place. What
@@ -150,18 +193,11 @@ pub fn stretch(
             along += run_m;
             continue;
         }
-        let (t0, t1) = (0.0, 1.0);
-        let part = |t: f64| {
-            (
-                at(k).lerp(at(k + 1), t),
-                across(k).lerp(across(k + 1), t).normalize_or(across(k)),
-            )
-        };
-        let ((a, u), (b, v)) = (part(t0), part(t1));
+        let ((a, u), (b, v)) = (station[k], station[k + 1]);
         // The dashes keep the phase of the WHOLE piece, so a road whose
         // last piece starts part way along does not restart its
         // markings at the junction.
-        let (from, laid) = (along + run_m * t0, (b - a).length());
+        let (from, laid) = (along, run_m);
         band(&mut m, (a, u), (b, v), (-HALF, HALF), 0.0, STREET);
         // The two shoulders, falling from the tarmac's edge into the
         // ground, so there is no step for the field to show through.
@@ -202,6 +238,146 @@ pub fn stretch(
     m
 }
 
+/// Every centreline point in the stretch's own frame, with the unit
+/// vector ACROSS the road there.
+///
+/// Worked out once rather than by a closure called from four places: the
+/// across at a station is a difference of its two neighbours, so a
+/// closure that recomputed it cost three placements per call and could
+/// not be handed to `mound` without handing over the whole of the
+/// arithmetic with it.
+fn stations(frame: &Frame, course: Course<'_>, radius: f64) -> Vec<(DVec3, DVec3)> {
+    let (line, run) = (course.line, course.run);
+    let at = |k: usize| frame.local(line[k] * (radius + run[k] + LIFT));
+    (0..line.len())
+        .map(|k| {
+            let ahead = (k + 1).min(line.len() - 1);
+            let back = k.saturating_sub(1);
+            let along = at(ahead) - at(back);
+            // The frame's up is its own z, so across is what is square
+            // to the road in the frame's own tangent plane.
+            (
+                at(k),
+                DVec3::new(along.y, -along.x, 0.0).normalize_or(DVec3::X),
+            )
+        })
+        .collect()
+}
+
+/// Where the MOUND's own bands stand, metres from the centreline: the
+/// shoulder's outer edge, the flat verge out to the corridor's own
+/// levelled width, and then the batter down its skirt.
+///
+/// Three bands over the flat, which the field holds to a plane and which
+/// needs no more; four over the skirt, which is a smoothstep eleven
+/// metres wide, so a chord over 2.75 m of it stands a few centimetres
+/// off the blend it is drawn from, which is under the sink that hides
+/// it.
+fn bands() -> [f64; 8] {
+    let flat = HALF + SHOULDER;
+    let verge = |t: f64| flat + (super::CORRIDOR - flat) * t;
+    let batter = |t: f64| super::CORRIDOR + ARC_SKIRT * t;
+    [
+        verge(0.0),
+        verge(1.0 / 3.0),
+        verge(2.0 / 3.0),
+        batter(0.0),
+        batter(0.25),
+        batter(0.5),
+        batter(0.75),
+        batter(1.0),
+    ]
+}
+
+/// The MOUND a road stands on: the verge out to the corridor's own
+/// levelled width and the batter down its skirt, both sides, drawn from
+/// the field's own surface.
+///
+/// This is the owner's ask and it is the answer to a defect this project
+/// had already measured from the air. A corridor is `2 * CORRIDOR` of
+/// flat and the rings put a cell of about a sixty fourth of its own
+/// distance under the eye, so past a couple of kilometres the mesher has
+/// no sample inside the corridor at all and draws the hill that was
+/// there before the road; the tarmac is laid to `roads::REACH`, nine
+/// kilometres, whatever the terrain does. Between those two ranges the
+/// road is a ribbon hanging over a hill that does not know about it, and
+/// the hill wins wherever it stands higher. **So the road CARRIES its
+/// own ground.**
+///
+/// Every point of it is `ground(dir)`, which is the same
+/// `Planet::surface` the mesher contours and the walker and the car
+/// collide against, so the mound that is DRAWN and the mound that is
+/// STOOD ON are one surface by construction rather than two that have to
+/// agree. That is this project's own rule about a wall being one box
+/// that is drawn and collided, arriving at the one thing here that is
+/// not a box.
+///
+/// It is SUNK `BURIED` under that surface, which is the pavement slab's
+/// own trick: wherever the terrain really is drawn at this detail the
+/// terrain wins and the mound is inside the hill, and wherever it is not
+/// the mound is the ground.
+///
+/// It is drawn where the corridor was CUT (`course.graded`) and not
+/// merely where tarmac is laid: a slip runs over a town's own plateau,
+/// which the town levelled and this road did not, and a 32 m apron
+/// crossing somebody's streets is not an embankment.
+fn mound(
+    m: &mut Model,
+    frame: &Frame,
+    course: Course<'_>,
+    station: &[(DVec3, DVec3)],
+    radius: f64,
+    ground: &dyn Fn(DVec3) -> f64,
+) {
+    let edges = bands();
+    // One column of the cross section at a station: where each band's
+    // edge stands, in the frame, on the field's own surface.
+    //
+    // Every column is worked out ONCE and kept, because a station is
+    // the far end of one piece and the near end of the next: asked per
+    // piece, a stretch sampled the field 2,080 times where 1,040 will
+    // do, and a sample here is a whole `Planet::surface`, which is five
+    // terms of eighteen octaves and the body's own site index.
+    let column = |k: usize, side: f64| -> [DVec3; 8] {
+        let (here, across) = station[k];
+        std::array::from_fn(|j| {
+            let dir = frame
+                .world(here + across * (side * edges[j]))
+                .normalize_or(DVec3::Y);
+            frame.local(dir * (radius + ground(dir) + BURIED))
+        })
+    };
+    let wanted = |k: usize| k + 1 < station.len() && course.cut(k) && course.cut(k + 1);
+    let cut: Vec<[[DVec3; 8]; 2]> = (0..station.len())
+        .map(|k| {
+            // A station no piece either side of it is cut at is a
+            // station nothing is drawn from, and its column is the
+            // sampling this saves.
+            if wanted(k) || (k > 0 && wanted(k - 1)) {
+                [column(k, -1.0), column(k, 1.0)]
+            } else {
+                [[DVec3::ZERO; 8]; 2]
+            }
+        })
+        .collect();
+    for k in 0..station.len() - 1 {
+        if !wanted(k) {
+            continue;
+        }
+        for (s, side) in [-1.0f64, 1.0].iter().enumerate() {
+            let (p, q) = (&cut[k][s], &cut[k + 1][s]);
+            for j in 0..edges.len() - 1 {
+                // Wound so the face is up whichever side it is on.
+                if *side > 0.0 {
+                    m.quad(p[j], p[j + 1], q[j + 1], q[j], TERRAIN);
+                } else {
+                    m.quad(q[j], q[j + 1], p[j + 1], p[j], TERRAIN);
+                }
+            }
+        }
+    }
+}
+
 /// How far a marking stands over the tarmac, metres: the streets' own
 /// four millimetres, which is what stops a painted line flickering
 /// against the road it is painted on.
@@ -234,7 +410,7 @@ fn dashes(m: &mut Model, a: (DVec3, DVec3), b: (DVec3, DVec3), along: f64, run_m
     // The cycle boundary at or before this piece starts, so a dash that
     // straddles the join is drawn by both pieces and meets itself.
     let first = along - along.rem_euclid(cycle);
-    for i in 0..stations(run_m, cycle) {
+    for i in 0..marks(run_m, cycle) {
         let s = first + i as f64 * cycle;
         let (lo, hi) = (
             (s.max(along) - along) / run_m,
@@ -247,8 +423,8 @@ fn dashes(m: &mut Model, a: (DVec3, DVec3), b: (DVec3, DVec3), along: f64, run_m
     }
 }
 
-/// How many stations of a given spacing a piece of road is walked at,
-/// and a CAP on it.
+/// How many MARKS of a given spacing a piece of road is walked at, and
+/// a CAP on it.
 ///
 /// A piece is `road::PIECE` and the closest spacing anything here is
 /// laid at is a dash's nine metres, so forty is the real count. Four
@@ -257,7 +433,7 @@ fn dashes(m: &mut Model, a: (DVec3, DVec3), b: (DVec3, DVec3), along: f64, run_m
 /// handed is a loop a garbage line hangs the mesher with: a hang is
 /// worse than a wrong frame, which is this file's own rule about
 /// guarding an expression where it can leave its domain.
-fn stations(run_m: f64, every: f64) -> usize {
+fn marks(run_m: f64, every: f64) -> usize {
     const MOST: f64 = 4096.0;
     (run_m / every).clamp(0.0, MOST) as usize + 2
 }
@@ -328,7 +504,7 @@ fn posts(m: &mut Model, a: (DVec3, DVec3), b: (DVec3, DVec3), along: f64, run_m:
         return;
     }
     let first = (along / LAMP_EVERY).ceil();
-    for i in 0..stations(run_m, LAMP_EVERY) {
+    for i in 0..marks(run_m, LAMP_EVERY) {
         let n = first + i as f64;
         if n * LAMP_EVERY >= along + run_m {
             break;

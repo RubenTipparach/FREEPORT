@@ -661,3 +661,125 @@ fn a_car_climbs_the_same_hill_at_any_frame_rate() {
         "a car stepped a twentieth at a time went {gone:.1} m up a one in two hill, against 56.1 in sixtieths"
     );
 }
+
+/// A wall standing on its OWN patch of the ball, `along` metres ahead of
+/// the pole along x, square across the way a car drives.
+///
+/// On its own patch and never in the pole's tangent frame, which is this
+/// project's own chord lesson: at a 2 km radius a block 220 m out in the
+/// pole's frame stands 12 m ABOVE the ground curving away under it, and
+/// a car drives clean underneath a wall that was never on the ground.
+fn wall_at(along: f64, half: DVec3) -> Block {
+    let a = along / R;
+    let (s, c) = a.sin_cos();
+    let dir = (DVec3::Y * c + DVec3::X * s).normalize();
+    // East is the way the car is GOING there, so the wall's own x is
+    // across the road and its y is along it.
+    let east = (DVec3::X * c - DVec3::Y * s).normalize();
+    let frame = crate::town::Frame {
+        dir,
+        east,
+        north: east.cross(dir).normalize(),
+        base: R,
+    };
+    crate::model::Solid {
+        centre: DVec3::new(0.0, 0.0, half.z),
+        half,
+        yaw: 0.0,
+        material: CONCRETE,
+    }
+    .block(&frame)
+}
+
+/// How far a car has got along the ground from the pole, metres.
+fn along(d: &Driver) -> f64 {
+    DVec3::Y.angle_between(d.dir) * R
+}
+
+/// Whether any point of the car's own outline, at any of the heights it
+/// is tested at, is INSIDE something solid: the one invariant a body
+/// that is pushed out of walls actually promises.
+fn wedged(field: &dyn Density, d: &Driver) -> bool {
+    let right = d.right();
+    outline().iter().any(|off| {
+        HEIGHTS
+            .iter()
+            .any(|h| field.at(d.dir * (d.foot + h) + right * off.x + d.fwd * off.y) > 0.0)
+    })
+}
+
+/// A CAR IN A WALL COMES OUT OF IT, which is the owner's "my car gets
+/// stuck in the buildings".
+///
+/// `roll` asked whether a step was allowed and, when it was not,
+/// RETURNED without taking the position the push had already worked out:
+/// a car nosed into a building kept whatever overlap it had arrived with
+/// for ever, and one standing still inside a wall never moved at all,
+/// because `roll` returns at once at nought speed. Nothing in the whole
+/// frame could take a body out of a solid it was already in.
+/// `Driver::free` is that step, first, every frame, whatever the pedals
+/// say.
+#[test]
+fn a_car_standing_in_a_wall_is_pushed_out_of_it() {
+    let b = bounds();
+    let clear = world(&[]);
+    // Put down on clear ground, and then a wall put up THROUGH it: a car
+    // spawned inside a building, or one that got there before this.
+    let mut d = car(&clear, &b);
+    let blocks = [wall_at(0.5, DVec3::new(1.0, 8.0, 1.6))];
+    let w = world(&blocks);
+    assert!(wedged(&w, &d), "the fixture did not put the car in a wall");
+    // No pedals at all: coming out of a wall is not a thing the throttle
+    // buys, and the car that could not was one standing still.
+    for _ in 0..120 {
+        d.update(&w, &b, &Drive::default(), 1.0 / 60.0);
+    }
+    println!(
+        "a car left in a wall came out to {:.2} m along, {:.2} m over the ground",
+        along(&d),
+        d.foot - R
+    );
+    assert!(!wedged(&w, &d), "the car is still inside the wall");
+}
+
+/// A FAST CAR CANNOT TUNNEL THROUGH A WALL.
+///
+/// A wall is `model::WALL` thick, 0.35 m, and a car at 44.4 m/s covers
+/// 2.2 m in one frame of a software rasteriser: a step longer than the
+/// wall walks the outline's own eight points clean through it, nothing
+/// overlaps at either end, and the car comes down on the far side. The
+/// roll is sub stepped at `Driver::STEP` now, which is inside the wall
+/// by a tenth.
+#[test]
+fn a_fast_car_cannot_tunnel_through_a_wall() {
+    let b = bounds();
+    // A long way off, so the car is flat out by the time it arrives.
+    const AT: f64 = 220.0;
+    let blocks = [wall_at(AT, DVec3::new(0.175, 20.0, 2.5))];
+    let w = world(&blocks);
+    for &frame in &[1.0 / 60.0, 1.0 / 20.0, 1.0 / 12.0] {
+        let mut d = car(&w, &b);
+        for _ in 0..(20.0 / frame) as usize {
+            d.update(
+                &w,
+                &b,
+                &Drive {
+                    throttle: 1.0,
+                    ..Default::default()
+                },
+                frame,
+            );
+        }
+        let got = along(&d);
+        println!(
+            "at {:.0} frames a second the car reaches {got:.2} m of a wall at {AT:.0} m",
+            1.0 / frame
+        );
+        assert!(
+            got < AT,
+            "at {:.0} frames a second the car is {got:.2} m along, PAST the wall",
+            1.0 / frame
+        );
+        assert!(got > AT - 20.0, "it never reached the wall: {got:.2} m");
+    }
+}

@@ -32,6 +32,7 @@ mod args;
 mod atlas;
 mod buildings;
 mod city;
+mod clock;
 mod compute;
 mod distant;
 mod drive;
@@ -247,6 +248,7 @@ fn main() {
     .init_resource::<Status>()
     .init_resource::<Thefts>()
     .init_resource::<lamps::TorchOn>()
+    .init_resource::<clock::TimeMenu>()
     .init_resource::<drive::Goal>()
     .init_resource::<flight_bench::Benchmark>()
     .add_systems(
@@ -297,6 +299,7 @@ fn tick(app: &mut App) {
                     light_lamps,
                     (
                         traffic::drive_traffic,
+                        traffic::drive_highway,
                         traffic::spin_wheels,
                         lamps::hold_torch,
                         lamps::light_headlamps,
@@ -307,7 +310,10 @@ fn tick(app: &mut App) {
                     .chain(),
                 (
                     place_eye,
+                    clock::toggle_menu,
+                    clock::press_menu,
                     sky::turn_sun,
+                    clock::show_menu,
                     dim_lamps,
                     sky::rebake_env,
                     sky::drift_sky,
@@ -432,14 +438,7 @@ fn spawn_world(
     // towns and turns a crowd out only on the ones standing, which the
     // town streamer moves: a townsman walking a street nobody has laid
     // the buildings of stands on a bare levelled plateau.
-    traffic::turn_out(
-        &mut commands,
-        0,
-        &world.towns,
-        SEED,
-        &mut meshes,
-        &mut standard,
-    );
+    traffic::turn_out(&mut commands, 0, &world, SEED, &mut meshes, &mut standard);
     // The towns are BUILT by `city::stream`, one at a time, following
     // the eye. Nothing is raised here.
     commands.insert_resource(city::stream::Library(buildings::Library::load()));
@@ -469,6 +468,7 @@ fn spawn_world(
     // the dome and the fog are handed one direction worked out once.
     spawn_light(&mut commands, sun);
     spawn_status(&mut commands);
+    clock::spawn_menu(&mut commands);
     let env = spawn_sky(
         &mut commands,
         &mut meshes,
@@ -508,9 +508,9 @@ fn say_roads(commands: &mut Commands, world: &World) {
     });
     // Whether the highway JOINS the city it leaves, which is a number
     // and not a thing to squint at a picture for.
-    if let Some((worst, median)) = roads::ground_over_tarmac(world) {
+    if let Some((worst, median, roads)) = roads::ground_over_tarmac(world) {
         info!(
-            "the ground a coarse chunk draws stands {worst:.2} m over road 0's tarmac at its worst and {median:.2} m at its median"
+            "the ground a coarse chunk draws stands {worst:.2} m over the tarmac of {roads} roads at its worst and {median:.2} m at its median"
         );
     }
     let (deep, steep, mean) = city::worst_cut(world);
@@ -725,12 +725,16 @@ fn spawn_camera(
 fn grab_mouse(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
+    menu: Res<clock::TimeMenu>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
     let Ok(mut cursor) = cursor.single_mut() else {
         return;
     };
-    if buttons.just_pressed(MouseButton::Left) {
+    // A panel a player has to PRESS is a panel the cursor has to be
+    // free for: a left click on one of its buttons must not also be the
+    // click that takes the mouse back off him.
+    if buttons.just_pressed(MouseButton::Left) && !menu.open {
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
     }
@@ -780,24 +784,12 @@ fn show_status(
     let mode = if walker.is_some() { "fly" } else { "walk" };
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
-            "{}\n{}   |   {}   |   F {mode}, Tab wire, L LOD, Esc mouse",
+            "{}\n{}   |   {}   |   F {mode}, H time, T torch, Tab wire, L LOD, Esc mouse",
             status.walker,
             what,
-            clock(&weather)
+            clock::reading(&weather)
         );
     }
-}
-
-/// What o'clock it is where the eye stands, on the twenty four hour dial
-/// `--hour` is asked in, so the flag and the readout cannot mean two
-/// different times. The ONE place a time is turned into words.
-fn clock(weather: &sky::Weather) -> String {
-    let h = weather.oclock();
-    format!(
-        "{:02}:{:02}",
-        h.floor() as u32 % 24,
-        ((h.fract() * 60.0) as u32).min(59)
-    )
 }
 
 /// Hold the loop to `--fps`. It is a DEADLINE rather than a fixed sleep,

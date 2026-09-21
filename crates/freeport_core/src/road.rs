@@ -519,16 +519,25 @@ pub fn waysides(
     let mut taken: Vec<(DVec3, f64)> = towns.iter().map(|t| (t.dir, t.radius)).collect();
     let mut placed = Vec::new();
     for road in roads {
+        // The line as BUILT and not the one that was routed: a curve
+        // fitted at a vertex moves the road off it by up to
+        // `CURVE_OFFSET`, and a village grown at a waypoint the tarmac
+        // now bends past is a village the road does not go through.
+        let built = aligned(&road.line, big_r);
         let mut since = EVERY * 0.5;
-        for pair in road.line.windows(2) {
-            let (a, b) = (pair[0], pair[1]);
-            since += arc(a.0, b.0) * big_r;
+        for pair in built.windows(2) {
+            since += arc(pair[0], pair[1]) * big_r;
             if since < EVERY {
                 continue;
             }
             since = 0.0;
-            let dir = b.0;
-            let over = big_r + b.1 - sea;
+            let dir = pair[1];
+            // The ground at the candidate itself, which is what the
+            // window is about, asked of the sites this ONE direction can
+            // reach. It is one march per candidate and there are a few
+            // hundred of them on a body, against a height carried along
+            // from a waypoint the curve has left behind.
+            let over = surface_radius(&planet.around(dir, 0.0), dir) - sea;
             if !(low..=high).contains(&over) || shape.climate(dir, over).frozen() {
                 continue;
             }
@@ -556,6 +565,11 @@ pub fn waysides(
     }
     crate::town::lay_all_from(&placed, big_r, sea, seed, towns.len())
 }
+
+mod align;
+pub use align::*;
+
+pub mod commute;
 
 mod reach;
 pub use reach::*;
@@ -657,15 +671,31 @@ pub const CORRIDOR: f64 = 16.0;
 /// margin over a profile that was never in a cutting rather than a
 /// number papering over one that was.
 ///
-/// Half a metre, which is a low embankment on a country road and is
-/// under the walker's own 0.60 m step, so the shoulder is still
-/// something a body walks up rather than a wall it is stopped by.
+/// **Two metres**, which is a low embankment on a country road and is
+/// what makes the mound the owner asked for a mound rather than a lip.
+/// It was half a metre, and half a metre is inside the error the
+/// TERRAIN's own LOD has: measured on road 0 before this,
+/// `roads::ground_over_tarmac` read the coarse ground standing **0.83 m
+/// over the tarmac at its worst**, so the country closed over the road
+/// wherever a coarse chunk rounded a hill up. Two metres clears that
+/// measured worst by more than it is, and the mound
+/// (`ribbon::mound`) is what fills the gap it opens between the
+/// carriageway and the ground beside it.
+///
+/// What it costs is the batter's slope: two metres over the corridor's
+/// own eleven metre skirt is about one in five and a half, which
+/// `docs/civil-engineering.md` puts between the 1:3 a car can drive
+/// back up and the 1:6 a mower can take. It is well under the planet's
+/// own slope bound, which is set by the relief rather than by this.
+/// It is over the walker's 0.60 m step, so the batter and not the
+/// shoulder is now how a body gets up onto a road, which is what a real
+/// embankment is too.
 ///
 /// It is in the BAKED profile, so it is in the atlas's fingerprint: a
-/// file baked without it describes a road half a metre into the ground
-/// with its tarmac drawn half a metre over that, and nothing else in the
-/// fingerprint would have said so.
-pub const EMBANK: f64 = 0.5;
+/// file baked at another value describes a road at the wrong level with
+/// its tarmac drawn over that, and nothing else in the fingerprint
+/// would have said so.
+pub const EMBANK: f64 = 2.0;
 
 /// How many pieces a waypoint span is cut into.
 ///
@@ -697,18 +727,26 @@ pub fn step(a: DVec3, b: DVec3, k: usize, n: usize) -> DVec3 {
 }
 
 /// Every point of a road's refined centreline, ends included: the
-/// waypoints with `pieces` divisions between each neighbouring pair.
+/// routed waypoints with a horizontal CURVE fitted at every vertex that
+/// bends (`align::aligned`), and `pieces` divisions between each
+/// neighbouring pair of what comes out.
+///
+/// The curve is fitted HERE rather than stored, which is `pieces` and
+/// `step`'s own rule: the atlas keeps the waypoints and both the bake
+/// and the game fit the same arcs to them, so the levelling under a road
+/// and the tarmac over it are the same line by construction.
 pub fn centreline(road: &Road, radius: f64) -> Vec<DVec3> {
+    let line = aligned(&road.line, radius);
     let mut out = Vec::new();
-    for pair in road.line.windows(2) {
-        let (a, b) = (pair[0].0, pair[1].0);
+    for pair in line.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
         let n = pieces(a, b, radius);
         for k in 0..n {
             out.push(step(a, b, k, n));
         }
     }
-    if let Some(last) = road.line.last() {
-        out.push(last.0);
+    if let Some(last) = line.last() {
+        out.push(*last);
     }
     out
 }

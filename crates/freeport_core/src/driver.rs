@@ -22,8 +22,8 @@
 //! That is the bicycle model and it is three lines.
 
 use crate::field::Density;
-use crate::figure::{CAR_LONG, CAR_WIDE};
-use crate::walker::{self, Bounds};
+use crate::figure::{CAR_HIGH, CAR_LONG, CAR_WIDE};
+use crate::walker::{self, Bounds, Shape};
 use glam::{DVec2, DVec3};
 
 /// How fast a car goes, metres a second: 160 km/h flat out and a crawl
@@ -132,6 +132,31 @@ pub const DOOR: f64 = 1.5;
 /// frame it asked. Eight is a stride or two off the kerb, which is what
 /// walking up to a car is.
 pub const REACH: f64 = 8.0;
+
+/// The BOX a car is to another body: its own outline standing on the
+/// ground at `at`, pointing `fwd`, with `up` the local radial there.
+///
+/// ONE function, because the player's own car, a town's traffic and a
+/// car somebody parked on a kerb are all the same box: a second copy
+/// would be a car that could be driven through from one side and not the
+/// other. It is `figure`'s own three numbers, so the box and the car
+/// that is drawn cannot drift, which is this project's rule that a wall
+/// is one set of numbers both drawn and collided.
+///
+/// A car is `Model::trim` where it is DRAWN, because nothing in a town
+/// collides with a townsman or with the traffic: this is what a body at
+/// the WHEEL meets, and the player is the one thing here that
+/// integrates.
+pub fn car_box(at: DVec3, fwd: DVec3, up: DVec3) -> crate::field::Block {
+    let up = up.normalize_or(DVec3::Y);
+    let fwd = (fwd - up * fwd.dot(up)).normalize_or(DVec3::X);
+    crate::field::Block {
+        centre: at + up * (CAR_HIGH * 0.5),
+        half: DVec3::new(CAR_WIDE * 0.5, CAR_LONG * 0.5, CAR_HIGH * 0.5),
+        axes: [fwd.cross(up).normalize(), fwd, up],
+        material: crate::field::PLATE,
+    }
+}
 
 /// What the driver asked for this frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -287,15 +312,44 @@ impl Driver {
         self.speed * (steer.clamp(-1.0, 1.0) * lock).tan() / WHEELBASE
     }
 
-    /// One frame: the pedals, the wheel, the move and the fall.
+    /// One frame: out of whatever it is in, the pedals, the wheel, the
+    /// move and the fall.
     pub fn update(&mut self, field: &dyn Density, bounds: &Bounds, input: &Drive, dt: f64) {
         let dt = dt.min(0.05);
+        self.free(field, bounds);
         self.pedals(input, dt);
         self.turn(self.yaw_rate(input.steer) * dt);
         self.fwd = (self.fwd - self.dir * self.fwd.dot(self.dir)).normalize_or(DVec3::X);
         self.roll(field, bounds, dt);
         self.fall(field, bounds, dt);
         self.settle(field, bounds, dt);
+    }
+
+    /// Push the car OUT of whatever it is already standing in, wherever
+    /// that is: **resolve, never "may I"**.
+    ///
+    /// This is the walker's own oldest rule arriving at the car, and its
+    /// absence is what "my car gets stuck in the buildings" was. `roll`
+    /// asked whether a step was allowed and, where it was not, RETURNED
+    /// without taking the resolved position: a car nosed into a wall
+    /// kept whatever overlap it had arrived with for ever, and a car at
+    /// rest inside one never moved at all, because `roll` returns at
+    /// once when the speed is nought. Nothing in the whole frame could
+    /// take a body out of a solid it was already in.
+    ///
+    /// So the push is a step of its own and it happens FIRST, every
+    /// frame, whatever the pedals say. A car that is clear of everything
+    /// is not moved by it (`resolve_body` pushes out of nothing when
+    /// nothing overlaps), so it costs one ring of samples and changes no
+    /// drive that was not already stuck.
+    fn free(&mut self, field: &dyn Density, bounds: &Bounds) {
+        let ring = outline();
+        let shape = Shape {
+            ring: &ring,
+            heights: &HEIGHTS,
+        };
+        self.dir = walker::resolve_body(field, bounds, self.dir, self.foot, self.fwd, shape);
+        self.fwd = (self.fwd - self.dir * self.fwd.dot(self.dir)).normalize_or(DVec3::X);
     }
 
     /// Lay the bodywork on the ground the WHEELS are standing on.
@@ -350,33 +404,95 @@ impl Driver {
         }
     }
 
+    /// How far a car may move between two collision tests, metres.
+    ///
+    /// A wall here is `model::WALL` thick, 0.35 m, and the outline is
+    /// tested at its own eight points: a step longer than the wall walks
+    /// those points clean THROUGH it, so nothing overlaps at either end
+    /// and the car comes down on the far side. At 44.4 m/s a frame of
+    /// this world on a software rasteriser is 2.2 m of road and even a
+    /// sixtieth is 0.74 m, so the tunnel was the ordinary case rather
+    /// than a corner one. A quarter of a metre is comfortably inside the
+    /// wall and is nine sub steps at the top speed.
+    const STEP: f64 = 0.25;
+
+    /// How many of those a frame may ever take, whatever it asks for.
+    /// Nine is the top speed on a slow frame; sixteen is a cap so that a
+    /// garbage delta cannot hang the frame, which is this project's own
+    /// rule about guarding an expression where it can leave its domain.
+    const MOST_STEPS: usize = 16;
+
     /// The step this frame, pushed out of whatever the car's own outline
     /// meets. Hitting something square on takes the speed off it, and
     /// meeting it at an angle slides along it, which is the same rule the
     /// walker keeps and for the same reason.
+    ///
+    /// It is SUB STEPPED (`STEP`), so a fast car cannot walk its own
+    /// outline through a wall between two frames, and every sub step
+    /// KEEPS its resolved position: what is refused is the ground being
+    /// too high to climb, and refusing that leaves the car where the
+    /// push put it rather than where it asked to be.
     fn roll(&mut self, field: &dyn Density, bounds: &Bounds, dt: f64) {
         if self.speed == 0.0 {
             return;
         }
         let ring = outline();
+        let shape = Shape {
+            ring: &ring,
+            heights: &HEIGHTS,
+        };
         let asked = self.speed * dt;
-        let to = (self.dir + self.fwd * (asked / bounds.radius)).normalize();
-        let got = walker::resolve_body(field, bounds, to, self.foot, self.fwd, &ring, &HEIGHTS);
-        // How much of the step survived being pushed out of the walls: a
-        // car stopped dead made none of it.
-        let made = (got - self.dir).dot(self.fwd) * bounds.radius;
-        self.gone += (got - self.dir).length() * bounds.radius;
-        let g = walker::ground(field, bounds, got, Some(self.foot));
-        // A kerb's worth of step, plus whatever the GROUND itself rose
-        // over the distance the car actually covered.
-        let allowed = CLIMB + made.abs() * STEEPEST;
-        if g - (self.foot) > allowed || made.abs() < asked.abs() * 0.05 {
-            self.speed *= CRASH;
-            return;
+        let steps = (asked.abs() / Self::STEP)
+            .ceil()
+            .clamp(1.0, Self::MOST_STEPS as f64) as usize;
+        let want = asked / steps as f64;
+        // The foot the CLIMB is measured from is the frame's own, and
+        // the allowance grows with the ground the car has actually made
+        // over the whole frame: sub stepping must not hand each step its
+        // own kerb, or a cliff would be climbed in nine bites.
+        let floor = self.foot;
+        let (mut made, mut hit) = (0.0, false);
+        let mut top = floor;
+        for _ in 0..steps {
+            let to = (self.dir + self.fwd * (want / bounds.radius)).normalize();
+            let got = walker::resolve_body(field, bounds, to, self.foot, self.fwd, shape);
+            // THROUGH a wall rather than into one, which no sub step can
+            // fix on its own: a push goes out of the NEAREST face, so a
+            // bumper that lands past a thin wall's own mid plane is
+            // pushed OUT THE FAR SIDE. Measured on a 0.35 m wall, a car
+            // 0.03 m past the middle was shoved 0.15 m forward and
+            // carried on at 160 km/h.
+            if walker::swept(field, bounds, (self.dir, got), self.foot, self.fwd, shape) {
+                hit = true;
+                break;
+            }
+            let step_made = (got - self.dir).dot(self.fwd) * bounds.radius;
+            let g = walker::ground(field, bounds, got, Some(self.foot));
+            // A kerb's worth of step, plus whatever the GROUND itself
+            // rose over the distance the car actually covered.
+            if g - floor > CLIMB + (made + step_made).abs() * STEEPEST {
+                hit = true;
+                break;
+            }
+            self.gone += (got - self.dir).length() * bounds.radius;
+            made += step_made;
+            top = g;
+            self.dir = got;
+            self.fwd = (self.fwd - got * self.fwd.dot(got)).normalize_or(DVec3::X);
+            let drop = self.foot - g;
+            self.h = if self.on_ground && drop <= CLIMB {
+                0.0
+            } else {
+                drop.max(0.0)
+            };
+            if step_made.abs() < want.abs() * 0.05 {
+                hit = true;
+                break;
+            }
         }
-        self.dir = got;
-        self.fwd = (self.fwd - got * self.fwd.dot(got)).normalize_or(DVec3::X);
-        if made.abs() < asked.abs() * 0.7 {
+        if hit {
+            self.speed *= CRASH;
+        } else if made.abs() < asked.abs() * 0.7 {
             self.speed *= 0.85;
         }
         // And the HILL takes speed off, which is the whole of what a
@@ -399,9 +515,13 @@ impl Driver {
         // costs 4.4 and the car climbs it slowly; a one in one costs
         // 6.9 and the car stalls on it, which is a hill a car does not
         // get up and is the right answer rather than a wall.
-        let rise = g - self.foot;
+        //
+        // Over the WHOLE frame and never a sub step, because `made` is
+        // the ground the car actually covered and `top` is the ground
+        // under the last step it actually took: a sub step that was
+        // refused climbed nothing and must cost nothing.
         if made.abs() > 1e-6 {
-            let grade = (rise / made).clamp(-HILL, HILL);
+            let grade = ((top - floor) / made).clamp(-HILL, HILL);
             self.speed -= GRAVITY * grade / (1.0 + grade * grade).sqrt() * dt;
             // A car RUNS AWAY downhill and it does not run away for
             // ever: `pedals` clamps what the engine can ask for and
@@ -409,12 +529,6 @@ impl Driver {
             // the other side is what the wind and the wheels take back.
             self.speed = self.speed.clamp(-REVERSE * RUNAWAY, TOP * RUNAWAY);
         }
-        let drop = self.foot - g;
-        self.h = if self.on_ground && drop <= CLIMB {
-            0.0
-        } else {
-            drop.max(0.0)
-        };
     }
 
     /// Gravity and the landing. A car has no jump and no ceiling: it

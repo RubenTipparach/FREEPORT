@@ -14,7 +14,7 @@
 //! every entity placed through the floating origin like a chunk.
 
 use crate::stream::{Anchored, Frame};
-use crate::terrain::{to_mesh, Vertex};
+use crate::terrain::{to_mesh_filtered, Vertex};
 use crate::world::{Route, Verge, World};
 use crate::{Eye, Ground};
 use bevy::asset::RenderAssetUsages;
@@ -22,6 +22,7 @@ use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::NoAutoAabb;
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use freeport_core::field::TERRAIN;
 use freeport_core::pos::WorldPos;
 use freeport_core::road::ribbon;
 
@@ -235,13 +236,7 @@ pub fn stream_roads(
     let Some(route) = ground.0.routes.get(r) else {
         return;
     };
-    if let Some(verge) = lay(
-        &mut commands,
-        &mut kit,
-        route,
-        ground.0.planet.radius,
-        Paved(r, k),
-    ) {
+    if let Some(verge) = lay(&mut commands, &mut kit, &ground.0, route, Paved(r, k)) {
         kit.fabric.verges.push(verge);
     }
 }
@@ -251,30 +246,42 @@ pub fn stream_roads(
 fn lay(
     commands: &mut Commands,
     kit: &mut Kit,
+    ground: &World,
     route: &Route,
-    radius: f64,
     which: Paved,
 ) -> Option<Verge> {
+    let radius = ground.planet.radius;
     let at = ribbon::span(which.1, route.line.len());
     if at.len() < 2 {
         return None;
     }
-    let (line, run, open, lit) = (
-        &route.line[at.clone()],
-        &route.run[at.clone()],
-        &route.open[at.clone()],
-        &route.lit[at.clone()],
-    );
-    let frame = ribbon::frame(line, run, radius);
-    let model = ribbon::stretch(&frame, line, run, open, lit, radius);
+    let course = route.stretch(at);
+    let frame = ribbon::frame(course.line, course.run, radius);
+    // The MOUND reads the field's own surface, which is what the mesher
+    // contours and what the walker and the car collide against: the road
+    // carries its own ground, so it cannot disagree with the ground it
+    // stands on however coarse the chunk under it happens to be.
+    let planet = &ground.planet;
+    let model = ribbon::stretch(&frame, course, radius, &|dir| planet.surface(dir).0);
     if model.mesh.positions.is_empty() {
         return None;
     }
     let sea = route.sea;
-    let place = |p: Vec3| Vertex::built(p, (frame.world(p.as_dvec3()).length() - sea) as f32);
-    let mut mesh = to_mesh(&model.mesh, place);
+    let origin = frame.world(DVec3::ZERO);
+    let earth_at = crate::terrain::ground_mapping(origin, sea, Some(planet.shape()));
+    // TWO meshes out of ONE model, filtered by material, because the two
+    // are mapped from different places: the tarmac and its markings are
+    // a BUILT thing and map in this stretch's own frame, and the mound
+    // is TERRAIN and maps the way a chunk does, in the planet's frame
+    // and modulo the ground's own tile, so the grass on it tiles with
+    // the grass beside it and carries this latitude's own climate.
+    let built = |p: Vec3| Vertex::built(p, (frame.world(p.as_dvec3()).length() - sea) as f32);
+    let earth = |p: Vec3| earth_at(frame.world(p.as_dvec3()));
+    let mut mesh = to_mesh_filtered(&model.mesh, built, |m| m != TERRAIN);
+    let mut skirt = to_mesh_filtered(&model.mesh, earth, |m| m == TERRAIN);
     let bounds = Aabb::enclosing(mesh_points(&model.mesh));
     mesh.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    skirt.asset_usage = RenderAssetUsages::RENDER_WORLD;
     let anchor = WorldPos(frame.world(DVec3::ZERO));
     let basis = Mat3::from_cols(
         frame.east.as_vec3(),
@@ -296,6 +303,20 @@ fn lay(
     if let Some(bounds) = bounds {
         entity.insert((bounds, NoAutoAabb));
     }
+    // The mound is a CHILD of the tarmac, in the same frame with an
+    // identity transform, so it is placed, rebased and despawned with
+    // it: one `Anchored` and one `Paved`, which is what keeps the near
+    // set a set of STRETCHES rather than of meshes.
+    entity.with_children(|kids| {
+        let mut kid = kids.spawn((
+            Mesh3d(kit.meshes.add(skirt)),
+            MeshMaterial3d(kit.ground.ground.clone()),
+            Transform::IDENTITY,
+        ));
+        if let Some(bounds) = bounds {
+            kid.insert((bounds, NoAutoAabb));
+        }
+    });
     // The lamps in the BODY's own frame, each carrying its index along
     // the whole road: a stretch streams, so an index into one would name
     // a different lamp the moment a neighbour arrived. The stretch's own
@@ -615,7 +636,7 @@ fn to_paving(world: &World, at: DVec3, radius: f64) -> f64 {
 }
 
 /// How far the ground a COARSE chunk draws stands over a road's own
-/// tarmac: the worst and the median, in metres, along the first road.
+/// tarmac: the worst, the median and how many roads were swept.
 ///
 /// The terrain's cell is about a sixty fourth of its own distance from
 /// the eye and a corridor is 14 m wide, so past a couple of hundred
@@ -623,8 +644,7 @@ fn to_paving(world: &World, at: DVec3, radius: f64) -> f64 {
 /// the planet WITHOUT it. That is the planet carrying the towns' sites
 /// and none of the roads', which is what this measures against, and
 /// anything it stands over the tarmac by is road the country hides.
-pub fn ground_over_tarmac(world: &World) -> Option<(f64, f64)> {
-    let route = world.routes.first()?;
+pub fn ground_over_tarmac(world: &World) -> Option<(f64, f64, usize)> {
     let bare = freeport_core::field::Planet {
         sites: world
             .towns
@@ -640,17 +660,26 @@ pub fn ground_over_tarmac(world: &World) -> Option<(f64, f64)> {
     // company wherever the volumetric term bites, so measuring against
     // the other one reports a disagreement as a burial.
     const STEPS: usize = 8;
+    // A SWEEP of roads and not road 0 alone. The worst is the number
+    // that decides whether an embankment clears the terrain's own LOD,
+    // and one road is one sample of a body: the first thirty two are a
+    // few thousand kilometres of it and cost a second of startup.
+    const ROADS: usize = 32;
     let mut over: Vec<f64> = Vec::new();
-    for i in 0..route.line.len().saturating_sub(1) {
-        if !(route.open[i] && route.open[i + 1]) {
-            continue;
-        }
-        for k in 0..STEPS {
-            let dir = freeport_core::road::step(route.line[i], route.line[i + 1], k, STEPS);
-            let here = freeport_core::town::surface_radius(&bare.around(dir, 1e-9), dir) - radius;
-            let t = k as f64 / STEPS as f64;
-            let road = route.run[i] * (1.0 - t) + route.run[i + 1] * t + ribbon::LIFT;
-            over.push(here - road);
+    let roads = world.routes.len().min(ROADS);
+    for route in world.routes.iter().take(ROADS) {
+        for i in 0..route.line.len().saturating_sub(1) {
+            if !(route.graded[i] && route.graded[i + 1]) {
+                continue;
+            }
+            for k in 0..STEPS {
+                let dir = freeport_core::road::step(route.line[i], route.line[i + 1], k, STEPS);
+                let here =
+                    freeport_core::town::surface_radius(&bare.around(dir, 1e-9), dir) - radius;
+                let t = k as f64 / STEPS as f64;
+                let road = route.run[i] * (1.0 - t) + route.run[i + 1] * t + ribbon::LIFT;
+                over.push(here - road);
+            }
         }
     }
     if over.is_empty() {
@@ -658,5 +687,5 @@ pub fn ground_over_tarmac(world: &World) -> Option<(f64, f64)> {
     }
     let worst = over.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     over.sort_by(f64::total_cmp);
-    Some((worst, over[over.len() / 2]))
+    Some((worst, over[over.len() / 2], roads))
 }

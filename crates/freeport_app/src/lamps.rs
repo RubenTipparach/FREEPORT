@@ -145,6 +145,7 @@ mod tests {
             now: 0.0,
             day: day::DAY,
             here,
+            frozen: false,
         }
     }
 

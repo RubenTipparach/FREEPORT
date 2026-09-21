@@ -130,6 +130,29 @@ const SLIP_PIECE: f64 = 3.0;
 /// their own direction without looping.
 const EASE: f64 = 0.55;
 
+/// How much CLEARANCE a slip is laid with over the ground it reads,
+/// metres, at its highway end.
+///
+/// A slip gets no MOUND: `ribbon::mound` is drawn where the corridor
+/// was cut and a slip runs over the town's own plateau, so the slip is
+/// the one piece of road that still has to clear the terrain's own LOD
+/// by standing over it. Dual contouring puts its vertex within a cell
+/// of the crossing and a cell under an eye 90 m up is over a metre,
+/// against `ribbon::LIFT`'s own 0.15 m: the first picture of a junction
+/// from that height came back with the slip BITTEN THROUGH in half a
+/// dozen places by jagged terrain while the highway either side of it
+/// was solid, and at `LIFT + SLIP_CLEAR` it is continuous tarmac.
+///
+/// It was `road::EMBANK`, and that is a different number for a
+/// different reason. A slip's first point IS the highway's own mouth
+/// station, where the ground it reads is the corridor level the
+/// highway's tarmac is already laid on, so everything the slip adds
+/// past the tarmac's own lift is a STEP at the junction. At half a
+/// metre that step is half a metre and nothing has ever measured it;
+/// when `EMBANK` went to two metres to carry the road's own MOUND, it
+/// would have become two, which is a kerb a car cannot drive off.
+const SLIP_CLEAR: f64 = 0.5;
+
 /// The height a slip's tarmac RIDES at over one point of the ground,
 /// metres over the mean radius, in the units `ribbon::stretch` reads
 /// (it adds its own `LIFT` back to everything it is handed).
@@ -169,7 +192,7 @@ const EASE: f64 = 0.55;
 /// half of the skirt that fades INSIDE that boundary, and buried the
 /// tarmac the same 0.39 m in the same place.
 ///
-/// **And `road::EMBANK` is in it, which reading the traced ground does
+/// **And `SLIP_CLEAR` is in it, which reading the traced ground does
 /// NOT make unnecessary.** Dropped on the reasoning that there was
 /// nothing left for an embankment to hide, the first picture of a
 /// junction from 90 m came back with the slip BITTEN THROUGH in half a
@@ -185,7 +208,7 @@ const EASE: f64 = 0.55;
 fn riding(local: &crate::field::Planet, site: &crate::town::Site, dir: DVec3, radius: f64) -> f64 {
     let top = radius + local.surface(dir).0 + local.overhang;
     let ground = crate::town::surface_radius_from(local, dir, top) - radius;
-    let high = super::ribbon::LIFT + super::EMBANK;
+    let high = super::ribbon::LIFT + SLIP_CLEAR;
     let ease = 1.0 - local.site_weight(site, dir);
     let lift = crate::town::LIFT + (high - crate::town::LIFT) * ease;
     ground + lift - super::ribbon::LIFT

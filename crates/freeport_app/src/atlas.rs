@@ -78,6 +78,18 @@ pub(crate) struct Atlas {
     /// would have said so. It is the same silent failure `piece` and
     /// `embank` are in this list to refuse.
     pub steepest: f64,
+    /// The minimum horizontal curve radius the alignment was fitted at
+    /// (`road::CURVE`).
+    ///
+    /// It is in the fingerprint for the reason `piece` is: the refined
+    /// centreline is DERIVED from the stored waypoints on both sides of
+    /// the bake, and a curve fitted at another radius has a different
+    /// number of points, so a file baked at one and read at another has
+    /// a run of the wrong length for every road on the body and
+    /// `road::corridor` hands back nothing. Roads on the chart, a route
+    /// a car can follow, and no ground under any of it.
+    #[serde(default)]
+    pub curve: f64,
     /// The sea this plan was made against. A town qualifies on how high
     /// it stands over the sea and a road is refused into it, so a plan
     /// made at one level is a set of cities underwater at another.
@@ -194,6 +206,7 @@ impl Atlas {
             piece: road::PIECE,
             embank: road::EMBANK,
             steepest: road::STEEPEST,
+            curve: road::CURVE,
             sea,
             probe: probe(planet),
             towns: towns
@@ -284,6 +297,13 @@ impl Atlas {
             && (self.sea - sea).abs() < 1.0
             && (self.town_radius - town_radius).abs() < 1e-6
             && (self.piece - road::PIECE).abs() < 1e-6
+            // EMBANK and CURVE are both IN the heights this file stores
+            // and in the count of them, and neither was checked: the
+            // doc comment on `embank` claimed it was in the fingerprint
+            // for a commit while `fits` never read it, which is a
+            // fingerprint field that refuses nothing.
+            && (self.embank - road::EMBANK).abs() < 1e-6
+            && (self.curve - road::CURVE).abs() < 1e-3
             && self.probe.len() == PROBES
             && self
                 .probe
