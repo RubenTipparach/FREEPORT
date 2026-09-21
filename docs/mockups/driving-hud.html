@@ -123,16 +123,16 @@
   .gauge-fill { color: var(--ok); }
   .gauge-fill.low { color: var(--amber); }
   .gauge-fill.dry { color: var(--alarm); }
-  /* bottom left: the purse and the pump, in the corner */
+  /* top left, under the keys: the purse and the pump, at the size of a readout */
   .purse {
-    left: 2.2%; bottom: 3.5%;
-    padding: 10px 14px 9px;
-    min-width: 168px;
-    display: grid; gap: 6px;
+    left: 2.2%; top: calc(3.5% + 38px);
+    padding: 6px 10px 5px;
+    min-width: 150px;
+    display: grid; gap: 3px;
   }
-  .purse .row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
-  .purse .cash { font-size: 24px; font-weight: 600; line-height: 1; }
-  .purse .pump { font-size: 14px; }
+  .purse .row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; }
+  .purse .cash { font-size: 15px; font-weight: 600; line-height: 1.2; }
+  .purse .pump { font-size: 13px; }
   /* top: the compass strip and the corner */
   .compass {
     left: 50%; top: 3.5%; transform: translateX(-50%);
@@ -240,7 +240,7 @@
     .dial svg { width: 88px; height: 88px; }
     .dial .big { font-size: 16px; }
     .dial .label { top: 22px; }
-    .purse { min-width: 120px; }
+    .purse { min-width: 120px; top: 3.5%; } /* the keys are hidden on a phone, so the purse takes their corner */
     .compass { width: 60%; min-width: 0; height: 36px; }
     .keys { display: none; }
   }

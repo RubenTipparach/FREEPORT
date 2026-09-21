@@ -4255,10 +4255,11 @@ you are driving with markers you can put down by hand for a route, A*
 being a feature after it. A screen goes through this file's own mockup
 rule (rendered, published, approved, then built), and
 `docs/mockups/driving-hud.html` is the page: the HUD drawn as glass
-over a road that moves at the car's own speed, the wallet in the left
-corner and the two dials ROUND at the right, which is the owner's own
-placement off the first cut, the map behind M, and a table under both
-saying where every figure comes from.
+over a road that moves at the car's own speed, the wallet under the
+key legend at the top left at the size of a readout and not a
+headline, and the two dials ROUND at the bottom right, which is the
+owner's own placement off the first three cuts, the map behind M, and
+a table under both saying where every figure comes from.
 
 **The second reading of it took three things and they are all on the
 page.** The tank's PERCENTAGE went, because the gauge is that number
