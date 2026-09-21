@@ -236,14 +236,15 @@
 
   <p>FREEPORT today, one 10 m building on a 19 m pitch, is <b>27.7%</b>: <b>under every one
   of them</b>, including a medieval hill town. At <b>4&times;4 blocks with a courtyard</b>,
-  a 230 m radius and the three highways run in, the drawn plan measures <b>43.6%</b>, which
-  puts it between the Eixample and Portland's downtown. The owner's arithmetic lands the
-  town inside the real range; the 10 m block never was.</p>
+  a 230 m radius and the three highways merged into its edge, the drawn plan measures
+  <b>47.3%</b>, which puts it just over Portland's downtown and under the Eixample and
+  Chicago. The owner's arithmetic lands the town inside the real range; the 10 m block
+  never was.</p>
 
   <p><b>And the slider does not climb, it SAWS</b>, which is the 2&times;2 building saying
   something about the block it has to tile. Measured at one radius: 1 lot a side is
-  <b>29.2%</b>, 2 is 32.6, 3 is <b>26.6</b>, 4 is <b>43.6</b>, 5 is 32.9 and 6 is
-  <b>47.9</b>. An EVEN side tiles exactly, <code>floor(side/2)&sup2;</code> large buildings
+  <b>29.2%</b>, 2 is 33.3, 3 is <b>28.3</b>, 4 is <b>47.3</b>, 5 is 35.5 and 6 is
+  <b>52.7</b>. An EVEN side tiles exactly, <code>floor(side/2)&sup2;</code> large buildings
   covering the whole block; an ODD one leaves a strip a lot wide over as yard, which is
   <code>4n&sup2;/side&sup2;</code> and is 0.44 at three and 0.64 at five against 1.00 at
   two, four and six. The owner's own 4&times;4 is the smallest block that both holds a
@@ -251,8 +252,8 @@
   a preference.</p>
 
   <p>The <b>town radius</b> slider is the other half, and coverage falls as a town grows
-  because what it grows is suburb: <b>46.8%</b> at a 60 m hamlet, 44.7 at a village, 43.6
-  at the shipped market town, 40.6 at 300 m, 40.2 at a 540 m city and 41.5 at a 900 m
+  because what it grows is suburb: <b>53.1%</b> at a 60 m hamlet, 48.5 at a village, 47.3
+  at the shipped market town, 43.2 at 300 m, 41.7 at a 540 m city and 42.7 at a 900 m
   capital. The grain's octave count follows the size the way <code>town::shape</code>'s
   does, one octave at a hamlet and five at a capital, so a small place has one lump and a
   big one is ragged at every scale it has.</p>
@@ -356,28 +357,41 @@
   the high street strung along them a block deep, and the fringe out there frayed by the
   same fractal grain the rest of the edge already has.</p>
 
-  <p><b>And the highway has to MERGE, which is a second thing.</b> Drawn as a bar that
-  stopped at a radius it ended in mid air with the town's grid carrying on past it, joined
-  to nothing. A trunk road that reaches a town does not end: it becomes the high street. So
-  it <b>tapers</b>, from the country's own 22 m out past the town down to the local
-  <code>STREET</code> of 8.5 m by the core, and all three <b>stop at the market square</b>,
-  because a road that has arrived at one has arrived. The game's own
-  <code>road::slip</code> is the curved version of the same statement, a cubic Hermite from
-  the highway's mouth to the nearest crossing the town paved.</p>
+  <p><b>And a highway does not CUT THROUGH a town, it merges into its EDGE.</b> The
+  owner's second correction and the one that threw the first answer out. A trunk road that
+  reaches a town hands its traffic to the town's own streets at the boundary and the grid
+  carries it from there; run on through as a diagonal it slices blocks, which nothing in a
+  block grid does except Broadway, and Broadway is famous for exactly that reason. So the
+  arterial above is drawn from the country <em>in to the town's own edge and no further</em>,
+  narrowing over its last 60 m to the width of the street it is about to become, and a
+  <b>slip</b> curves it onto the nearest crossing the town paved. That is
+  <code>road::slip</code> in the game line for line: a cubic Hermite leaving along the
+  road's heading and arriving along the town's own grid axis.</p>
 
-  <p>Three rules were tried for what an oblique road does to a block grid, and the third is
-  the only one that is right in the picture and in the number at once.
-  <b>Rejecting every block within a margin</b> of a third of a block put 14 m of bare
-  ground either side of a 20 m road and the arterial read as a gap in the plan.
-  <b>Rejecting on the block's own support function</b>, which is the honest geometric test
-  for an overlap, sterilises a band as wide as a block's own <em>diagonal</em> whatever the
-  road is: 53 m at 4&times;4, which cut the town into three wedges and dropped coverage
-  from 43.6% to 42.0%. What it does instead is ask the question of a <b>LOT</b>: a block the
-  road runs clean over is gone, and a block it merely clips keeps every lot the road does
-  not stand on. One function (<code>onRoad</code>) is asked by the lot that is drawn and by
-  the footprint that is counted, so a building under a road cannot be in one and not the
-  other, and the roads are drawn LAST so a block painted after one cannot chop it into
-  stubs.</p>
+  <p>The figure panel carries <b>Cut by a road</b> for exactly this, and it must read
+  <b>0</b>. It is asked of every lot that is drawn, against both the open highway and the
+  slip, so it cannot be satisfied by a comment: a rule that can no longer fire is worth
+  keeping only when something measures that it did not. It reads 0 at every setting of
+  both sliders.</p>
+
+  <p>What was tried first and is wrong is worth naming, because it is the shape of every
+  answer that lets the road through. Three rules for what a diagonal does to a block grid:
+  a <b>margin</b> of a third of a block left 14 m of bare ground either side of a 20 m
+  road and the arterial read as a gap in the plan; at a sixth the blocks overlapped the
+  road and painted it out, so it came out as a row of dark stubs. The block's own
+  <b>support function</b> is the honest overlap test and needs no margin, and it
+  sterilises a band as wide as a block's <em>diagonal</em> whatever the road is, 53 m at
+  4&times;4, which cut the town into three wedges. Keeping every lot the road did not
+  stand on kept the density and still put tarmac through the middle of a block grid. All
+  three are answers to the wrong question: the road should not have been in there.</p>
+
+  <p class="note">Two things follow from stopping at the edge. The <b>high street</b> is no
+  longer the tarmac, it is the town's own grid line down the arm, so what says a block
+  trades is the arm's own <em>axis</em> and never the road: measured, that leaves the drawn
+  town 18.0% commercial against the 18.2% the tarmac rule gave, which is what says the two
+  are reading the same ribbon. And the mouth is scanned <em>across</em> the bearing as well
+  as along it, by half a block either side, or an arm whose own line falls in a notch of the
+  fractal grain stops short of fabric standing either side of it.</p>
 
   <div class="cols">
     <div class="card done">
@@ -478,14 +492,13 @@
       roads that reach it, which means the sites are installed <em>after</em> the network is
       routed. The atlas has the roads; the order is what moves.</p>
     </div>
-    <div class="card open">
-      <h3>A block a highway CLIPS is a partial block</h3>
-      <p>The plan above keeps every lot an arterial does not stand on, which the canvas can
-      do because a lot is a rectangle it either fills or skips. In the game a lot carries a
-      baked <code>Model</code>, so the same rule is <code>town::plot</code> refusing a lot
-      whose own footprint meets the road's right of way, and the road is
-      <code>road::corridor</code> rather than a ray. It costs a corridor query per lot at
-      plan time, which is what <code>Planet::around</code> already filters for a chunk.</p>
+    <div class="card done">
+      <h3>The merge is ALREADY BUILT</h3>
+      <p>This one costs nothing, which is the happy finding: <code>road::open</code> already
+      stops a corridor at <code>Site::level_r</code> and <code>road::slip</code> already
+      curves the last of it onto the nearest crossing the town paved, arriving along the
+      grid axis. The plan above is that rule drawn. What an arm changes is
+      <em>where</em> the edge is, which is the levelling card above.</p>
     </div>
     <div class="card open">
       <h3>Every street number moves</h3>
@@ -722,62 +735,151 @@
     return want - GRAIN * Math.max(0, Math.min(1, 1 - want)) * grain(x, z);
   }
 
-  // HOW WIDE THE ARTERIAL IS at a radius, in metres. This is the whole
-  // of the merge and it replaces a road that stopped at a radius with a
-  // round cap and left the town's grid going on past it, joined to
-  // nothing. A trunk road that reaches a town does not end: it BECOMES
-  // the high street. So it is the country's own 22 m out past the town
-  // and tapers to `STREET` by the core, and all three arrive at the
-  // market square, which is what a market square is for.
+  // A HIGHWAY DOES NOT CUT THROUGH A TOWN, it MERGES INTO ITS EDGE.
+  // The owner's own correction, and it is right: a trunk road that
+  // reaches a town hands its traffic to the town's own streets at the
+  // boundary and the grid carries it from there. Run on through as a
+  // diagonal it slices blocks, which nothing in a block grid does
+  // except Broadway, and Broadway is famous for exactly that reason.
   //
-  // The game's own `road::slip` is the curved version of this, a cubic
-  // Hermite from the highway's mouth to the nearest crossing the town
-  // paved. Drawn at a plan's scale that curve is a hook a few pixels
-  // across, so the page draws the taper, which says the same thing about
-  // where the road goes and says it legibly.
-  const roadWide = t => {
-    const at = Math.max(0, Math.min(1,
-      (t / townR - ROAD_CORE) / (ROAD_OPEN - ROAD_CORE)));
+  // So the arterial is drawn from the country IN TO THE TOWN'S OWN EDGE
+  // and no further, and a SLIP curves it onto the nearest crossing the
+  // town paved. That is `road::slip` in the game, line for line: a cubic
+  // Hermite from the highway's mouth to the nearest crossing, leaving
+  // along the road's heading and arriving along the town's own grid
+  // axis. Inside the edge there is no highway at all, which is why no
+  // block is cut and why `lotsOnRoad` below reports nought.
+  const ROAD_TAPER = 60;             // metres of approach it narrows over
+
+  // WHERE A HIGHWAY MEETS A TOWN, planned once a frame off the town's
+  // own grid. Three things come out of it and they are one answer: the
+  // MOUTH, which is the last point of open road; the CROSSING it hands
+  // its traffic to; and the SLIP between them.
+  //
+  // The entry is scanned rather than solved, because the fractal grain
+  // bites the edge in and there is no closed form for where a town
+  // stops. It is sampled ACROSS the bearing as well as along it, by half
+  // a block either side, or an arm whose own line falls in a notch stops
+  // short of fabric standing either side of it.
+  let PLAN = null;
+  function planRoads(g, span) {
+    const pitch = g.block + STREET;
+    // A crossing is PAVED when a block round it is built, which is
+    // `town::streets_of`'s own rule: a street runs where somebody built
+    // and nowhere else, so a crossing on nothing is not a crossing.
+    const paved = (i, j) =>
+      liveAt(i, j, g) || liveAt(i - 1, j, g) || liveAt(i, j - 1, g) || liveAt(i - 1, j - 1, g);
+    const nearest = (want) => {
+      let best = -span, gap = Infinity;
+      for (let k = -span; k <= span; k++) {
+        const d = Math.abs(g.at.get(k) - want);
+        if (d < gap) { gap = d; best = k; }
+      }
+      return best;
+    };
+    PLAN = ARMS.map(a => {
+      const ux = Math.cos(a), uz = Math.sin(a);
+      const nx = -uz, nz = ux;                       // across the bearing
+      const far = townR * (1 + ARM_REACH) * 1.02, step = townR / 400;
+      let enter = 0;
+      for (let r = far; r > 0 && !enter; r -= step)
+        for (const o of [0, g.block / 2, -g.block / 2])
+          if (demand(ux * r + nx * o, uz * r + nz * o) > 0) { enter = r; break; }
+      const ex = ux * enter, ez = uz * enter;
+      // The nearest PAVED crossing to where the road enters, looked for
+      // in a small neighbourhood: a search of the whole grid walked off
+      // to a crossing hundreds of metres in and the slip then ran
+      // straight over a row of blocks to reach it, which is the very
+      // thing this section exists to stop.
+      const i0 = nearest(ex), j0 = nearest(ez);
+      let ci = i0, cj = j0, gap = Infinity;
+      for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) {
+        const i = i0 + di, j = j0 + dj;
+        if (Math.abs(i) > span || Math.abs(j) > span || !paved(i, j)) continue;
+        const d = Math.hypot(g.at.get(i) - ex, g.at.get(j) - ez);
+        if (d < gap) { gap = d; ci = i; cj = j; }
+      }
+      const cx = g.at.get(ci), cz = g.at.get(cj);
+      // The mouth stands far enough OUT along the bearing that the whole
+      // turn happens in open country: the curve is then outside the town
+      // until it arrives on the crossing's own street, which is what
+      // keeps it off the blocks.
+      const mouth = Math.max(enter + 1.2 * pitch, enter + 1.6 * gap);
+      return { a, mouth, line: slipLine(ux, uz, mouth, cx, cz) };
+    });
+    return PLAN;
+  }
+
+  // The SLIP itself: a cubic Hermite leaving the mouth along the road's
+  // own heading and arriving at the crossing along the grid axis that
+  // carries most of the way in. `road::slip` in the game is this curve,
+  // and its reason is the same: a slip that met a street at the angle
+  // the road came in on would T bone it and leave the corner bare.
+  function slipLine(ux, uz, mouth, cx, cz) {
+    const mx = ux * mouth, mz = uz * mouth;
+    const dx = cx - mx, dz = cz - mz, len = Math.hypot(dx, dz);
+    if (len < 1) return [[mx, mz]];
+    const ax = Math.abs(dx) > Math.abs(dz) ? Math.sign(dx) : 0;
+    const az = ax ? 0 : Math.sign(dz);
+    const t0x = -ux * len, t0z = -uz * len, t1x = ax * len, t1z = az * len;
+    const pts = [];
+    for (let n = 0; n <= 24; n++) {
+      const u = n / 24, u2 = u * u, u3 = u2 * u;
+      const h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u;
+      const h01 = -2 * u3 + 3 * u2,    h11 = u3 - u2;
+      pts.push([h00 * mx + h10 * t0x + h01 * cx + h11 * t1x,
+                h00 * mz + h10 * t0z + h01 * cz + h11 * t1z]);
+    }
+    return pts;
+  }
+
+  // HOW WIDE THE ARTERIAL IS on its approach, in metres: the country's
+  // own 22 m until the last `ROAD_TAPER` of it, then down to the local
+  // `STREET` at the mouth, because what it joins is a street and a
+  // highway that arrives at full width has not merged with anything.
+  const roadWide = (t, mouth) => {
+    const at = Math.max(0, Math.min(1, (t - mouth) / ROAD_TAPER));
     return STREET + (ROAD_HALF * 2 - STREET) * at;
   };
 
-  // The nearest arterial: how far off a point stands, how wide the road
-  // is there, and which BEARING it runs on, because a block is kept off
-  // it by its LOCAL width and not by the widest it ever gets, and how
-  // much of a block an oblique road eats is a function of its angle.
-  function roadAt(x, z) {
-    let best = { off: Infinity, wide: STREET, axis: 0 };
+  // How far off the nearest arm's own AXIS a point stands, whether or
+  // not a highway is drawn there. The high street runs down the arm
+  // inside the town as one of the town's own streets, so what says a
+  // block trades is the axis and never the tarmac.
+  function axisOff(x, z) {
+    let best = Infinity;
     for (const a of ARMS) {
       const ux = Math.cos(a), uz = Math.sin(a);
-      const t = x * ux + z * uz;
-      if (t < 0) continue;
-      const off = Math.abs(z * ux - x * uz);
-      if (off < best.off) best = { off, wide: roadWide(t), axis: a };
+      if (x * ux + z * uz < 0) continue;
+      best = Math.min(best, Math.abs(z * ux - x * uz));
     }
     return best;
   }
 
-  // How far an axis aligned block of `side` metres reaches ACROSS a road
-  // running on `axis`: the square's own support function in the road's
-  // normal direction, `(side / 2) (|sin| + |cos|)`. There is no constant
-  // in it, which is the point. A block nearer than this OVERLAPS the
-  // road, and a block at exactly this distance stands flush against it.
-  const reachAcross = (side, axis) =>
-    side / 2 * (Math.abs(Math.sin(axis)) + Math.abs(Math.cos(axis)));
-
-  // IS THIS GROUND THE ARTERIAL'S? Asked of a LOT rather than of a block,
-  // because an oblique road eats part of a block and leaves the rest, and
-  // asked in one place so the lot that is drawn and the footprint that is
-  // counted are the same set. The whole right of way, pavement included:
-  // a house does not stand on a pavement.
-  const onRoad = (x, z) => { const r = roadAt(x, z); return r.off < r.wide / 2; };
-
-  // Where a ray out of the origin leaves an axis aligned box, in metres:
-  // the nearer of the two slabs it can exit through. The square holds the
-  // origin by construction, so both hits are ahead of the ray.
-  function exitOf(sq, ux, uz) {
-    const slab = (lo, hi, u) => u > 1e-9 ? hi / u : u < -1e-9 ? lo / u : Infinity;
-    return Math.max(0, Math.min(slab(sq.x0, sq.x1, ux), slab(sq.z0, sq.z1, uz)));
+  // IS THIS GROUND THE ROAD'S? The open highway past its own mouth, AND
+  // the slip, because the slip is the half of the merge that can cross
+  // a block and so is the half worth measuring. It is asked of every LOT
+  // that is drawn and the figure panel reports the count, which must be
+  // nought: a rule that cannot fire is worth keeping only when something
+  // measures that it did not.
+  function onRoad(x, z) {
+    if (!PLAN) return false;
+    for (const arm of PLAN) {
+      const ux = Math.cos(arm.a), uz = Math.sin(arm.a);
+      const t = x * ux + z * uz;
+      if (t >= arm.mouth && Math.abs(z * ux - x * uz) < roadWide(t, arm.mouth) / 2)
+        return true;
+      const half = STREET / 2;
+      for (let n = 1; n < arm.line.length; n++) {
+        const p = arm.line[n - 1], q = arm.line[n];
+        const vx = q[0] - p[0], vz = q[1] - p[1], vv = vx * vx + vz * vz;
+        if (vv < 1e-9) continue;
+        let u = ((x - p[0]) * vx + (z - p[1]) * vz) / vv;
+        u = Math.max(0, Math.min(1, u));
+        if (Math.hypot(x - p[0] - u * vx, z - p[1] - u * vz) < half) return true;
+      }
+    }
+    return false;
   }
 
   // ---------------------------------------------------------- the town map --
@@ -815,6 +917,7 @@
   const squareOf = r => r < 120 ? 0 : r < 300 ? 1 : r < 620 ? 2 : 3;
   const SQUARE = { i: 0, j: 0, get w() { return squareOf(townR); },
                             get d() { return squareOf(townR); } };
+  const liveAt = (i, j, g) => useAt(i, j, g, true) !== null;
   function useAt(i, j, g, plain) {
     // The block's OWN middle, which is its origin plus half a block and
     // not the midpoint of the two grid lines: the lines either side of
@@ -837,18 +940,6 @@
     // own LOCAL width, so the corridor narrows with it as it becomes a
     // street rather than staying a country road's worth of bare ground
     // all the way to the middle of town.
-    const road = roadAt(cx, cz);
-    // A block the road runs clean OVER is not a block. A block it merely
-    // CLIPS keeps every lot the road does not stand on, which is what a
-    // diagonal through a grid actually leaves and is the one answer that
-    // is right in the picture and in the number at once: `onRoad` is
-    // asked by the lot that is drawn AND by the footprint that is
-    // counted, so a building under a road cannot be in one and not the
-    // other. Rejecting the whole block instead sterilised a band as wide
-    // as a block's own diagonal (53 m at 4x4, whatever the road) and cut
-    // the town into three wedges; rejecting on a margin of a sixth of a
-    // block let the blocks paint the road out between them.
-    if (road.off < road.wide / 2) return null;
     if (plain) return { zone, use: zone === "core" ? "mix" : "res", d };
     // The blocks that FACE the square build civic, and only the ones that
     // share an EDGE with it: the ring including the diagonals is twelve
@@ -871,7 +962,7 @@
     // at 0.5 18.2 and at 0.4 17.3. Half is where it stops moving much
     // and is the honest statement anyway, that a high street is shops on
     // one side of it and whatever was there on the other.
-    if (road.off < road.wide / 2 + RIBBON_BAND * g.block && coin(i, j, 31) < RIBBON)
+    if (axisOff(cx, cz) < RIBBON_BAND * g.block && coin(i, j, 31) < RIBBON)
       return { zone, use: "com", d };
 
     // HOYT: industry is a WEDGE and not a ring, down the road it came in
@@ -943,9 +1034,12 @@
     const span = Math.ceil(townR * (1 + ARM_REACH) / pitchOf(side)) + 1;
     const g = lines(side * LOT, STREET, span + 1, true);
     const block = g.block;
-    const live = (i, j) => useAt(i, j, g, plain) !== null;
+    // The roads are planned BEFORE the lots are laid, because `onRoad`
+    // is what a lot is tested against and the plan is what it reads.
+    planRoads(g, span);
+    const live = (i, j) => liveAt(i, j, g);
     const tally = {}, add = (k, a) => tally[k] = (tally[k] || 0) + a;
-    let lots = 0, footprint = 0, blocks = 0, square = null;
+    let lots = 0, footprint = 0, blocks = 0, square = null, onRoadLots = 0;
 
     // A STREET RUNS WHERE SOMEBODY BUILT and nowhere else, which is the
     // rule `town::streets_of` already keeps. Drawn any other way a town
@@ -1027,7 +1121,9 @@
                                         : css(fat ? "--big" : "--house");
 
         if (side === 1) {
-          if (onRoad(ox + block / 2, oz + block / 2)) { add("street", block * block); continue; }
+          if (onRoad(ox + block / 2, oz + block / 2)) {
+            onRoadLots++; add("street", block * block); continue;
+          }
           ctx.fillStyle = fillFor(cell.use, block * block >= BIG_AT);
           ctx.fillRect(m.px(ox), m.pz(oz), block * m.k, block * m.k);
           lots++; footprint += block * block; add(cell.use, block * block);
@@ -1043,7 +1139,7 @@
           ctx.fillStyle = fillFor(cell.use, true);
           for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) {
             if (onRoad(ox + (a + 1) * 2 * LOT - LOT, oz + (b + 1) * 2 * LOT - LOT)) {
-              add("street", 4 * LOT * LOT); continue;
+              onRoadLots++; add("street", 4 * LOT * LOT); continue;
             }
             ctx.fillRect(m.px(ox + a * 2 * LOT) + 1, m.pz(oz + b * 2 * LOT) + 1,
                          2 * LOT * m.k - 2, 2 * LOT * m.k - 2);
@@ -1072,7 +1168,7 @@
           const rim = a === 0 || b === 0 || a === side - 1 || b === side - 1;
           if (!rim && side >= 3) continue;            // no frontage, no lot
           if (onRoad(ox + (a + 0.5) * LOT, oz + (b + 0.5) * LOT)) {
-            add("street", LOT * LOT); continue;
+            onRoadLots++; add("street", LOT * LOT); continue;
           }
           if (coin(i * 31 + a, j * 31 + b, 7) > want) { add("none", LOT * LOT); continue; }
           ctx.fillRect(m.px(ox + a * LOT) + 1, m.pz(oz + b * LOT) + 1,
@@ -1084,7 +1180,8 @@
     }
     const total = Object.values(tally).reduce((a, b) => a + b, 0) || 1;
     const pitch = block + STREET;
-    return { lots, footprint, blocks, pitch, block, side, tally, total, square };
+    return { lots, footprint, blocks, pitch, block, side, tally, total, square,
+             onRoadLots, g, span };
   }
 
   // --------------------------------------------------- a REAL city's plan --
@@ -1149,46 +1246,46 @@
   const BIG_AT = 4 * LOT * LOT;
 
   // ------------------------------------------------- the highways drawn --
-  // The arterial runs the whole way in and TAPERS, which is the merge:
-  // drawn as a bar that stopped at a radius it ended in mid air with the
-  // town's grid carrying on past it, joined to nothing. A trunk road
-  // that reaches a town does not end, it becomes the high street.
-  //
-  // And each one STOPS AT THE SQUARE, because a road that arrives at a
-  // market square has arrived: run to the origin they paved over the one
-  // thing they converge on, and what the picture showed was three
-  // highways meeting in the middle of nothing.
-  function drawRoads(m, sq) {
-    const r1 = townR * (1 + ARM_REACH) * 1.35;
-    for (const a of ARMS) {
-      const ux = Math.cos(a), uz = Math.sin(a), n = 60;
-      const r0 = sq ? exitOf(sq, ux, uz) : 0;
-      // EVERY pavement, then every carriageway, and not both a segment at
-      // a time: canvas cannot vary a line's width along one path, so the
-      // taper is sixty strokes, and drawn a segment at a time the next
-      // one's round cap of pavement painted over the last one's tarmac
-      // and the road came out as a string of beads.
+  // Each arm from the country IN TO THE TOWN'S OWN EDGE and no further,
+  // narrowing over its last `ROAD_TAPER` to the width of the street it
+  // is about to become, and then a SLIP curving it onto the nearest
+  // crossing the town paved. Nothing arterial is drawn inside the edge,
+  // which is what stops a highway cutting through a block.
+  function drawRoads(m) {
+    const r1 = townR * (1 + ARM_REACH) * 1.9;
+    (PLAN || []).forEach(arm => {
+      const a = arm.a, ux = Math.cos(a), uz = Math.sin(a), steps = 40;
+      const mouth = arm.mouth;
+      // EVERY pavement, then every carriageway, and not both a segment
+      // at a time: canvas cannot vary a line's width along one path, so
+      // the taper is forty strokes, and drawn a segment at a time the
+      // next one's round cap of pavement painted over the last one's
+      // tarmac and the road came out as a string of beads.
       for (const lane of [0, 1]) {
-        for (let k = 1; k <= n; k++) {
-          const t0 = r0 + (k - 1) / n * (r1 - r0), t1 = r0 + k / n * (r1 - r0);
+        for (let k = 1; k <= steps; k++) {
+          const t0 = mouth + (k - 1) / steps * (r1 - mouth);
+          const t1 = mouth + k / steps * (r1 - mouth);
           const seg = [[ux * t0, uz * t0], [ux * t1, uz * t1]];
-          const row = roadWide((t0 + t1) / 2);
+          const row = roadWide((t0 + t1) / 2, mouth);
           ribbon(seg, lane ? Math.max(2.6, row - 2 * WALK) : row, m,
                  css(lane ? "--tarmac" : "--walkway"));
         }
+        if (arm.line.length > 1)
+          ribbon(arm.line, lane ? Math.max(2.6, STREET - 2 * WALK) : STREET, m,
+                 css(lane ? "--tarmac" : "--walkway"));
       }
       // A dashed centreline, but only where it is still an ARTERIAL: a
-      // town's own street does not carry one, and drawn to the middle it
-      // put a motorway's marking across the market square.
+      // town's own street does not carry one, and drawn to the mouth it
+      // put a motorway's marking on a slip road.
       ctx.strokeStyle = css("--paper"); ctx.globalAlpha = 0.7;
       ctx.lineWidth = Math.max(0.8, 0.15 * m.k);
       ctx.setLineDash([6 * m.k, 9 * m.k]);
       ctx.beginPath();
-      ctx.moveTo(m.px(ux * townR * ROAD_OPEN), m.pz(uz * townR * ROAD_OPEN));
+      ctx.moveTo(m.px(ux * (mouth + ROAD_TAPER)), m.pz(uz * (mouth + ROAD_TAPER)));
       ctx.lineTo(m.px(ux * r1), m.pz(uz * r1));
       ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha = 1;
-    }
+    });
   }
 
   function scaleBar(m, h) {
@@ -1217,7 +1314,7 @@
     const k = scaleFor(w, h) * eye.zoom;
     const m = { k, px: x => w / 2 + (x - eye.x) * k, pz: z => h / 2 + (z - eye.z) * k };
 
-    palette();
+    palette(); PLAN = null;
     ctx.fillStyle = css("--ground"); ctx.fillRect(0, 0, w, h);
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
     let drawn = null, real = null;
@@ -1228,7 +1325,7 @@
     // that happened to be painted after it.
     if (view === "freeport") {
       drawn = drawTown(m, side, side === 1);
-      drawRoads(m, drawn.square);
+      drawRoads(m);
     }
     else if (GRIDS[view]) real = drawPlan(m, GRIDS[view]);
     else missing(w, h);
@@ -1272,7 +1369,8 @@
       fig("Block", `${drawn.block.toFixed(0)} m`, `${drawn.side}&times;${drawn.side} lots`) +
       fig("Pitch", `${drawn.pitch.toFixed(1)} m`, "block + street") +
       fig("Street share", `${(share(c) * 100).toFixed(1)}%`, "local grid") +
-      fig("Open space", `${(open * 100).toFixed(1)}%`, "New York is 16.1");
+      fig("Open space", `${(open * 100).toFixed(1)}%`, "New York is 16.1") +
+      fig("Cut by a road", `${drawn.onRoadLots}`, "lots, and it must be 0");
   }
 
   const KEY = document.getElementById("key");
