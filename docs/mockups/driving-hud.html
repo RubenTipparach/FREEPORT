@@ -123,16 +123,18 @@
   .gauge-fill { color: var(--ok); }
   .gauge-fill.low { color: var(--amber); }
   .gauge-fill.dry { color: var(--alarm); }
-  /* top left, under the keys: the purse and the pump, at the size of a readout */
-  .purse {
-    left: 2.2%; top: calc(3.5% + 38px);
+  /* top left, under the keys: the purse, at the size of a readout; bottom left: the next pump */
+  .purse, .station {
+    left: 2.2%;
     padding: 6px 10px 5px;
     min-width: 150px;
     display: grid; gap: 3px;
   }
-  .purse .row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; }
+  .purse { top: calc(3.5% + 38px); }
+  .station { bottom: 3.5%; }
+  .purse .row, .station .row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; }
   .purse .cash { font-size: 15px; font-weight: 600; line-height: 1.2; }
-  .purse .pump { font-size: 13px; }
+  .station .pump { font-size: 14px; }
   /* top: the compass strip and the corner */
   .compass {
     left: 50%; top: 3.5%; transform: translateX(-50%);
@@ -240,7 +242,8 @@
     .dial svg { width: 88px; height: 88px; }
     .dial .big { font-size: 16px; }
     .dial .label { top: 22px; }
-    .purse { min-width: 120px; top: 3.5%; } /* the keys are hidden on a phone, so the purse takes their corner */
+    .purse, .station { min-width: 120px; }
+    .purse { top: 3.5%; } /* the keys are hidden on a phone, so the purse takes their corner */
     .compass { width: 60%; min-width: 0; height: 36px; }
     .keys { display: none; }
   }
@@ -299,6 +302,8 @@
       </div>
       <div class="panel purse">
         <div class="row"><span class="label">wallet</span><span class="cash mono" id="cash">$1,000</span></div>
+      </div>
+      <div class="panel station">
         <div class="row"><span class="label">next pump</span><span class="pump mono" id="pump">8.0 km</span></div>
       </div>
       <div class="panel toast mono" id="toast"></div>
@@ -336,7 +341,7 @@
         <tr><th>readout</th><th>reads</th><th>rule</th></tr>
         <tr><td>speedometer</td><td class="num">0 to 160 km/h</td><td>the car's measured speed, the wheel's setting only in the fly camera; the arc fills to the car's own <code>driver::TOP</code> and the needle is the same number twice, because a dial is read at a glance and a figure is read when it matters</td></tr>
         <tr><td>fuel gauge</td><td class="num">E to F, and km</td><td>the <code>Tank</code> is a share of a full one, never litres, so the figure under it is RANGE, which is what a driver actually wants: at 80 km a tank the gauge and the range say one thing</td></tr>
-        <tr><td>low fuel</td><td class="num">under 25% amber, under 10% red</td><td>the pump distance beside it is the nearest forecourt along the road, so a driver can tell "amber and 6 km" from "amber and 40 km", which is the decision the gauge is for</td></tr>
+        <tr><td>low fuel</td><td class="num">under 25% amber, under 10% red</td><td>the pump distance in the bottom corner is the nearest forecourt along the road, so a driver can tell "amber and 6 km" from "amber and 40 km", which is the decision the gauge is for</td></tr>
         <tr><td>wallet</td><td class="num">$ with thousands</td><td>a fill is $10; the purse moves when G is pressed at a pump and nowhere else, and the toast says what was paid</td></tr>
         <tr><td>clock</td><td class="num">HH:MM</td><td>the game's own hour, which is <code>day::oclock</code> over wherever the car is: a day is four hours long, so a driver wants to know how far off dusk is</td></tr>
         <tr><td>fill prompt</td><td class="num">G, $10</td><td>a prompt and never a legend entry: it is up only while the car is stopped within <code>PUMP_REACH</code> of a forecourt, which is the game's own rule for the key, and it is the one control on the HUD that comes and goes</td></tr>

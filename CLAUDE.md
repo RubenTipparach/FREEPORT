@@ -4257,9 +4257,10 @@ rule (rendered, published, approved, then built), and
 `docs/mockups/driving-hud.html` is the page: the HUD drawn as glass
 over a road that moves at the car's own speed, the wallet under the
 key legend at the top left at the size of a readout and not a
-headline, and the two dials ROUND at the bottom right, which is the
-owner's own placement off the first three cuts, the map behind M, and
-a table under both saying where every figure comes from.
+headline, the next pump in the bottom left corner and the two dials
+ROUND at the bottom right, which is the owner's own placement off the
+first four cuts, the map behind M, and a table under both saying where
+every figure comes from.
 
 **The second reading of it took three things and they are all on the
 page.** The tank's PERCENTAGE went, because the gauge is that number
