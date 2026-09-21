@@ -106,26 +106,26 @@
     text-transform: uppercase;
     color: var(--hud-dim);
   }
-  /* bottom left: the dials */
+  /* bottom right: the dials, ROUND, which is the owner's own word */
   .dials {
-    left: 2.2%; bottom: 3.5%;
-    display: flex; gap: 14px; align-items: flex-end;
-    padding: 10px 14px 8px;
+    right: 2.2%; bottom: 3.5%;
+    display: flex; gap: 10px; align-items: flex-end;
+    padding: 8px 10px 6px;
   }
-  .dial { position: relative; width: 132px; height: 104px; }
-  .dial svg { width: 132px; height: 84px; display: block; overflow: visible; }
+  .dial { position: relative; width: 118px; height: 118px; }
+  .dial svg { width: 118px; height: 118px; display: block; overflow: visible; }
   .dial .big {
-    position: absolute; left: 0; right: 0; bottom: 0;
-    text-align: center; font-size: 24px; font-weight: 600; line-height: 1;
+    position: absolute; left: 0; right: 0; bottom: 2px;
+    text-align: center; font-size: 21px; font-weight: 600; line-height: 1;
   }
-  .dial .big small { font-size: 11px; font-weight: 500; color: var(--hud-dim); margin-left: 3px; }
-  .dial .label { position: absolute; left: 0; right: 0; top: 0; text-align: center; }
+  .dial .big small { font-size: 10px; font-weight: 500; color: var(--hud-dim); margin-left: 2px; }
+  .dial .label { position: absolute; left: 0; right: 0; top: 30px; text-align: center; }
   .gauge-fill { color: var(--ok); }
   .gauge-fill.low { color: var(--amber); }
   .gauge-fill.dry { color: var(--alarm); }
-  /* bottom right: the purse and the pump */
+  /* bottom left: the purse and the pump, in the corner */
   .purse {
-    right: 2.2%; bottom: 3.5%;
+    left: 2.2%; bottom: 3.5%;
     padding: 10px 14px 9px;
     min-width: 168px;
     display: grid; gap: 6px;
@@ -148,13 +148,15 @@
     position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
     font-size: 13px; color: var(--route);
   }
-  .fps {
+  .corner {
     right: 2.2%; top: 3.5%;
-    padding: 4px 8px;
-    font-size: 12px;
-    color: var(--hud-dim);
+    padding: 5px 9px 4px;
+    text-align: right;
+    display: grid; gap: 1px;
   }
-  .fps b { color: var(--hud); font-weight: 500; }
+  .corner .clock { font-size: 17px; font-weight: 600; line-height: 1.2; color: var(--hud); }
+  .corner .fps { font-size: 12px; color: var(--hud-dim); }
+  .corner .fps b { color: var(--hud); font-weight: 500; }
   .keys {
     left: 2.2%; top: 3.5%;
     padding: 5px 9px;
@@ -224,9 +226,10 @@
   .note { border-left: 3px solid var(--signal); padding-left: 12px; color: var(--faint); font-size: 14px; }
   @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
   @media (max-width: 640px) {
-    .dial { width: 96px; height: 80px; }
-    .dial svg { width: 96px; height: 62px; }
-    .dial .big { font-size: 20px; }
+    .dial { width: 88px; height: 88px; }
+    .dial svg { width: 88px; height: 88px; }
+    .dial .big { font-size: 16px; }
+    .dial .label { top: 22px; }
     .purse { min-width: 120px; }
     .compass { width: 60%; min-width: 0; height: 36px; }
     .keys { display: none; }
@@ -242,34 +245,41 @@
   numbers move: the car below is on the road out of the port, burning its tank at the game's
   own eighty kilometres a fill, and every readout is read off it. Press <b>M</b> (or the
   button) for the map, click to drop a marker, and the compass strip at the top turns to the
-  first one.</p>
+  first one. <b>G</b> is the game's own fuel key: at the wheel, stopped at a pump, it fills the
+  tank for $10, and on foot it buys a jerrycan at the kiosk or pours one into the car you own;
+  here it fills when a pump is within reach and otherwise says how far the nearest one is.
+  The clock in the corner is the game's own hour, over the frame counter.</p>
 
   <div class="screen" id="screen" tabindex="0" aria-label="the driving screen">
     <canvas id="scene"></canvas>
     <div class="hud">
-      <div class="panel keys"><span><b>M</b> map</span><span><b>G</b> gas</span><span><b>E</b> out</span><span><b>H</b> time</span></div>
-      <div class="panel fps mono" id="fps"><b>60</b> fps <span id="ms">16.7 ms</span></div>
+      <div class="panel keys"><span><b>M</b> map</span><span><b>G</b> fill</span><span><b>E</b> out</span><span><b>H</b> time</span></div>
+      <div class="panel corner mono"><div class="clock" id="clock">10:03</div><div class="fps" id="fps"><b>60</b> fps <span id="ms">16.7 ms</span></div></div>
       <div class="panel compass"><canvas id="compass"></canvas><div class="lubber"></div><div class="goal mono" id="goal"></div></div>
       <div class="panel dials">
         <div class="dial">
           <div class="label">km/h</div>
-          <svg viewBox="0 0 132 84" aria-hidden="true">
-            <path d="M 12 74 A 54 54 0 0 1 120 74" fill="none" stroke="rgba(233,230,216,0.22)" stroke-width="6" stroke-linecap="butt"/>
-            <path id="speed-arc" d="M 12 74 A 54 54 0 0 1 120 74" fill="none" stroke="#e9e6d8" stroke-width="6" stroke-dasharray="169.6" stroke-dashoffset="169.6"/>
+          <svg viewBox="0 0 118 118" aria-hidden="true">
+            <circle cx="59" cy="59" r="55" fill="rgba(12,14,17,0.35)" stroke="rgba(233,230,216,0.14)" stroke-width="1"/>
+            <path d="M 26.47 91.53 A 46 46 0 1 1 91.53 91.53" fill="none" stroke="rgba(233,230,216,0.22)" stroke-width="6"/>
+            <path id="speed-arc" d="M 26.47 91.53 A 46 46 0 1 1 91.53 91.53" fill="none" stroke="#e9e6d8" stroke-width="6" stroke-dasharray="216.8" stroke-dashoffset="216.8"/>
             <g id="speed-ticks" fill="none" stroke="rgba(233,230,216,0.5)" stroke-width="1.5"></g>
-            <line id="needle" x1="66" y1="74" x2="14" y2="74" stroke="#f0b34a" stroke-width="2.5" stroke-linecap="round"/>
-            <circle cx="66" cy="74" r="3.5" fill="#f0b34a"/>
+            <line id="needle" x1="59" y1="59" x2="30.7" y2="87.3" stroke="#f0b34a" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="59" cy="59" r="3.5" fill="#f0b34a"/>
           </svg>
           <div class="big mono" id="speed">0</div>
         </div>
         <div class="dial">
           <div class="label">fuel</div>
-          <svg viewBox="0 0 132 84" aria-hidden="true">
-            <path d="M 12 74 A 54 54 0 0 1 120 74" fill="none" stroke="rgba(233,230,216,0.22)" stroke-width="6"/>
-            <path id="fuel-arc" class="gauge-fill" d="M 12 74 A 54 54 0 0 1 120 74" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="169.6" stroke-dashoffset="0"/>
-            <text x="12" y="84" font-size="10" fill="#9a988c" font-family="IBM Plex Mono, monospace">E</text>
-            <text x="113" y="84" font-size="10" fill="#9a988c" font-family="IBM Plex Mono, monospace">F</text>
-            <line x1="66" y1="20" x2="66" y2="27" stroke="rgba(233,230,216,0.5)" stroke-width="1.5"/>
+          <svg viewBox="0 0 118 118" aria-hidden="true">
+            <circle cx="59" cy="59" r="55" fill="rgba(12,14,17,0.35)" stroke="rgba(233,230,216,0.14)" stroke-width="1"/>
+            <path d="M 26.47 91.53 A 46 46 0 1 1 91.53 91.53" fill="none" stroke="rgba(233,230,216,0.22)" stroke-width="6"/>
+            <path id="fuel-arc" class="gauge-fill" d="M 26.47 91.53 A 46 46 0 1 1 91.53 91.53" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="216.8" stroke-dashoffset="0"/>
+            <line x1="59" y1="9" x2="59" y2="17" stroke="rgba(233,230,216,0.5)" stroke-width="1.5"/>
+            <text x="14" y="101" font-size="10" fill="#9a988c" font-family="IBM Plex Mono, monospace">E</text>
+            <text x="98" y="101" font-size="10" fill="#9a988c" font-family="IBM Plex Mono, monospace">F</text>
+            <line id="fuel-needle" x1="59" y1="59" x2="87.3" y2="87.3" stroke="#f0b34a" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="59" cy="59" r="3.5" fill="#f0b34a"/>
           </svg>
           <div class="big mono" id="range">80<small>km</small></div>
         </div>
@@ -277,7 +287,6 @@
       <div class="panel purse">
         <div class="row"><span class="label">wallet</span><span class="cash mono" id="cash">$1,000</span></div>
         <div class="row"><span class="label">next pump</span><span class="pump mono" id="pump">8.0 km</span></div>
-        <div class="row"><span class="label">tank</span><span class="pump mono" id="tank">100%</span></div>
       </div>
       <div class="panel toast mono" id="toast"></div>
     </div>
@@ -315,6 +324,7 @@
         <tr><td>fuel gauge</td><td class="num">E to F, and km</td><td>the <code>Tank</code> is a share of a full one, never litres, so the figure under it is RANGE, which is what a driver actually wants: at 80 km a tank the gauge and the range say one thing</td></tr>
         <tr><td>low fuel</td><td class="num">under 25% amber, under 10% red</td><td>the pump distance beside it is the nearest forecourt along the road, so a driver can tell "amber and 6 km" from "amber and 40 km", which is the decision the gauge is for</td></tr>
         <tr><td>wallet</td><td class="num">$ with thousands</td><td>a fill is $10; the purse moves when G is pressed at a pump and nowhere else, and the toast says what was paid</td></tr>
+        <tr><td>clock</td><td class="num">HH:MM</td><td>the game's own hour, which is <code>day::oclock</code> over wherever the car is: a day is four hours long, so a driver wants to know how far off dusk is</td></tr>
         <tr><td>frame counter</td><td class="num">fps and ms</td><td>the corner, off a real clock and never the engine's delta, and both figures, because 16.7 ms is a number that can be held against a budget and 60 fps is not</td></tr>
         <tr><td>compass strip</td><td class="num">bearing, marker, km</td><td>the car's heading under the lubber line; the first marker is a tick on the strip with its distance, so the route is driven without opening the map</td></tr>
       </table>
@@ -336,9 +346,8 @@
   </div>
 
   <h2>What this decides</h2>
-  <p>The HUD is three glass panels and a strip, in the game's own type, with the two dials at the
-  driver's left hand where a dashboard puts them and the money on the right where a phone would
-  be. Nothing on it is a control except through a key, and every figure on it is one the core
+  <p>The HUD is three glass panels and a strip, in the game's own type, with the money in the
+  left corner and the two ROUND dials at the right, which is the owner's own placement. Nothing on it is a control except through a key, and every figure on it is one the core
   already computes: the mockup invents no number, it only lays them out. The map is a mode and
   not a screen, which is the RTS's sensors manager rule from swarm-demo: it dims the drive rather
   than leaving it, so a marker is set and the drive carries on behind it.</p>
@@ -462,17 +471,23 @@
 
   // ---------- the HUD ----------
   var $ = function (id) { return document.getElementById(id); };
-  var els = { speed: $('speed'), arc: $('speed-arc'), needle: $('needle'), fuel: $('fuel-arc'), range: $('range'), cash: $('cash'), pump: $('pump'), tank: $('tank'), goal: $('goal'), fps: $('fps'), status: $('status'), toast: $('toast') };
-  var ARC = 169.6;
+  var els = { speed: $('speed'), arc: $('speed-arc'), needle: $('needle'), fuel: $('fuel-arc'), range: $('range'), cash: $('cash'), pump: $('pump'), clock: $('clock'), goal: $('goal'), fps: $('fps'), status: $('status'), toast: $('toast') };
+  var ARC = 216.8; // three quarters of a 46 px circle
+  var START = Math.PI * 0.75, SWEEP = Math.PI * 1.5; // from the bottom left, clockwise, to the bottom right
   (function ticks() {
     var g = $('speed-ticks'); var s = '';
     for (var k = 0; k <= 8; k++) {
-      var a = Math.PI + (k / 8) * Math.PI;
-      var r0 = k % 2 ? 50 : 46, r1 = 57;
-      s += '<line x1="' + (66 + Math.cos(a) * r0).toFixed(1) + '" y1="' + (74 + Math.sin(a) * r0).toFixed(1) + '" x2="' + (66 + Math.cos(a) * r1).toFixed(1) + '" y2="' + (74 + Math.sin(a) * r1).toFixed(1) + '"/>';
+      var a = START + (k / 8) * SWEEP;
+      var r0 = k % 2 ? 41 : 37, r1 = 49;
+      s += '<line x1="' + (59 + Math.cos(a) * r0).toFixed(1) + '" y1="' + (59 + Math.sin(a) * r0).toFixed(1) + '" x2="' + (59 + Math.cos(a) * r1).toFixed(1) + '" y2="' + (59 + Math.sin(a) * r1).toFixed(1) + '"/>';
     }
     g.innerHTML = s;
   })();
+  function needle(el, share) {
+    var a = START + share * SWEEP;
+    el.setAttribute('x2', (59 + Math.cos(a) * 40).toFixed(1));
+    el.setAttribute('y2', (59 + Math.sin(a) * 40).toFixed(1));
+  }
   var toastTimer = 0;
   function toast(text) { els.toast.textContent = text; els.toast.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(function () { els.toast.classList.remove('on'); }, 2400); }
   function fmtCash(c) { return '$' + Math.round(c).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
@@ -481,14 +496,12 @@
     els.speed.textContent = Math.round(kmh);
     var share = Math.min(1, car.speed / TOP);
     els.arc.setAttribute('stroke-dashoffset', (ARC * (1 - share)).toFixed(1));
-    var a = Math.PI + share * Math.PI;
-    els.needle.setAttribute('x2', (66 + Math.cos(a) * 50).toFixed(1));
-    els.needle.setAttribute('y2', (74 + Math.sin(a) * 50).toFixed(1));
+    needle(els.needle, share);
     els.fuel.setAttribute('stroke-dashoffset', (ARC * (1 - car.tank)).toFixed(1));
+    needle($('fuel-needle'), car.tank);
     els.fuel.setAttribute('class', 'gauge-fill' + (car.tank < 0.1 ? ' dry' : car.tank < 0.25 ? ' low' : ''));
     els.range.innerHTML = Math.round(car.tank * RANGE / 1000) + '<small>km</small>';
     els.cash.textContent = fmtCash(car.cash);
-    els.tank.textContent = Math.round(car.tank * 100) + '%';
     var np = nextPump();
     els.pump.textContent = np ? (np.d / 1000).toFixed(1) + ' km' : 'none';
     els.pump.style.color = (np && np.d / 1000 > car.tank * RANGE / 1000) ? 'var(--alarm)' : '';
@@ -713,6 +726,8 @@
   // ---------- the loop, with a real clock in the corner ----------
   function perf() { return performance.now() / 1000; }
   var last = perf(), frames = 0, acc = 0, fpsAt = last;
+  var hour = 10 * 60 + 3; // minutes into the game's day, DAY being four hours of play
+  function fmtClock(m) { m = ((m % 1440) + 1440) % 1440; var h = Math.floor(m / 60); var mm = Math.floor(m % 60); return (h < 10 ? '0' : '') + h + ':' + (mm < 10 ? '0' : '') + mm; }
   function frame() {
     var now = perf(); var dt = Math.min(0.1, now - last); last = now;
     frames++; acc += dt;
@@ -721,7 +736,8 @@
       els.fps.innerHTML = '<b>' + Math.round(fps) + '</b> fps <span id="ms">' + (1000 / Math.max(1e-6, fps)).toFixed(1) + ' ms</span>';
       frames = 0; acc = 0; fpsAt = now;
     }
-    if (!paused) stepCar(dt * SPEEDUP);
+    if (!paused) { stepCar(dt * SPEEDUP); hour += dt * SPEEDUP / 10; } // a day is 240 minutes of play, a tenth of a game minute a second, at the page's own SPEEDUP
+    els.clock.textContent = fmtClock(hour);
     drawScene(dt * SPEEDUP);
     drawHud();
     drawCompass();
