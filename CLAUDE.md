@@ -1118,8 +1118,10 @@ architectural materials retain the normal crease rule.
 - **The harness has no flag for which world**, because there is one.
   `freeport_app` is the planet (`RADIUS` 1,000,000 m, the sea 1,000 m OVER
   the mean radius, which is what leaves it 62.1% water, eleven levels of
-  0.25 m to 256 m cells), eight towns of
-  80 m, and the walker on a street of the port facing the middle of town. F
+  0.25 m to 256 m cells), 521 settlements of which the nearest eight are
+  BUILT (`TOWN_RADIUS` 537 m, ten times the ground a 170 m town covers,
+  which is the square root of ten on the radius), and the walker on a
+  street of the port facing the middle of town. F
   swaps to the fly camera from wherever the walker is and back. Flight uses
   quaternion orientation: Q/E rolls, Space/Ctrl moves along camera up/down,
   the mouse turns without a pitch limit, either Shift boosts, the wheel
@@ -1335,6 +1337,68 @@ at one level of 255. What the standard material carries instead is water's
 real F0 (Bevy `reflectance` 0.25 against 0.02 of reflectance) and a
 roughness of 0.12, which is a sea rather than the mirror 0.06 was.
 
+**THE SPECKLE ON THE SEA IS BEVY'S OWN SCREEN SPACE TRANSMISSION**, and
+what says so is that it is flat in SCREEN space over a hundredfold range
+of world footprint. The owner sent a picture of a sea covered in per
+pixel salt and pepper and named four candidates: floating point
+precision, a shader not working in the body's local frame, world space
+UVs on one giant mesh, and a voxelised sea. Measured, it is none of
+them, and each of those four was already answered in this file: the
+ripples take a lattice CELL and a FRACTION so nothing is a planet scale
+float, every coordinate is planet local from a centre `rebase_origin`
+moves, the sheet has no UVs at all, and it is a contoured SURFACE with
+its buried triangles dropped.
+
+**A speckle is energy at the PIXEL, so the measure is the mean absolute
+Laplacian of the luminance in a band.** On the owner's own framing, an
+eye at the waterline, it reads 8.20 just under the horizon where a
+ripple is kilometres of ground to a pixel, 7.48 in the middle distance,
+7.67 near and 6.83 at the feet, against 4.65 for the SKY in the same
+frame, which is the dome's own deliberate per pixel dither. A defect
+that came from a coordinate, a frame or a mesh would grow with distance
+from the origin or with the footprint. This one does not move at all.
+
+**The A/B names it**, on a solved `--shore 2` camera: with Bevy's
+`specular_transmission` taken to nought the same frame drops from
+**5.09 to 3.38** in the middle band, 4.78 to 3.16 near, 3.81 to 2.76 at
+the horizon, and the SKY band is unchanged to three decimals, which is
+what says the measure caught the water and nothing else. The crop is
+salt and pepper on one side and smooth on the other.
+
+**And two more ablations say what it is NOT, which is the useful half.**
+Taking the transmission's own blur to nought steps, so the centre tap is
+all there is, is no better at all (5.25 against 5.09): the noise is not
+the randomly rotated spiral of taps that fetches the background. And
+zeroing the RIPPLE gradient moves the water band by **one level of 255
+over 1% of its pixels**, because at a grazing view `detail` has already
+faded the ripples to nothing there: the ripple normal is not the source
+in this frame either.
+
+So what is left is the refraction's own OFFSET. Bevy fetches the
+background at a screen position displaced along the refracted ray and
+scaled by `material.thickness`, and this sheet hands it the PREPASS
+thickness, the path through water to the seabed, capped at `MAX_PATH`
+(200 m). Over open sea at a grazing angle that path swings across its
+whole range between neighbouring pixels, so two neighbours fetch
+background hundreds of metres apart, and the background is terrain with
+its own grain. That is named rather than fixed, because the fix is a
+choice between a thickness that varies smoothly and a transmission that
+does not blur, and neither has been measured yet.
+
+**And a `--shore` camera could not find the sea at all**, which is what
+this cost to measure and is a finding of its own. `aim::shore` scanned
+three kilometres on the reasoning that the port stands on a shore by
+construction, and `town::coastal` sizes a town by how HIGH over the sea
+it stands rather than how NEAR the water it is. Once `town::CUT` capped
+how deep a site may cut, the flattest big sites are inland basins and
+plateaus: **not one of this body's 521 settlements has open sea within
+three kilometres**, and the port's own nearest water is 15,725 m off, so
+every `--shore` render came back as a main street with no sea in the
+frame. The scan is coarse to fifty kilometres and then fine over the one
+step that found water, on the BARE planet because a town's plateau
+cannot make sea, and it aims at the biggest settlement rather than at
+town 0, which is what its own doc always claimed.
+
 **And the night sea is not PHOTOGRAPHED**, which is this file's own camera
 rule catching me out: two hand aimed cameras at the antipode and at the
 terminator both landed on dry land, and the atlas cannot solve a third
@@ -1372,6 +1436,37 @@ The survey is forty nine marches, twelve bearings on four rings, so the
 level is the lowest of them; a dip between two neighbouring samples is
 the only ground a site can still fill, and how deep that can be is
 bounded by the `LEVEL` fall the site had to pass to be accepted.
+
+**A CITY IS TEN TIMES BIGGER now and that made a QUARRY of every one of
+them, which is the constant's own doc condemning itself.** `TOWN_RADIUS`
+is 537 m rather than 170, the square root of ten on the radius for ten
+times the ground the owner asked for. `LEVEL` is a SLOPE across the
+site, 0.10, and its own doc already said what that is for: "at a tenth a
+hundred and fifty metre city is cut fifteen metres into its own hill,
+which reads as a terrace, and much more than that reads as a quarry". A
+town of 537 m reaches 1,106 m at its outline, so the share allows a
+**105 m cut** and the body's mean was 18 m, ramped over a
+`field::site_skirt` of 24.6 m at up to **641%**. That is a cliff round
+every city, and a road arriving at one crossed it.
+
+**So a cut is CAPPED in metres**, `town::CUT` (15), which is a number a
+share cannot express: what says terrace or quarry is the WALL against
+the buildings beside it, and fifteen metres is five storeys. It is a
+MAXIMUM, so a body whose towns are small never meets it and the share
+binds first. It is also what makes an apron CLIMBABLE, which is the
+other half: a smoothstep climbs at one and a half its own average, so
+15 m over 24.6 is 0.91 against `walker::STAND`'s own 1.19, and a walker
+gets up it and so does a car, which is this game's rule that the two are
+one answer.
+
+Measured on the body, before and after: **a town cuts up to 105 m at its
+own edge (18 m on the mean) at up to 641%, against 17 m (9 m on the
+mean) at up to 101%.** What it COST is the count, because a city of a
+kilometre needs a plain: **521 settlements and 265 roads over 55,105 km
+joining 122 of them, against 1,241 and 308 over 63,806 km joining 152**,
+and 130 of the 160 city sites qualify rather than all of them. A body
+that carries 130 cities on genuinely level ground is the trade, and it
+is the one this takes.
 
 **A town is `OUTLINE` (2.06) radii across and THREE numbers said one.**
 The owner's picture was a suburb buried to its eaves with only the roofs
@@ -1749,6 +1844,27 @@ are one number rather than three rules:
   away. Measured: 5.0 storeys inside a third of the way out against 1.0
   past four fifths, and 0.0045 lots a square metre against 0.0007,
   which is six times the density.
+
+**A quarter of a town is TALL and three quarters is not, and the two
+thresholds were where that was set.** The owner's number is a quarter
+towers and three quarters small houses, and the town was 51.7% tall.
+`CORE_AT` and `TOWN_AT` are shares of the demand field, and demand
+falls off from a town's middle, so what decides the mix is where the
+second of them sits: a town is the DISC out to `TOWN_AT` of its own
+demand, and the share of its lots inside that goes as the area. It is
+0.54 rather than 0.38 now, swept rather than guessed (0.58 gives 21.5%,
+0.56 gives 23.3, 0.55 gives 24.3 and 0.54 gives **25.4% on a 537 m
+town and 25.2% on a 170 m one**), and `CORE_AT` moved with it so
+downtown is still the inner part of what is tall. That the two town
+sizes agree to a fifth of a per cent is what says the mix is a fact
+about the field and not about the radius.
+
+**And the jitter is a TOWN's own and not a suburb's.** `plot` moved a
+lot by `SUBURB_SETBACK` everywhere, which is a suburban house standing
+back from its own street applied to a terrace; `TOWN_JITTER` is what a
+town proper gets, and every offset is still bounded by the room the
+lot's own block leaves it (`Kind::covers`), so nothing stands in the
+street whatever either number says.
 
 **A street runs where somebody built and nowhere else.** The grid used to
 be laid over the whole disc whatever the town came out as, so a town's
@@ -2223,11 +2339,32 @@ them:
   hill: 136.9 m in sixtieths and 137.1 in twentieths, against 64.8
   before.
 
+**And a hill COSTS something now, which is the owner's own "torque vs
+momentum".** Those two rules got the car over a hill and left it going
+136.9 m in ten seconds up a one in two exactly as it does on the flat,
+which is a car that does not feel a gradient at all. The owner's word
+for what was missing is the right one: gravity along the way it is
+going. `GRAVITY * sin(theta)` off the ground the car ACTUALLY made
+(`rise / made`, so it is measured rather than assumed) is one term in
+`Driver::roll`, and everything else falls out of it. `Driver::holds` is
+the grade the engine exactly balances, `ACCEL / sqrt(GRAVITY^2 -
+ACCEL^2)` = **0.677**, so anything under about two in three is a hill
+this car climbs and anything over it is one it does not; and a descent
+speeds it up, capped at `RUNAWAY` (one and a half) of its own top speed,
+because a car rolling down a mountain is faster than one on the flat and
+is not infinitely faster.
+
 Measured over every grade a road is ever built at and past it
-(`a_car_drives_up_a_hill_and_is_stopped_by_a_cliff`): nought, one in ten,
-one in four, one in two, one in ONE and one in two DOWNHILL all go
-136.9 m in ten seconds, which is the flat ground's own number, and each
-climbs exactly its own grade.
+(`a_car_drives_up_a_hill_and_is_stopped_by_a_cliff`): ten seconds of
+throttle goes **263.9 m on the flat, 238.4 m at the seven per cent a
+highway is built at, 56.1 m at one in two, and BACKWARD down a one in
+one**, which is the car losing ground to a wall it cannot climb rather
+than being thrown down it. The seven per cent is the number that
+matters, because it is the steepest a road on this body is, and 90% of
+the flat ground's distance is a car that notices a hill and climbs it.
+`a_car_climbs_the_same_hill_at_any_frame_rate` holds the sixtieth and
+the twentieth in step, which is the rule that `CLIMB` is a grade and
+never a number of metres a frame.
 
 **The camera is a CHASE**, behind and over the car, and the walker's is
 first person. That is the one place this world has two camera rules, and
@@ -2664,9 +2801,29 @@ ground. A cutting it loses leaves the road under it.
 
 And the CHORD is held over the ground too, which a station's own height
 says nothing about: `road::PROBES` (3) samples the ground at the quarter
-points inside every piece, and `smooth` lifts BOTH ends of any chord
-that passes under one of them, which leaves the grade exactly as it was
-because a chord raised at both ends has the slope it had. Measured on
+points inside every piece, and a probe is a FLOOR on the two stations
+either side of it. A straight chord between two points both at or above
+a sample is everywhere at or above it, so that clears the ground between
+two stations by construction and asks nothing of the chord itself; what
+it costs is that a road stands at the highest ground within its own
+piece either side, which is an embankment over a crag and is what a road
+has.
+
+**THE ORDER IS THE WHOLE OF IT, and it was wrong.** There were three
+rounds of forward, backward, probes, floor, ending on the PROBES: the two
+envelope passes bound the grade and the probe pass then lifted both ends
+of a chord by whatever the ground between them stood above it, which
+changes the slope to each end's OTHER neighbour and is bounded by nothing
+at all. Measured on this body, the steepest piece came out at **4966%**,
+which is eighty eight degrees, and 4.72% of 769,371 pieces were over even
+the tenth this used to allow. The owner read one off a picture as a road
+going straight up a hillside. It is TWO statements now and neither
+iterates, because a fixed point nobody can name is a fixed point nobody
+can check: the probes are a floor on the stations FIRST, and then the
+envelope once and LAST, forward for the descent and backward for the
+ascent, which is exact rather than approximate. Measured after:
+**nought of 661,492 pieces on the whole body's highways are over the
+seven per cent**, and the steepest piece anywhere is in a SLIP. Measured on
 the rough test ball, the worst a road still cuts into its own ground:
 **16.84 m clamping both ways, 1.86 m rising with one probe a piece, and
 0.92 m with three** (`a_road_rides_over_the_ground_rather_than_cutting_into_it`).
@@ -2738,39 +2895,89 @@ levelling gave out. A shadow with nothing casting it is the shape of
 geometry drawn below the terrain, and the order of two statements is
 what put it there.
 
-**A slip reads the ANALYTIC surface and stands on the highway's own
-EMBANKMENT, and those two facts are one decision.** `Planet::surface` is
-the relief with the sites applied, written down; `town::surface_radius`
-is a sphere trace down through eight kilometres of it for the field's
-own first crossing, and it is what the mesher agrees with exactly. The
-march is what the slip asked for first, and on this body 620 slips of
-fifteen points took **92.7 s of startup against 0.1 s**, because the
-trace steps by the planet's own slope bound and that bound is set by
-the narrowest corridor skirt on a body carrying three quarters of a
-million of them. So the slip reads the cheap one and PAYS for the
-disagreement: measured on the port, the drawn ground stood **0.34 m**
-over a tarmac laid at `ribbon::LIFT` alone. `road::EMBANK` is what a
-road already has for exactly that, and the reason is the one written
-beside the constant: the ground beside an embankment is LOWER than the
-road, so no chord between two lattice columns can close over it. The
-slip rides `ribbon::LIFT + EMBANK` and tapers to the street's own
-`town::LIFT` over its last `TAPER` (a quarter), which is a one in
-twenty ramp rather than the 10 cm step this file once gave as the
-reason not to run tarmac into a town.
+**A slip reads the SAME GROUND THE MESHER DRAWS, and the march is cheap
+because it starts where the answer is.** `Planet::surface` is the relief
+with the sites applied, written down; `town::surface_radius` is a sphere
+trace of the field for its own first crossing, and it is what the mesher
+agrees with and what `road::survey` reads for the highway's own profile.
+The slip read the ANALYTIC one for a commit, on an embankment of
+`ribbon::LIFT + EMBANK` to cover the difference, and the difference is
+bigger than that: measured along the port's own slip, the drawn ground
+stood **1.045 m over the analytic surface at one point and 0.11 m under
+it three metres away**, which is the volumetric term the analytic answer
+leaves out, and 0.39 m of tarmac was buried under the hill it was laid
+on.
+
+Two things had made the march unaffordable and neither is the march. The
+slip is spliced AFTER the corridors are installed, so an unfiltered trace
+walks all 646,000 of the body's levelled arcs at every step of every
+sample: `Planet::around` at the slip's own mouth, filtered ONCE for the
+whole curve, is this file's oldest performance rule. And
+`town::surface_radius` starts at the top of the RELIEF BAND, which here
+is sixteen kilometres of air at a floor of half a metre a step;
+`town::surface_radius_from` is the same march from a radius the caller
+knows is air, and a caller holding the analytic surface knows one within
+`Planet::overhang`, because the volumetric term is the only thing that
+answer leaves out and it lifts a surface by half of that at the most.
+Measured: **74.6 s of startup against 0.16 s for the same answer**, and
+`a_march_from_the_analytic_surface_finds_the_same_ground` holds the two
+to a centimetre over four hundred directions.
+
+So a slip carries the highway's own `ribbon::LIFT + EMBANK` where the
+ground is relief and a street's own `town::LIFT` where the town has
+levelled it, blended by `Planet::site_weight`, which is the one function
+that says where a town's plateau is. Written as a share of the SLIP that
+taper was wrong twice over, because the crossing a slip ends on stands
+well inside the levelling; written as a band off `Site::level_r` it was
+wrong by the half of the skirt that fades INSIDE that boundary, and
+buried the tarmac the same 0.39 m in the same place. It is one number
+now and the ground and the lift cannot disagree about it.
+
+**And reading the traced ground does NOT make the embankment
+unnecessary**, which is what the first picture of a junction from 90 m
+said and no number had. Dropped on the reasoning that there was nothing
+left for one to hide, the slip came back BITTEN THROUGH in half a dozen
+places by jagged terrain while the highway either side of it was solid.
+The trace and the MESHER are not the same surface either: dual
+contouring puts its vertex within a cell of the crossing, and a cell
+under an eye 90 m up is over a metre, against `ribbon::LIFT`'s own
+0.15 m of clearance. `EMBANK` is the 0.5 m the highway has always
+carried for exactly that. Inside a town's levelling there is nothing to
+hide, because the ground there is a plane the audit holds to two
+millimetres, so the street's five centimetres is enough and the blend is
+the ramp between the two.
+
+**And the slip is anchored at the HIGHWAY's own height and lands on the
+TOWN's own street, with the step between them tapered out along it.**
+`road::smooth` raises a station to clear every probe inside its own
+piece, so the highway's last tarmac stands over the ground at that same
+direction; laid on the ground alone the slip starts with that whole
+difference as a STEP over one `SLIP_PIECE` of three metres, and the
+steepest piece anywhere on the body was **-0.50 m over 0.015 m, a grade
+of 3355%**, which is that step over a piece of no length at all after
+`world::splice_slip` had left the mouth in the line twice. The step is
+one straight ramp of `d / length` now, which leaves both ends exactly
+where they have to be. What it does NOT do is hold the slip inside the
+highway's grade, and that is named rather than hidden: the first cut
+enveloped it from the mouth and let the far end fall where it fell,
+which on the rough test ball left a slip standing **2.39 m over the
+crossing it was laid to reach**. No profile that lands on both ends is
+inside seven per cent when the ground between them is not, and what is
+between them is a town's own apron.
 
 **And it ends on ground the town has LEVELLED.** A town's grid runs out
 past its own site onto the skirt, where the blend ramps and the
 volumetric term comes back, so the nearest crossing to a highway's mouth
 is often the one part of the town's paving that is itself partly in the
-hill. `road::slip` prefers a crossing inside `Site::level_r` and falls
-back to any crossing and then to any piece at all, which is what a one
-street hamlet needs. Measured on the port: the slip ends at a crossing
-**129 m out rather than 158**, it is 16 pieces over 42 m, and the drawn
-ground stands **-0.05 m** over its own tarmac at the worst, which is the
-tarmac over the ground everywhere.
+hill. `road::crossing` prefers a crossing inside `Site::level_r` and
+falls back to any crossing and then to any piece at all, which is what a
+one street hamlet needs. Measured on the port: the slip ends at a
+crossing **129 m out rather than 158**, and the drawn ground stands
+**-0.05 m** over its own tarmac at the worst, which is the tarmac over
+the ground everywhere by exactly the lift it was laid at.
 `a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground` holds
 both halves on six highways: nought under the ground anywhere, and never
-more than the highway's own embankment over it.
+higher over its ground than the highway it leaves.
 
 **And the harness measured its own constant, for the third time in this
 file.** `gap_to_town` walked in from `mouth_of`, which after the splice
@@ -3083,9 +3290,10 @@ gets three things for free that a road per pair has to be told:
   spiderweb, and no rule says how many roads a town may have.
 
 An edge is refused into the sea (`DRY`, two metres over it) and up
-anything past `STEEPEST` (one in ten, which is about the steepest a road
-is built at), and it costs its distance times `GRADE` (eight) on its own
-grade, so a route goes a long way round a range rather than over it.
+anything past `STEEPEST` (SEVEN per cent, which is the owner's own
+number and the grade a motorway is designed to), and it costs its
+distance times `GRADE` (eight) on its own grade, so a route goes a long
+way round a range rather than over it.
 
 **Three defects, and the first two came back as nothing at all:**
 
@@ -3872,7 +4080,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 180, the core, about 39 s
+cargo test -p freeport_core                       # 183, the core, about 34 s
 cargo test -p freeport_app                        # 49, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
@@ -4011,7 +4219,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 180 tests in about 41 s, and `freeport_app` 49 in 3. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 183 tests in about 34 s, and `freeport_app` 49 in 3. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -4178,13 +4386,17 @@ Numbers in the commit message. What is measured so far:
   `town::WOBBLE` (2) is set from and what a town's own skirt is widened
   by: 11 m becomes 24.6, and a town's skirt then climbs at 7.20 against
   the planet's bound of 36.57.
-- **A car on a HILL**, ten seconds of throttle: at nought, one in ten,
-  one in four, one in two, one in ONE and one in two downhill it goes
-  136.9 m and climbs exactly its own grade, which is the flat ground's
-  own number. Before, one in four went 136.9 m and one in two threw the
-  car **164 m back down the slope**. Stepped a twentieth at a time
-  rather than a sixtieth it is 137.1 m against 64.8, which is the rise
-  allowance being a grade rather than a flat `CLIMB`.
+- **A car on a HILL**, ten seconds of throttle: **263.9 m on the flat,
+  238.4 m at the seven per cent a highway is built at, 56.1 m at one in
+  two, and BACKWARD down a one in one**, which is the grade the engine
+  cannot hold. `Driver::holds` says where that is in closed form,
+  `ACCEL / sqrt(GRAVITY^2 - ACCEL^2)` = **0.677**. Before gravity was a
+  term at all it went 136.9 m up every one of those identically, which
+  is a car that does not feel a gradient; and before the push and the
+  rise allowance were fixed, one in two threw it **164 m back down the
+  slope**. Stepped a twentieth at a time rather than a sixtieth it is
+  the same distance, which is the rise allowance being a grade rather
+  than a flat `CLIMB`.
 - **How far the ground strays from a road's own ramp**, swept on this
   body's 310 roads (`examples/road_ground.rs`): 10.9 km a piece is a
   median of 43.89 m and a worst of 830.13; 341 m is 1.20 and **36.25**;
@@ -4241,18 +4453,23 @@ Numbers in the commit message. What is measured so far:
   The last is the car flat out on a country road for ten minutes, and
   its distance to the goal does not close, because it is following the
   road it reached rather than routing over the network.
-- **The JUNCTION where a highway meets a town**, on the port, in four
-  measurements and four pictures: the slip spliced INSIDE the loop that
+- **The JUNCTION where a highway meets a town**, on the port, in six
+  measurements and six pictures: the slip spliced INSIDE the loop that
   builds the sites read the bare relief and drew as its own curved
   SHADOW on an empty field; spliced after them it drew for two thirds of
   its length with the drawn ground **0.34 m** over its tarmac at the
-  worst; on the highway's own `EMBANK` and ending at a crossing inside
-  the town's levelling it is **16 pieces over 42 m, from the highway's
-  mouth 169 m out of the town to a crossing 129 m out, ending 0.00 m
-  from the paving, with the ground -0.05 m over its tarmac at the
-  worst**, which is tarmac over ground everywhere. What it cost was the
-  ground function: `Planet::surface` rather than
-  `town::surface_radius`, **0.1 s of startup against 92.7**.
+  worst; on the highway's own `EMBANK` it was **0.39 m**, because the
+  swing between the analytic surface and the one the mesher draws is
+  **1.045 m over at one point and 0.11 m under three metres away** and
+  no fixed embankment covers that; and reading the same ground the
+  mesher draws it is **27 pieces over 80 m, from the highway's mouth
+  755 m out of the town to a crossing 695 m out, ending 0.00 m from the
+  paving, with the ground -0.05 m over its tarmac at the worst**, which
+  is tarmac over ground by exactly the lift it was laid at, everywhere.
+  What the march costs is **0.16 s of startup against 74.6**, and the
+  difference is `Planet::around` filtered once for the whole curve and
+  `town::surface_radius_from` started at the analytic surface plus an
+  overhang rather than at the top of sixteen kilometres of relief band.
 - **The CLIMB, a kilometre a step over the port, straight down.** The
   chunk count and the triangles fall monotonically with no cliff in
   them: 2,654 chunks and 578,924 triangles at 1 km, 1,051 and 414,969 at
@@ -4321,12 +4538,30 @@ Numbers in the commit message. What is measured so far:
   every one. Before the sweep a bumper 0.03 m past a 0.35 m wall's own mid
   plane was pushed **0.15 m FORWARD**, out the far side, and the car drove
   on at 160 km/h without slowing.
-- **The atlas re-baked on the corrected town rules**: 1084 settlements
-  (160 cities and 924 villages) and 310 roads over 63,840 km joining 153
-  of them, planned in 23.9 s and read back in 34 ms. The nearest
-  settlement to the port is 9.01 km off and the median nearest
-  neighbour over 400 of them is 19.1 km, which is ten and twenty minutes
-  at the car's own 58 km/h. It was 704 settlements and 297 roads.
+- **The atlas re-baked on cities ten times bigger and a cut a town may
+  not exceed**: **521 settlements (130 cities and 391 villages) and 265
+  roads over 55,105 km joining 122 of them, planned in 342 s** and read
+  back in 1.8 s. On the CURVE and the seven per cent together it
+  is **556 settlements and the same 265 roads over the same 55,105 km
+  joining the same 122, planned in 341.8 s**: a route is measured on
+  the router's own ten kilometre waypoints, which a fitted arc does not
+  move, so the network is to the kilometre what it was and the 35 extra
+  places are `road::waysides` walking a slightly shorter centreline and
+  dropping its 25 km villages in different spots. Two changes to how a
+  road is BUILT that leave how it is ROUTED alone is what that says, and
+  it is the split `road::pieces` and `road::centreline` are for. At 170 m towns and no cap it was 1,084 settlements and
+  310 roads over 63,840 km joining 153. What the cap buys is that a town
+  cuts **17 m at its own edge (9 m on the mean) at up to 101%, against
+  105 m (18 m) at 641%**, which is an apron a walker climbs rather than
+  a wall round every city.
+- **What is left over the SEVEN PER CENT a highway is allowed**, on the
+  whole body: **nought of 661,492 pieces on the highways themselves**,
+  and 3,866 in SLIPS, at up to 252%. Before `road::smooth`'s order was
+  fixed the steepest piece anywhere was **4966%**, which is eighty eight
+  degrees, and 4.72% of 769,371 pieces were over even the tenth that
+  version allowed. Every piece still over it is a slip crossing a town's
+  own graded apron, which is the town's skirt and not the road's grade,
+  and it is named rather than hidden.
 - **A town BUILT as the eye comes near it**, on the harness planet: town
   0 is 224 buildings, 1,821 pieces of street, 51,539 collision boxes and
   448 lamps, and the eight within the 200 km reach are built one a

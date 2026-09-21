@@ -232,7 +232,15 @@ pub fn site_band(site: &crate::town::Site) -> (f64, f64) {
 impl Planet {
     /// How much a site levels a direction: one right across it, nought
     /// past its apron.
-    fn site_weight(&self, site: &crate::town::Site, dir: DVec3) -> f64 {
+    ///
+    /// PUBLIC because a road's slip reads it. A slip rides the highway's
+    /// own embankment where the ground is relief and the street's own
+    /// five centimetres where the town has levelled it, and WHERE those
+    /// two are is this number: written as a band of its own it was a
+    /// second copy of the same rule and the copy was wrong, burying the
+    /// port's slip 0.39 m under the ground at the one place the blend
+    /// still bit.
+    pub fn site_weight(&self, site: &crate::town::Site, dir: DVec3) -> f64 {
         let (_, outer) = site_band(site);
         // A cheap REJECT before the arc's own trigonometry. Every point
         // of an arc is within its own chord of the end it starts at, so

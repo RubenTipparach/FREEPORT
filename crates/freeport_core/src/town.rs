@@ -114,6 +114,32 @@ const SIZE_JITTER: f64 = 0.16;
 /// city is cut fifteen metres into its own hill, which reads as a
 /// terrace, and much more than that reads as a quarry.
 const LEVEL: f64 = 0.10;
+/// And the DEEPEST a site may cut whatever its size, metres.
+///
+/// `LEVEL` is a share of the town's own radius, so it says the cut
+/// grows with the town, and its own doc says what that is for: "at a
+/// tenth a hundred and fifty metre city is cut fifteen metres into its
+/// own hill, which reads as a terrace, and much more than that reads as
+/// a quarry". A city is 537 m of radius now rather than 170, so that
+/// share is a 105 m cut at the worst and 18 m at the mean, measured on
+/// this body: the constant's own doc condemned it seven times over the
+/// day the towns grew.
+///
+/// A cut is one number a share cannot express, because what says
+/// terrace or quarry is the WALL in metres against the buildings beside
+/// it: fifteen metres is five storeys and is a retaining wall a town
+/// has, and a hundred is a cliff nothing built explains. It is a
+/// maximum rather than a minimum, so a body whose towns are small never
+/// meets it: on a two kilometre ball with twelve metres of relief the
+/// share binds first and this never does.
+///
+/// It is what makes a town's own apron CLIMBABLE, which is the other
+/// half. `field::site_skirt` ramps the cut over 24.6 m and a smoothstep
+/// climbs at one and a half its average, so a 15 m cut is an apron of
+/// 0.91 against `walker::STAND`'s own 1.19: a walker gets up it and so
+/// does a car, which is this game's own rule that the two are one
+/// answer. At 105 m it was 6.41, which is a wall.
+const CUT: f64 = 15.0;
 
 /// How much of its own size a settlement dropped on a ROAD gets. A place
 /// that grew because the road goes past it is a village whatever its
@@ -161,8 +187,21 @@ pub(crate) const WOBBLE: f64 = 2.0;
 /// same demand the outline is cut from: over `CORE_AT` is downtown and
 /// over `TOWN_AT` is the town proper, and everything out to nought is
 /// SUBURB.
-const CORE_AT: f64 = 0.66;
-const TOWN_AT: f64 = 0.38;
+///
+/// They are set from the MIX rather than chosen, which is the owner's
+/// own ask: about a quarter of a town's buildings tall and three
+/// quarters small houses. The shares are not the thresholds, because a
+/// suburb leaves `SUBURB_FILL` of its blocks empty and downtown leaves
+/// 0.15: at 0.66 and 0.38 the town proper and its core covered 38.4% of
+/// the demand disc and carried 49.1% of the BUILDINGS, which is half a
+/// city of offices. SWEPT rather than solved, because the demand is
+/// stretched and lobed and its area shares are not `(1 - t)^2`: 0.58
+/// gave 21.5%, 0.56 gave 23.3, 0.55 gave 24.3 and 0.54 gives **25.4%
+/// on a 537 m town and 25.2% on a 170 m one**, which is the owner's
+/// quarter at both ends of the size law.
+/// `a_town_is_a_quarter_towers_and_three_quarters_houses` holds it.
+const CORE_AT: f64 = 0.77;
+const TOWN_AT: f64 = 0.54;
 
 /// How many of a suburb's blocks carry a house at all. A suburb is a town
 /// with SPACE in it, and what says so is the space rather than the house:
@@ -219,7 +258,27 @@ const STEP: f64 = 0.5;
 /// the big planet and 9 against 15 on the small, and `plan` is 190 ms and
 /// 579 ms.
 pub fn surface_radius(planet: &Planet, dir: DVec3) -> f64 {
-    let (bottom, top) = planet.band();
+    surface_radius_from(planet, dir, planet.band().1)
+}
+
+/// The same march, started from a radius the caller already KNOWS is in
+/// the air.
+///
+/// The band is the whole of what the relief can reach, which on this
+/// body is sixteen kilometres, and the march's step is floored at
+/// `STEP`: a caller with no idea where the ground is pays for all of
+/// it. A caller that has the ANALYTIC surface in hand does know, within
+/// `Planet::overhang`, because the volumetric term is the only thing
+/// the analytic answer leaves out and it can lift the surface by half
+/// of that at the most. Measured on the road's own slips, 14,310
+/// marches took **74.6 s of startup from the top of the band and 0.3 s
+/// from the analytic surface plus the overhang**, for the same answer.
+///
+/// `top` under the true surface is the one way to get this wrong, and
+/// what comes back then is `top` itself rather than a wrong crossing,
+/// which is why the margin is the whole overhang and not half of it.
+pub fn surface_radius_from(planet: &Planet, dir: DVec3, top: f64) -> f64 {
+    let (bottom, _) = planet.band();
     let slope = planet.slope().max(f64::MIN_POSITIVE);
     let mut r = top;
     let mut last = top;
@@ -504,7 +563,7 @@ pub(crate) fn settle(
     // widening the rings to the town's own outline asks for the same
     // steepness over more ground rather than silently asking for a
     // flatter world. `LEVEL` was a fall over the old 1.05 radii.
-    if ground.fall > radius * OUTLINE * (LEVEL / 1.05) {
+    if ground.fall > (radius * OUTLINE * (LEVEL / 1.05)).min(CUT) {
         return None;
     }
     // And the level it will actually STAND at has to be inside the
@@ -716,11 +775,23 @@ fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> (Vec<Lot>, Vec<u8>) {
             if hash(i, j, 0) < empty {
                 continue;
             }
+            // How far INTO the town proper this block stands, nought at
+            // its own edge and one at the middle, which is what the
+            // skyline is a function of.
+            //
+            // The raw demand is what it read, so moving `TOWN_AT` to
+            // fix the MIX moved the SKYLINE with it: at 0.58 the
+            // shallowest block of the town proper came out at three
+            // storeys and the two storey house stopped existing. A
+            // zone's own share of its own range is the number that
+            // means something here, and the square law over it is the
+            // one this always had.
+            let up = ((want - TOWN_AT) / (1.0 - TOWN_AT)).clamp(0.0, 1.0);
             let tall = match zone {
                 // A suburb is ONE storey whatever the hash says. What
                 // makes it a suburb is that nothing on it is tall.
                 Zone::Suburb => 1,
-                _ => 1 + ((hash(i, j, 3) * 0.4 + want * want) * 7.0).floor() as u32,
+                _ => 1 + ((hash(i, j, 3) * 0.4 + up * up) * 7.0).floor() as u32,
             };
             let (kind, storeys) = choose(tall, hash(i, j, 6));
             // A lot may move within its own BLOCK and no further,

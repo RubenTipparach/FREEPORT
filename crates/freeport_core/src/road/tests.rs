@@ -262,9 +262,19 @@ fn a_corridor_follows_the_ground_and_stops_short_of_its_towns() {
         let bare = crate::town::surface_radius(&levelled.around(*dir, 1e-9), *dir) - planet.radius;
         worst = worst.max((bare - h).abs());
     }
+    // A road held to SEVEN PER CENT over ground that is steeper than
+    // that has to cut, and this fixture's ball carries 400 m of relief
+    // on a 40 km radius, which is ground no highway crosses on the
+    // level. The grade is the promise the owner asked for and it wins:
+    // `a_corridor_is_never_steeper_than_a_road_is_built` is the hard
+    // one, and this is how much ground the corridor has to move to keep
+    // it. Its own relief is the bound, because a cut deeper than the
+    // hill is a cut through the planet.
+    println!("the corridor moves {worst:.1} m of ground at its worst");
     assert!(
-        worst < 40.0,
-        "the corridor cuts {worst:.1} m into its own ground"
+        worst < planet.relief * 0.25,
+        "the corridor moves {worst:.1} m of ground against {:.0} m of relief",
+        planet.relief
     );
     // And it stops short of both towns, so a town's disc owns its ground.
     let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
@@ -314,9 +324,10 @@ fn a_corridor_is_never_steeper_than_a_road_is_built() {
             let along = pair[0].angle_between(pair[1]) * planet.radius;
             let grade = (h[1] - h[0]).abs() / along.max(1e-9);
             assert!(
-                grade <= 0.1 + 1e-9,
-                "the corridor climbs at one in {:.1}",
-                1.0 / grade
+                grade <= crate::road::STEEPEST + 1e-9,
+                "the corridor climbs at {:.1}% against the {:.0}% a highway is built at",
+                grade * 100.0,
+                crate::road::STEEPEST * 100.0
             );
         }
     }
@@ -401,9 +412,18 @@ fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
     // the ground and not over it; and the shoulder is under the ground
     // even at its worst, so there is no crack for the field to show
     // through.
+    //
+    // And the PROBES are a floor on the two stations either side of
+    // them now rather than a lift on the chord between them, which is
+    // what makes the grade exact: a station stands at the highest
+    // ground within its own piece, so the tarmac rides over the rest of
+    // that piece by up to what the ground falls across it. That is an
+    // embankment, which is the thing a road has and the thing this
+    // terrain can draw.
     const MITRE: f64 = 0.12;
+    const EMBANKED: f64 = 0.35;
     assert!(
-        over_most <= ribbon::LIFT + MITRE,
+        over_most <= ribbon::LIFT + MITRE + EMBANKED,
         "the tarmac floats {over_most:.3} m over its own ground"
     );
     assert!(
@@ -616,6 +636,7 @@ fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
     let (mut worst_gap, mut worst_float) = (0.0f64, 0.0f64);
     let mut seen = 0;
     let mut worst_sunk = f64::NEG_INFINITY;
+    let mut worst_over_mouth = f64::NEG_INFINITY;
     for road in roads.iter().take(6) {
         let line = centreline(road, planet.radius);
         let open = crate::road::open(&line, planet.radius, &discs);
@@ -625,7 +646,12 @@ fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
         let town = &towns[road.from];
         let at = line[first];
         let along = (at - line[(first + 1).min(line.len() - 1)]).normalize_or(at);
-        let slip = crate::road::slip(&levelled, town, at, along, planet.radius);
+        // The height the HIGHWAY itself stands at where the two meet,
+        // which is what a slip is anchored to: started at the ground
+        // instead it puts a step at the mouth of however far `smooth`
+        // raised the profile over it, in one three metre piece.
+        let run = survey(&levelled, road, sea - planet.radius + DRY);
+        let slip = crate::road::slip(&levelled, town, at, run[first], along, planet.radius);
         if slip.len() < 2 {
             continue;
         }
@@ -643,20 +669,30 @@ fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
             .max(0.0);
         worst_gap = worst_gap.max(gap);
         // And it RIDES its own ground: over it everywhere, by the
-        // street's own five centimetres at the crossing and no more
-        // than the highway's embankment out at the mouth. Under it
-        // ANYWHERE is the defect the pictures showed, which is a road
-        // drawn below the hill it was laid on.
+        // street's own five centimetres at the crossing and never by
+        // more than the HIGHWAY's own tarmac stands over the ground
+        // where the two meet. Under it ANYWHERE is the defect the
+        // pictures showed, which is a road drawn below the hill it was
+        // laid on.
+        //
+        // The bound is the highway's own float rather than a constant,
+        // because the slip's first point IS the highway's last one: the
+        // step between the baked profile and the ground it was raised
+        // off is tapered out along the slip, so nothing on it can stand
+        // higher than the end that step is at.
+        let mouth_over = run[first] + ribbon::LIFT
+            - (crate::town::surface_radius(&levelled, at) - planet.radius);
         for (dir, h) in &slip {
             let ground = crate::town::surface_radius(&levelled, *dir) - planet.radius;
             let over = h + ribbon::LIFT - ground;
+            worst_over_mouth = worst_over_mouth.max(over - mouth_over);
             worst_float = worst_float.max(over);
             worst_sunk = worst_sunk.max(-over);
         }
         seen += 1;
     }
     println!(
-        "{seen} slips end {worst_gap:.2} m from a crossing and stand {worst_float:.3} m over their own ground, {worst_sunk:.3} m under it at the worst"
+        "{seen} slips end {worst_gap:.2} m from a crossing and stand {worst_float:.3} m over their own ground, {worst_sunk:.3} m under it and {worst_over_mouth:.3} m over their own highway at the worst"
     );
     assert!(seen > 0, "no road laid a slip at all");
     assert!(
@@ -668,8 +704,8 @@ fn a_highway_joins_a_town_at_a_crossing_and_lands_on_its_ground() {
         "a slip stands {worst_sunk:.3} m INTO the ground it is laid on"
     );
     assert!(
-        worst_float <= ribbon::LIFT + crate::road::EMBANK + 1e-9,
-        "a slip stands {worst_float:.3} m over its own ground, past the highway's own embankment"
+        worst_over_mouth <= 1e-6,
+        "a slip stands {worst_over_mouth:.3} m higher over its ground than the highway it leaves"
     );
 }
 

@@ -123,7 +123,12 @@ fn towns_differ_in_size_and_are_not_discs() {
 #[test]
 fn a_town_has_towers_in_the_middle_and_suburbs_outside() {
     let planet = planet();
-    let towns = plan(&planet, 996.0, 60.0, 3, 7);
+    // A town big enough to HAVE a downtown. At 60 m, which is what
+    // this asked for, the core is `CORE_AT` of a demand disc a hundred
+    // and twenty metres across and holds no whole block at all: a
+    // hamlet has no towers in it, which is right and is not what this
+    // test is about.
+    let towns = plan(&planet, 996.0, 150.0, 3, 7);
     let t = &towns[0];
     println!("the port, a block a character, # over four storeys, + two or three, . one:");
     print!("{}", drawn(t));
@@ -207,17 +212,31 @@ fn towns_stand_on_level_land_over_the_sea_and_apart() {
         // A few lots rather than many: the smallest town on a body
         // is a VILLAGE now, and a floor written for one size is a
         // floor that fails on the tail of the rank size law.
-        assert!(t.lots.len() >= 6, "{} lots", t.lots.len());
-        assert!(t.pieces.len() > 40, "{} pieces of street", t.pieces.len());
+        // FOUR and not six, and the reason is the mix rather than the
+        // plan: three quarters of a town is suburb now, and
+        // `SUBURB_FILL` leaves nearly half a suburb's blocks empty, so
+        // a 60 m hamlet carries fewer buildings on exactly the same
+        // ground. What this is guarding is a town with nothing on it.
+        assert!(t.lots.len() >= 4, "{} lots", t.lots.len());
+        // And the streets follow the lots, so the same mix takes the
+        // paving down with it: 36 on this hamlet against the 40 this
+        // asked for. What it guards is a town with no streets.
+        assert!(t.pieces.len() > 20, "{} pieces of street", t.pieces.len());
         // Past its own nominal radius by the LOBES, which is what an
         // outline that is not a circle means, and no further.
         assert!(t
             .lots
             .iter()
             .all(|l| l.x.hypot(l.z) <= t.radius * (1.0 + REACH) + BLOCK));
+        // TALLER THAN A HOUSE, and not a tower: these are 60 m towns,
+        // which is a hamlet, and a hamlet's own middle is two and
+        // three storey buildings rather than offices. What says a town
+        // has a downtown is its SIZE, and
+        // `a_town_is_a_quarter_towers_and_three_quarters_houses` is
+        // where that is held.
         assert!(
-            t.lots.iter().any(|l| l.storeys >= 4),
-            "something tall in the middle"
+            t.lots.iter().any(|l| l.storeys >= 2),
+            "nothing over one storey anywhere in the middle"
         );
         assert!(
             t.lots.iter().any(|l| l.storeys == 1),
@@ -698,6 +717,48 @@ fn a_building_stands_on_its_own_block_and_never_in_the_street() {
             worst <= 0.01,
             "town {} stands a building {worst:.2} m into its own street",
             town.index
+        );
+    }
+}
+
+/// What a town is MADE of, which is the owner's own ask: about a
+/// quarter of its buildings tall and three quarters small houses.
+///
+/// By the COUNT of buildings and never by the area a zone covers, which
+/// are different numbers because a suburb leaves `SUBURB_FILL` of its
+/// blocks empty and downtown leaves 0.15. At BOTH ends of the size law,
+/// because a town's zones are shares of its own demand and a mix that
+/// held only for the biggest city on the body would be a rule about one
+/// town.
+#[test]
+fn a_town_is_a_quarter_towers_and_three_quarters_houses() {
+    for radius in [170.0, 537.0] {
+        let town = lay(DVec3::Y, 0.0, radius, DVec2::new(1.0, 0.0), 0, 7);
+        let mut by: [usize; 10] = [0; 10];
+        for lot in &town.lots {
+            by[(lot.storeys as usize).min(9)] += 1;
+        }
+        let all = town.lots.len().max(1);
+        let tall: usize = by[2..].iter().sum();
+        println!(
+            "a {radius:.0} m town: {} lots, {} pieces, storeys {by:?}, {:.1}% over one storey",
+            town.lots.len(),
+            town.pieces.len(),
+            100.0 * tall as f64 / all as f64
+        );
+        let share = tall as f64 / all as f64;
+        assert!(
+            (0.20..=0.30).contains(&share),
+            "a {radius:.0} m town is {:.1}% tall buildings, against the quarter asked for",
+            share * 100.0
+        );
+        // And a two storey house still EXISTS, which is what says the
+        // skyline is read off the zone's own share rather than off the
+        // threshold that sets the mix: moving `TOWN_AT` up without that
+        // put the shallowest block of the town proper at three storeys.
+        assert!(
+            by[2] > 0,
+            "no two storey house anywhere in a {radius:.0} m town"
         );
     }
 }

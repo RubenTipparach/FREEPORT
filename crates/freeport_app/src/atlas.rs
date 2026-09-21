@@ -69,6 +69,15 @@ pub(crate) struct Atlas {
     /// here would have said so.
     #[serde(default)]
     pub embank: f64,
+    /// The steepest grade a road is BUILT at, which `road::smooth` holds
+    /// its profile to.
+    ///
+    /// In the fingerprint because the baked heights ARE that envelope: a
+    /// file baked at a tenth describes a road climbing half again as
+    /// steeply as the one the game would build, and nothing else here
+    /// would have said so. It is the same silent failure `piece` and
+    /// `embank` are in this list to refuse.
+    pub steepest: f64,
     /// The minimum horizontal curve radius the alignment was fitted at
     /// (`road::CURVE`).
     ///
@@ -196,6 +205,7 @@ impl Atlas {
             town_radius,
             piece: road::PIECE,
             embank: road::EMBANK,
+            steepest: road::STEEPEST,
             curve: road::CURVE,
             sea,
             probe: probe(planet),

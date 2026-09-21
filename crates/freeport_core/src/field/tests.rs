@@ -522,3 +522,81 @@ fn the_slope_bound_holds_across_a_towns_own_outline() {
         "the field climbs at {worst} across a town's outline against a bound of {bound}"
     );
 }
+
+/// The march from the ANALYTIC surface finds the same ground the march
+/// from the top of the band does.
+///
+/// That is what makes a road's slip affordable, and it is a claim about
+/// `Planet::overhang` rather than about either march: the analytic
+/// surface is the relief with the sites applied and the field adds a
+/// volumetric term of at most half the overhang either way, so the
+/// analytic answer plus a whole overhang is air, always. Started under
+/// the true surface the march would hand back its own start, which is a
+/// road laid on a number rather than on the ground.
+#[test]
+fn a_march_from_the_analytic_surface_finds_the_same_ground() {
+    let planet = Planet {
+        radius: 2_000.0,
+        relief: 80.0,
+        lumps: 7.0,
+        octaves: 9,
+        overhang: 6.0,
+        ledge: 9.0,
+        seed: 31,
+        sites: vec![crate::town::Site::round(DVec3::Y, 4.0, 90.0)].into(),
+    };
+    let (mut worst, mut n) = (0.0f64, 0);
+    for k in 0..400 {
+        let a = k as f64 * 2.399_963_229_728_653;
+        let y = 1.0 - 2.0 * (k as f64 + 0.5) / 400.0;
+        let r = (1.0 - y * y).max(0.0).sqrt();
+        let dir = DVec3::new(r * a.cos(), y, r * a.sin()).normalize();
+        let whole = crate::town::surface_radius(&planet, dir);
+        let top = planet.radius + planet.surface(dir).0 + planet.overhang;
+        assert!(
+            planet.at(dir * top) <= 0.0,
+            "the analytic surface plus an overhang is not air"
+        );
+        let short = crate::town::surface_radius_from(&planet, dir, top);
+        worst = worst.max((whole - short).abs());
+        n += 1;
+    }
+    println!("{n} directions agree to {worst:.4} m");
+    assert!(
+        worst < 0.01,
+        "the two marches disagree by {worst:.4} m about where the ground is"
+    );
+}
+
+/// A site LEVELS its middle outright, nothing past its apron, and never
+/// more of one direction than of another as you walk out of it.
+///
+/// It is public because a road's slip reads it: the slip's tarmac sits
+/// at a street's own five centimetres where the town has levelled the
+/// ground and at a road's fifteen where it has not, and this is the one
+/// function that says which.
+#[test]
+fn a_sites_weight_is_one_across_it_and_nought_past_its_apron() {
+    let planet = Planet {
+        radius: 5_000.0,
+        sites: vec![crate::town::Site::round(DVec3::Y, 0.0, 200.0)].into(),
+        ..Planet::default()
+    };
+    let site = planet.sites[0];
+    let (inner, outer) = site_band(&site);
+    let (east, _) = crate::town::frame_at(DVec3::Y);
+    let at = |m: f64| planet.site_weight(&site, (DVec3::Y * planet.radius + east * m).normalize());
+    assert_eq!(at(0.0), 1.0, "a site does not level its own middle");
+    assert_eq!(at(inner * 0.5), 1.0, "a site does not level right across");
+    assert_eq!(at(outer * 1.5), 0.0, "a site levels past its own apron");
+    let mut last = 1.0;
+    for k in 0..=40 {
+        let w = at(outer * 1.5 * k as f64 / 40.0);
+        assert!(
+            w <= last + 1e-12,
+            "a site levels MORE the further out it is"
+        );
+        last = w;
+    }
+    println!("a site levels 1.0 to {inner:.0} m and 0.0 past {outer:.0} m");
+}

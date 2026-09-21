@@ -166,16 +166,53 @@ fn waterline(world: &World, up: f64) -> Option<(DVec3, DVec3)> {
     Some((eye, eye + out * 1_000.0))
 }
 
-/// How far out to look for the sea, and how finely. Three kilometres in
-/// thirty metre steps: the port stands on a shore by construction
-/// (`town::coastal` is why it is the biggest settlement on the body), so
-/// the water is near, and thirty metres is well under a beach's own
-/// width.
-const SHORE_REACH: f64 = 3_000.0;
+/// How far out to look for the sea, and how finely.
+///
+/// Three kilometres in thirty metre steps was this, on the reasoning
+/// that the port stands on a shore by construction. It does not:
+/// `town::coastal` sizes a town by how high over the sea it stands,
+/// which is not how far from water it is, and once `town::CUT` capped
+/// how deep a site may cut, the flattest big sites are inland basins
+/// and plateaus. Measured on this body, **not one of its 521
+/// settlements has open sea within three kilometres**, and the port's
+/// own nearest water is 15,725 m off: every `--shore` render came back
+/// as a main street with no sea in the frame and one line of log to say
+/// so.
+///
+/// So the scan is COARSE and then FINE: out to `SHORE_REACH` in
+/// `SHORE_COARSE` steps to find which bearing has water on it at all,
+/// and then back over the last coarse step in `SHORE_STEP` ones, which
+/// is well under a beach's own width. Fifty kilometres is the horizon
+/// of an eye a hundred metres up, which is as far as a camera standing
+/// on this shore could see the sea from anyway.
+const SHORE_REACH: f64 = 50_000.0;
+const SHORE_COARSE: f64 = 300.0;
 const SHORE_STEP: f64 = 30.0;
 /// How far PAST the waterline the eye stands, metres: out on the water,
 /// which is where a picture of the sheet is taken from.
 const SHORE_OUT: f64 = 60.0;
+
+/// The last DRY point inside one coarse step, to `SHORE_STEP`.
+fn last_dry(
+    bare: &freeport_core::field::Planet,
+    from: DVec3,
+    way: DVec3,
+    radius: f64,
+    sea: f64,
+    wet: f64,
+) -> DVec3 {
+    let mut dry = (from + way * ((wet - SHORE_COARSE) / radius)).normalize();
+    let mut out = wet - SHORE_COARSE + SHORE_STEP;
+    while out < wet {
+        let d = (from + way * (out / radius)).normalize();
+        if town::surface_radius(bare, d) < sea {
+            break;
+        }
+        dry = d;
+        out += SHORE_STEP;
+    }
+    dry
+}
 
 /// The port's own WATERLINE and which way the open sea is: the nearest
 /// point on any bearing where the ground falls under the sea.
@@ -186,10 +223,27 @@ const SHORE_OUT: f64 = 60.0;
 /// all of them is the shore this port actually stands on.
 pub(crate) fn shore(world: &World) -> Option<(DVec3, DVec3)> {
     const BEARINGS: usize = 32;
-    let town = world.towns.first()?;
+    // The BIGGEST settlement on the body and not town 0, which is what
+    // this doc always claimed and what the code never did.
+    // `town::coastal` sizes a town by how near the sea it stands, so
+    // the biggest IS the most coastal by construction; town 0 is the
+    // LOWEST ground on the body, and those stopped being the same thing
+    // the day `town::CUT` capped how deep a site may cut. Measured on
+    // this body, the port's own nearest water is **15,725 m off**
+    // against a `SHORE_REACH` of 3,000, so every `--shore` render came
+    // back as the port's main street with no sea in the frame at all
+    // and one line of log to say so.
+    let town = world
+        .towns
+        .iter()
+        .max_by(|a, b| a.radius.total_cmp(&b.radius))?;
     let radius = world.planet.radius;
     let sea = world.sea.radius;
     let (east, north) = town::frame_at(town.dir);
+    // On the BARE planet: a town's plateau and a road's corridor cannot
+    // make sea, and a march on a body carrying 646,000 levelled arcs
+    // walks a latitude band of them at every step.
+    let bare = world.planet.bare();
     // The bearing with the most OPEN SEA on it, and not the nearest
     // water. The first cut took the nearest crossing, which on this port
     // is an inlet with a spit across it: the frame came back mostly sand
@@ -205,20 +259,22 @@ pub(crate) fn shore(world: &World) -> Option<(DVec3, DVec3)> {
         let mut dry = town.dir;
         let mut at: Option<DVec3> = None;
         let mut wet = 0.0;
-        let mut out = SHORE_STEP;
+        let mut out = SHORE_COARSE;
         while out < SHORE_REACH {
             let d = (town.dir + way * (out / radius)).normalize();
-            let under = town::surface_radius(&world.planet, d) < sea;
+            let under = town::surface_radius(&bare, d) < sea;
             match (at.is_some(), under) {
-                // The last DRY step is the waterline, to a step.
-                (false, true) => at = Some(dry),
-                (true, true) => wet += SHORE_STEP,
+                // The last DRY step is the waterline, refined back over
+                // the coarse step it was found in.
+                (false, true) => at = Some(last_dry(&bare, town.dir, way, radius, sea, out)),
+                (true, true) => wet += SHORE_COARSE,
                 // Land again: this bearing is an inlet, not open sea.
                 (true, false) => break,
                 (false, false) => dry = d,
             }
-            out += SHORE_STEP;
+            out += SHORE_COARSE;
         }
+        let _ = dry;
         if let Some(at) = at {
             if best.as_ref().is_none_or(|(w, _, _)| wet > *w) {
                 best = Some((wet, at, way));

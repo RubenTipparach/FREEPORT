@@ -76,11 +76,24 @@ const MOST_NODES: usize = 200_000;
 /// does; at one it ignores the terrain and draws a great circle.
 const GRADE: f64 = 8.0;
 
-/// The steepest a road may climb, rise over run. Past it there is no edge
-/// at all rather than an expensive one, so a route never takes a cliff
-/// however far the way round is. A tenth is a one in ten hill, which is
-/// about the steepest a road is built at.
-const STEEPEST: f64 = 0.1;
+/// The steepest a road is ever BUILT at, rise over run.
+///
+/// Past it the router refuses an edge outright rather than pricing one,
+/// so a route never takes a cliff however far the way round is.
+///
+/// **Seven per cent, which is the owner's own number and is what a
+/// motorway is designed to**: a fully laden lorry holds its speed up
+/// one and a car never has to think about it. It was a tenth, which is
+/// an alpine pass.
+///
+/// It is the router's refusal between waypoints AND the bound
+/// `road::smooth` holds between the 85 m stations the router never
+/// looked at, and the second is where it actually matters: the steepest
+/// piece on this body climbed at **4966%**, which is eighty eight
+/// degrees, and 4.72% of its 769,371 pieces were over even the old
+/// tenth. The owner read one off a picture as a road going straight up
+/// a hillside.
+pub const STEEPEST: f64 = 0.07;
 
 /// How far above the sea a waypoint has to stand to carry a road, metres.
 /// A road does not run along the tide line.
@@ -797,73 +810,71 @@ pub fn survey(planet: &Planet, road: &Road, dry: f64) -> Vec<f64> {
     smooth(run, &gap, dry, &mid)
 }
 
-/// A road SMOOTHS what it crosses by RISING: every step held to the
-/// grade the route was allowed, nothing under `dry`, and nothing under
-/// the ground it was surveyed on.
+/// A road SMOOTHS what it crosses by RISING: every sample cleared, then
+/// every step held to the grade a highway is built at.
 ///
-/// Each step is clamped against its OWN piece's length and not against
+/// **The ORDER is the whole of it, and it was wrong.** There were three
+/// rounds of forward, backward, probes, floor, ending on the PROBES: the
+/// two envelope passes bound the grade and the probe pass then lifted
+/// both ends of a chord by whatever the ground between them stood above
+/// it, which changes the slope to each end's OTHER neighbour and is
+/// bounded by nothing at all. Measured on this body, the steepest piece
+/// came out at **4966%**, which is eighty eight degrees, and 4.72% of
+/// 769,371 pieces were over even the tenth this used to allow. The owner
+/// read one off a picture as a road going straight up a hillside.
+///
+/// It is TWO statements now and neither iterates, because a fixed point
+/// nobody can name is a fixed point nobody can check:
+///
+/// 1. **A probe is a floor on the two STATIONS either side of it**, and
+///    never a lift on the chord. A straight chord between two points
+///    both at or above a sample is everywhere at or above it, so this
+///    clears the ground between two stations by construction and asks
+///    nothing of the chord itself. What it costs is that a road stands
+///    at the highest ground within its own piece either side, which is
+///    an embankment over a crag and is what a road has.
+/// 2. **Then the ENVELOPE, once and LAST.** Forward holds the DESCENT
+///    inside the grade and backward the ASCENT, and one pass each is
+///    exact rather than approximate: the result is the least profile at
+///    or above every station with `|slope| <= STEEPEST`, which is the
+///    standard upper envelope. It only ever RAISES, so it cannot push a
+///    chord back under a probe it has already cleared, which is why it
+///    is safe to put last and why the probes can go first.
+///
+/// RAISE only, never lower, which is the rule this already had and is
+/// worth keeping in view: clamping both ways is real road engineering
+/// and it means CUTTING, and a cutting is the one thing this terrain
+/// cannot draw, because it is 14 m wide and the rings put a cell of
+/// about a sixty fourth of its own distance under the eye. Raising
+/// starts the climb earlier and stands the road on an embankment, which
+/// the mesher may lose without ever closing over the tarmac.
+///
+/// Each step is held against its OWN piece's length and not against
 /// `PIECE`, because `pieces` rounds a span UP and its pieces are
 /// therefore shorter: clamped against the nominal length the last piece
 /// of a span came out at one in 9.4 against a limit of one in ten, which
 /// `a_corridor_is_never_steeper_than_a_road_is_built` caught.
-///
-/// Forward, then backward, then the floor, three rounds, because the
-/// three pull against one another and the fixed point is the envelope
-/// that satisfies all of them. It almost never binds at this spacing:
-/// the ground moves a median of 1.2 m over a piece against the 34 m the
-/// grade allows, and what it is there for is the one sampled crag that
-/// would otherwise put a wall across the corridor.
 fn smooth(mut run: Vec<f64>, gap: &[f64], dry: f64, mid: &[f64]) -> Vec<f64> {
     if run.len() < 2 {
-        return run.iter().map(|h| h.max(dry)).collect();
+        return run.iter().map(|h| h.max(dry) + EMBANK).collect();
     }
-    for _ in 0..3 {
-        // RAISE only, never lower. The forward pass holds the DESCENT
-        // from one station to the next inside the grade and the backward
-        // pass holds the ASCENT, so between them both directions are
-        // bounded, and because neither ever pulls a station down the
-        // fixed point is the LEAST profile above the ground that a road
-        // may be built at.
-        //
-        // It clamped both ways, which is the same promise kept by
-        // CUTTING: a station standing higher than the grade allows was
-        // pulled down into the hill. That is real road engineering and
-        // it is the one thing this terrain cannot draw, because a
-        // cutting is 14 m wide and the rings put a cell of about a
-        // sixty fourth of its own distance under the eye. Raising
-        // instead starts the climb earlier and stands the road on an
-        // embankment, which the mesher may lose without ever closing
-        // over the tarmac.
-        for k in 1..run.len() {
-            run[k] = run[k].max(run[k - 1] - STEEPEST * gap[k - 1]);
+    for k in 0..run.len() - 1 {
+        for j in 0..PROBES {
+            let Some(there) = mid.get(k * PROBES + j) else {
+                continue;
+            };
+            run[k] = run[k].max(*there);
+            run[k + 1] = run[k + 1].max(*there);
         }
-        for k in (0..run.len() - 1).rev() {
-            run[k] = run[k].max(run[k + 1] - STEEPEST * gap[k]);
-        }
-        // And the CHORD itself, which is what the tarmac is laid on and
-        // what a station's own height says nothing about. A station
-        // standing at the highest ground within half a piece is not
-        // enough on its own: where the profile DESCENDS, the chord drops
-        // below the station it left and can pass under a bulge between
-        // the two. Lifting both ends by the deficit clears the mid point
-        // exactly and leaves the grade untouched, because a chord raised
-        // at both ends has the slope it had.
-        for k in 0..run.len() - 1 {
-            for j in 0..PROBES {
-                let Some(there) = mid.get(k * PROBES + j) else {
-                    continue;
-                };
-                let t = (j + 1) as f64 / (PROBES + 1) as f64;
-                let under = there - (run[k] * (1.0 - t) + run[k + 1] * t);
-                if under > 0.0 {
-                    run[k] += under;
-                    run[k + 1] += under;
-                }
-            }
-        }
-        for h in &mut run {
-            *h = h.max(dry);
-        }
+    }
+    for h in &mut run {
+        *h = h.max(dry);
+    }
+    for k in 1..run.len() {
+        run[k] = run[k].max(run[k - 1] - STEEPEST * gap[k - 1]);
+    }
+    for k in (0..run.len() - 1).rev() {
+        run[k] = run[k].max(run[k + 1] - STEEPEST * gap[k]);
     }
     // And the EMBANKMENT, last, so it rides on top of a profile that
     // already clears the ground everywhere.
