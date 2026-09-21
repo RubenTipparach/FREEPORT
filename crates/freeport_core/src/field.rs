@@ -14,7 +14,7 @@ use glam::DVec3;
 
 // The arithmetic the ground is made of lives in `noise` and is re-exported
 // here, so every caller outside this crate keeps the path it had.
-pub use crate::noise::{fbm3, hash3, hash3_f32, mix3, noise3, sample, Grid};
+pub use crate::noise::{fbm3, fbm3_rough, hash3, hash3_f32, mix3, noise3, sample, Grid};
 
 /// A density: positive inside the rock, negative in the air, nought on the
 /// surface.

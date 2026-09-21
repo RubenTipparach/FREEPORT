@@ -1,0 +1,1515 @@
+<title>What a City Block Is</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&display=swap">
+
+<style>
+  :root {
+    --paper:   #e7e5dc;
+    --ground:  #dcd9cd;
+    --ink:     #1b1e1a;
+    --faint:   #6d7069;
+    --rule:    #bcb9ac;
+    --panel:   #f0eee6;
+    --signal:  #2f6089;
+    /* built form */
+    --tarmac:  #43463f;
+    --walkway: #b3af9e;
+    --house:   #96543c;
+    --big:     #92a0a6;
+    --yard:    #b0ad92;
+    /* land use, the planner's own palette: yellow to brown for
+       residential, orange to red for commercial, grey and purple for
+       industrial, blue for institutions, green for open space. */
+    --u-res:   #e0c15c;
+    --u-mix:   #c98a3c;
+    --u-com:   #c3462f;
+    --u-ind:   #8c7aa8;
+    --u-civ:   #4a7fb5;
+    --u-open:  #6f9455;
+    --u-sq:    #cfc9b4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:   #16181a;
+      --ground:  #1e2124;
+      --ink:     #e6e6e0;
+      --faint:   #9a9d98;
+      --rule:    #383c40;
+      --panel:   #1d2023;
+      --signal:  #6aa6d8;
+      --tarmac:  #2a2d31;
+      --walkway: #555a60;
+      --house:   #b9674a;
+      --big:     #7e8f97;
+      --yard:    #4f5348;
+      --u-res:   #c9a945;
+      --u-mix:   #b2762f;
+      --u-com:   #b03d28;
+      --u-ind:   #7a6896;
+      --u-civ:   #3f6e9e;
+      --u-open:  #5d7f46;
+      --u-sq:    #4b4e50;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:   #16181a;
+    --ground:  #1e2124;
+    --ink:     #e6e6e0;
+    --faint:   #9a9d98;
+    --rule:    #383c40;
+    --panel:   #1d2023;
+    --signal:  #6aa6d8;
+    --tarmac:  #2a2d31;
+    --walkway: #555a60;
+    --house:   #b9674a;
+    --big:     #7e8f97;
+    --yard:    #4f5348;
+    --u-res:   #c9a945;
+    --u-mix:   #b2762f;
+    --u-com:   #b03d28;
+    --u-ind:   #7a6896;
+    --u-civ:   #3f6e9e;
+    --u-open:  #5d7f46;
+    --u-sq:    #4b4e50;
+  }
+
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 400 15px/1.55 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; }
+
+  h1 {
+    font: 700 clamp(26px, 4.4vw, 40px)/1.08 "IBM Plex Sans Condensed", ui-sans-serif, sans-serif;
+    letter-spacing: -0.015em; margin: 0 0 6px; text-wrap: balance;
+  }
+  .sub { color: var(--faint); max-width: 62ch; margin: 0 0 4px; }
+  .quote {
+    font-style: italic; margin: 18px 0 26px;
+    border-left: 3px solid var(--signal); padding: 2px 0 2px 14px; max-width: 62ch;
+  }
+  h2 {
+    font: 600 13px/1.2 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.13em; text-transform: uppercase; color: var(--faint);
+    margin: 42px 0 12px; padding-bottom: 7px; border-bottom: 1px solid var(--rule);
+  }
+  h2 b { color: var(--ink); font-weight: 700; }
+  p { max-width: 68ch; }
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.9em;
+    background: var(--ground); padding: 1px 4px; border-radius: 2px;
+  }
+  b { font-weight: 600; }
+
+  .plate { background: var(--ground); border: 1px solid var(--rule); }
+  canvas { display: block; width: 100%; height: auto; }
+
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    border-bottom: 1px solid var(--rule); padding: 8px; background: var(--panel);
+  }
+  .bar .gap { flex: 1 1 0; min-width: 0; }
+  .bar button {
+    font: 500 12px/1 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    background: transparent; color: var(--faint);
+    border: 1px solid var(--rule); border-radius: 2px;
+    padding: 7px 11px; cursor: pointer;
+  }
+  .bar button:hover { color: var(--ink); }
+  .bar button[aria-pressed="true"] { background: var(--signal); border-color: var(--signal); color: #fff; }
+  .bar button:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+  .slide {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 12px; border-top: 1px solid var(--rule); background: var(--panel);
+  }
+  .slide label {
+    font: 600 12px/1 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+  }
+  .slide input[type=range] { flex: 1 1 200px; accent-color: var(--signal); min-width: 150px; }
+  .slide output { font-family: "IBM Plex Mono", monospace; font-weight: 500; font-size: 13px; }
+
+  .figs {
+    display: grid; gap: 1px; background: var(--rule);
+    grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+    border: 1px solid var(--rule); border-top: 0;
+  }
+  .fig { background: var(--panel); padding: 11px 13px; }
+  .fig dt {
+    font: 600 10.5px/1.3 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+  }
+  .fig dd {
+    margin: 3px 0 0; font-family: "IBM Plex Mono", monospace;
+    font-variant-numeric: tabular-nums; font-size: 19px; font-weight: 500;
+  }
+  .fig dd small { font-size: 11px; color: var(--faint); font-weight: 400; }
+
+  .key { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0 0; padding: 0; list-style: none; }
+  .key li { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--faint); }
+  .key i { width: 13px; height: 13px; border: 1px solid rgba(128,128,128,.45); display: block; flex: none; }
+
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 560px; }
+  th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--rule); }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    font: 600 10.5px/1.3 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+    background: var(--panel);
+  }
+  tbody td { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+  tbody td:first-child { font-family: "IBM Plex Sans", sans-serif; }
+  tr[data-us] td { background: color-mix(in srgb, var(--signal) 9%, transparent); }
+  tr[data-us="now"] td { color: var(--house); }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  .cols { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  .card { border: 1px solid var(--rule); border-left: 3px solid var(--signal); padding: 14px 16px; background: var(--panel); }
+  .card h3 { font: 600 15px/1.25 "IBM Plex Sans Condensed", sans-serif; margin: 0 0 6px; }
+  .card p { margin: 0; font-size: 14px; color: var(--faint); max-width: none; }
+  .card.open { border-left-color: var(--house); }
+  .card.done { border-left-color: var(--u-open); }
+
+  /* the land use bars */
+  .uses { display: grid; gap: 14px; margin-top: 4px; }
+  .use-row { display: grid; grid-template-columns: minmax(96px, 128px) 1fr; gap: 12px; align-items: center; }
+  .use-row > span {
+    font: 600 11px/1.3 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint);
+  }
+  .stack { display: flex; height: 26px; border: 1px solid var(--rule); background: var(--ground); overflow: hidden; }
+  .stack div { position: relative; }
+  .stack div span {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font: 500 10px/1 "IBM Plex Mono", monospace; color: rgba(0,0,0,.65);
+  }
+
+  .src { font-size: 12.5px; color: var(--faint); }
+  .src a { color: var(--signal); }
+  .note { font-size: 13px; color: var(--faint); max-width: 68ch; }
+</style>
+
+<div class="wrap">
+
+  <h1>What a city block is</h1>
+  <p class="sub">FREEPORT calls a 10 m square with one house on it a <b>block</b>, lays one
+  width of street around every one of them, and puts a dwelling on every lot in the world.
+  Beside it here are <b>six real plans</b>, each a 780 m square of actual ground pulled off
+  OpenStreetMap and drawn at the same metres to the pixel: the streets where they run and
+  every building where it stands. Nothing under a city's name on this page is invented.</p>
+
+  <p class="quote">city blocks are more than one building in size lol &middot; a city block should be
+  at least 4x4 houses. large buildings should be the size of 2x2 houses, so those blocks are
+  2x2 buildings there</p>
+
+  <h2>1 &middot; <b>The block</b>, against six real plans at one scale</h2>
+  <div class="plate">
+    <div class="bar" id="bar"></div>
+    <canvas id="plan" width="1040" height="624" aria-label="Plan of a town at the selected setting"></canvas>
+    <div class="slide">
+      <label for="side">Lots per block side</label>
+      <input type="range" id="side" min="1" max="6" step="1" value="4">
+      <output id="sideOut"></output>
+    </div>
+    <div class="slide">
+      <label for="town">Town radius</label>
+      <input type="range" id="town" min="40" max="900" step="10" value="230">
+      <output id="townOut"></output>
+    </div>
+    <p class="note" style="margin:0;padding:10px 14px 12px">Drag the plan to pan and use the
+    wheel to zoom, on any tab. Double click puts it back.</p>
+  </div>
+  <dl class="figs" id="figs"></dl>
+  <ul class="key" id="key"></ul>
+
+  <p style="margin-top:18px">The number that settles it is <b>coverage</b>: the share of
+  the ground a place occupies that carries a building. It is the one figure both halves of
+  this page can be held to, because it is <b>measured</b> either way, off OSM's own
+  footprints for a real city and off the drawn plan for FREEPORT. Measured on the six:
+  Chicago's Loop <b>55.8%</b>, Manhattan <b>52.9%</b>, Portland's downtown <b>46.7%</b>,
+  Barcelona's Eixample <b>42.6%</b>, and then the two that are not grids at all, Savannah
+  <b>31.7%</b> and Siena <b>31.6%</b>.</p>
+
+  <p>FREEPORT today, one 10 m building on a 19 m pitch, is <b>27.7%</b>: <b>under every one
+  of them</b>, including a medieval hill town. At <b>4&times;4 blocks with a courtyard</b>,
+  a 230 m radius and the three highways run in, the drawn plan measures <b>43.6%</b>, which
+  puts it between the Eixample and Portland's downtown. The owner's arithmetic lands the
+  town inside the real range; the 10 m block never was.</p>
+
+  <p><b>And the slider does not climb, it SAWS</b>, which is the 2&times;2 building saying
+  something about the block it has to tile. Measured at one radius: 1 lot a side is
+  <b>29.2%</b>, 2 is 32.6, 3 is <b>26.6</b>, 4 is <b>43.6</b>, 5 is 32.9 and 6 is
+  <b>47.9</b>. An EVEN side tiles exactly, <code>floor(side/2)&sup2;</code> large buildings
+  covering the whole block; an ODD one leaves a strip a lot wide over as yard, which is
+  <code>4n&sup2;/side&sup2;</code> and is 0.44 at three and 0.64 at five against 1.00 at
+  two, four and six. The owner's own 4&times;4 is the smallest block that both holds a
+  courtyard and divides by the building standing on it, and that is arithmetic rather than
+  a preference.</p>
+
+  <p>The <b>town radius</b> slider is the other half, and coverage falls as a town grows
+  because what it grows is suburb: <b>46.8%</b> at a 60 m hamlet, 44.7 at a village, 43.6
+  at the shipped market town, 40.6 at 300 m, 40.2 at a 540 m city and 41.5 at a 900 m
+  capital. The grain's octave count follows the size the way <code>town::shape</code>'s
+  does, one octave at a hamlet and five at a capital, so a small place has one lump and a
+  big one is ragged at every scale it has.</p>
+
+  <p class="note">At the shipped radius a whole town is about 460 m across and its arms
+  reach half as far again down each highway, against 760 m of one real city's
+  <em>middle</em> on the other tabs. A FREEPORT town is a district, not a downtown. Drag
+  the plan to pan and use the wheel to zoom on any tab; double click puts it back.</p>
+
+  <p>The older measure is <b>how much of the ground is street</b>, and the table keeps it
+  because it is what the textbooks publish: <code>1 - (block / pitch)&sup2;</code>, the pitch
+  being the block plus the street, a distinction this codebase already makes
+  (<code>town::PITCH = BLOCK + STREET</code>). Portland's famous 260 ft grid is a
+  <b>200 ft block</b> inside a <b>60 ft right of way</b>: the 260 is the pitch. Read it
+  against the measured column and the published figure is the optimistic one every time,
+  because a real city has alleys, slip roads and a diagonal that no pitch accounts for.</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>grid</th><th>block</th><th>street</th><th>pitch</th><th>street share</th><th>coverage</th></tr></thead>
+      <tbody id="cities"></tbody>
+    </table>
+  </div>
+
+  <div class="cols" style="margin-top:22px">
+    <div class="card">
+      <h3>A block holds many lots</h3>
+      <p>Manhattan's is 80 by 274 m, Chicago's and Melbourne's 100 by 200, Barcelona's 113
+      square, Portland's 61 square. FREEPORT's is 10 m, which is one lot, so every house in
+      the world stands on its own island with tarmac on four sides.</p>
+    </div>
+    <div class="card">
+      <h3>Lots front the street, two tiers deep</h3>
+      <p>Subdivision codes put it plainly: a block is sized to hold <em>two tiers of lots of
+      approximately equal depth</em>, back to back, with rear boundaries or an alley between.
+      Lots are deep and narrow, 7.6 to 15 m of frontage by 30 to 38 m deep. Nobody plats a
+      lot with no street on it.</p>
+    </div>
+    <div class="card">
+      <h3>The middle is not building</h3>
+      <p>Cerd&agrave; drew the Eixample with <em>two or three sides built around a garden</em>.
+      Developers filled all four sides and the interior too. Either way the interior is a
+      decision, and a 4&times;4 block has one to make: four lots in the middle with no
+      frontage.</p>
+    </div>
+  </div>
+
+  <h2>2 &middot; <b>The street</b> is not one street</h2>
+  <p>FREEPORT has exactly one street and it is a good one. Its carriageway is 5.5 m, which is
+  precisely the <b>5.5 m access road</b> in a real highways standard, and two 1.5 m pavements
+  make the 8.5 m it lays everywhere. The defect is the <em>everywhere</em>: a town where the
+  lane outside a cottage is the same width as the road through the middle has no way to tell
+  you where you are, and nothing for a highway to arrive on.</p>
+
+  <p>That is measurable now rather than asserted. Press any city tab above and the figure
+  panel counts <b>how many distinct rights of way</b> the kilometre actually carries, off
+  the map's own <code>width</code> and <code>lanes</code> tags. Portland carries <b>6</b>
+  over its kilometre, Siena 7, Manhattan and Savannah 8, Chicago 11 and Barcelona
+  <b>22</b>. FREEPORT's is <b>one</b>, everywhere, on every world.</p>
+
+  <div class="plate" style="margin-bottom:0">
+    <canvas id="ranks" width="1040" height="340" aria-label="Street cross sections drawn to scale"></canvas>
+  </div>
+  <p class="note" style="margin-top:10px">Drawn at the cross sections' own scale and not the
+  plan's, which is what the bar says: at a town's scale an 8.5 m street is eight pixels and
+  the comparison this section is about cannot be read at all. Haussmann
+  cut 137 km of boulevard through Paris at about 30 m; Cerd&agrave;'s Eixample streets are 20 to
+  30 m with 50 m for the two great diagonals.</p>
+
+  <h2>3 &middot; <b>The land</b> is not all houses</h2>
+  <p>Every lot in a FREEPORT town carries a dwelling. There is no shop, no works, no school,
+  no park and no square anywhere on the planet. New York's own land use survey is the
+  comparison, and the gap is not subtle: <b>16.1% of New York is open space and 0.0% of
+  FREEPORT is</b>.</p>
+
+  <div class="uses" id="uses"></div>
+  <ul class="key" id="usekey"></ul>
+  <p class="note" style="margin-top:12px">FREEPORT's rows are counted off the drawing above,
+  not asserted, and two of them are deliberately off New York's: <b>commercial is high</b>
+  because the frame holds one town centre where the survey holds five boroughs, and
+  <b>street is high</b> because the ranks in section two are wider than the 32.0% a uniform
+  local grid costs and three arterials now run through the plan. An avenue is paid for in
+  ground, and so is a road out of town. The palette is the planner's own: yellow to brown for residential, orange to
+  red for commercial, purple for industry, blue for institutions, green for open space. There
+  is no legally mandated standard for it, which is why every zoning map carries a legend.</p>
+
+  <h2>4 &middot; <b>A city grows along</b> its roads</h2>
+  <p>The owner's own correction, and it is the thing rings cannot say.
+  FREEPORT's <code>demand</code> field is <code>1 - dist / edge(bearing)</code> with a
+  fractal bite: it falls off from a town's middle in every direction at once, so a town is
+  a bitten <em>disc</em> wherever its roads happen to arrive. That is exactly
+  <b>Burgess's concentric zone model</b>, published in 1925 and already thought too simple
+  by 1939.</p>
+
+  <p>A real town does not spread evenly. <b>It reaches out along every road that reaches
+  it</b>, because the road is what the place is for: frontage on it is worth more than
+  ground behind it, so building follows the line and keeps following it long past where a
+  ring would have stopped. That is <em>ribbon development</em>, it is Hoyt's sectors, and
+  it is visible in every real plan on this page. The FREEPORT tabs above carry it now:
+  three arterials, the town reaching <b>0.95 of its own radius further</b> down each one,
+  the high street strung along them a block deep, and the fringe out there frayed by the
+  same fractal grain the rest of the edge already has.</p>
+
+  <p><b>And the highway has to MERGE, which is a second thing.</b> Drawn as a bar that
+  stopped at a radius it ended in mid air with the town's grid carrying on past it, joined
+  to nothing. A trunk road that reaches a town does not end: it becomes the high street. So
+  it <b>tapers</b>, from the country's own 22 m out past the town down to the local
+  <code>STREET</code> of 8.5 m by the core, and all three <b>stop at the market square</b>,
+  because a road that has arrived at one has arrived. The game's own
+  <code>road::slip</code> is the curved version of the same statement, a cubic Hermite from
+  the highway's mouth to the nearest crossing the town paved.</p>
+
+  <p>Three rules were tried for what an oblique road does to a block grid, and the third is
+  the only one that is right in the picture and in the number at once.
+  <b>Rejecting every block within a margin</b> of a third of a block put 14 m of bare
+  ground either side of a 20 m road and the arterial read as a gap in the plan.
+  <b>Rejecting on the block's own support function</b>, which is the honest geometric test
+  for an overlap, sterilises a band as wide as a block's own <em>diagonal</em> whatever the
+  road is: 53 m at 4&times;4, which cut the town into three wedges and dropped coverage
+  from 43.6% to 42.0%. What it does instead is ask the question of a <b>LOT</b>: a block the
+  road runs clean over is gone, and a block it merely clips keeps every lot the road does
+  not stand on. One function (<code>onRoad</code>) is asked by the lot that is drawn and by
+  the footprint that is counted, so a building under a road cannot be in one and not the
+  other, and the roads are drawn LAST so a block painted after one cannot chop it into
+  stubs.</p>
+
+  <div class="cols">
+    <div class="card done">
+      <h3>Burgess, 1925: rings</h3>
+      <p>Uniform rings around one centre. This is what the code does today, and it is why
+      every town reads the same from the air whatever is around it.</p>
+    </div>
+    <div class="card">
+      <h3>Hoyt, 1939: sectors</h3>
+      <p>Growth follows the transport corridors, so land use is <em>wedges</em> and not rings:
+      industry down the rail line, the good addresses up the other side. FREEPORT already
+      knows every bearing it needs and uses none of them: the atlas has the roads that reach
+      each town, and <code>settle</code> computes the shore axis. This is the cheap one and
+      it is what the plan above is drawn on.</p>
+    </div>
+    <div class="card">
+      <h3>Harris and Ullman, 1945: nuclei</h3>
+      <p>A big city has several centres, not one: a satellite business district forms wherever
+      a suburb got large enough. For FREEPORT this is the cheapest of the three, because
+      <code>demand</code> is a field and a second nucleus is a second peak in it.</p>
+    </div>
+  </div>
+
+  <h2>5 &middot; <b>The square</b>, which is where a town has a middle</h2>
+  <p>A market square is the one piece of a town that is not a building and not a road, and
+  the civic buildings face it. Its size is a block count, which is what makes it cheap here:
+  <b>Place des Vosges is 140 m square</b>, which is three of these blocks and the two streets
+  between them (137 m). Wroc&#322;aw's market square is 213 by 178 m, Siena's Campo about a
+  hundred across.</p>
+  <p>So a square is a block group with its internal streets taken out and its paving left in,
+  and the blocks that face it build civic rather than residential. Nothing new is needed to
+  draw one: it is the paving the town already lays and the building kinds it already has.</p>
+
+  <h2>What this suggests for FREEPORT</h2>
+  <div class="cols">
+    <div class="card">
+      <h3>Downtown: filled, 2&times;2 large</h3>
+      <p>Four large buildings of 2&times;2 lots each fill the block, every one a corner
+      fronting two streets. The owner's own arithmetic, and a Manhattan tower block.</p>
+    </div>
+    <div class="card">
+      <h3>Town: hollow, 12 round a court</h3>
+      <p>The twelve perimeter lots build, the 2&times;2 interior is a courtyard. Every
+      building fronts a street. Cerd&agrave;'s hollow block.</p>
+    </div>
+    <div class="card">
+      <h3>Suburb: hollow and sparse</h3>
+      <p>The same perimeter, thinned by the fractal grain the towns already carry, interior
+      as gardens. What makes a suburb a suburb is the space, not the house.</p>
+    </div>
+    <div class="card">
+      <h3>Three street ranks, not one</h3>
+      <p>Local 8.5 m as now, a 12.5 m collector every fourth line, a 20 m avenue on the two
+      trunks <code>home_run</code> already paves. The highway's slip lands on an avenue, which
+      is what an arterial is for.</p>
+    </div>
+    <div class="card">
+      <h3>A use, not just a height</h3>
+      <p>A block gets a use as well as a storey count: commercial on the avenue, civic on the
+      square, industry in a wedge by the road in, open space to about a sixth of the town.</p>
+    </div>
+    <div class="card">
+      <h3>Arms down the roads</h3>
+      <p>One term in <code>demand</code>: for every road that reaches a town, a bearing it
+      reaches further down. The plan above runs 0.95 of its own radius out along each of
+      three, which is what turns a bitten disc into a place with somewhere to arrive from.</p>
+    </div>
+    <div class="card">
+      <h3>Sectors, then a second centre</h3>
+      <p>Hoyt before Harris and Ullman: make the use a function of <em>bearing</em> as well as
+      distance first, since both bearings already exist, and leave a second nucleus for the
+      day a town is big enough to want one.</p>
+    </div>
+  </div>
+
+  <h2>What it would cost, named rather than hidden</h2>
+  <div class="cols">
+    <div class="card open">
+      <h3>Large buildings need a re-bake</h3>
+      <p>The library is thirteen Blender bakes at <code>width 10.0, depth 10.0</code>. A
+      2&times;2 building is 20 m, so the large kinds want a bake at the new footprint. The
+      guard exists already: <code>Bake::models</code> refuses a bake that does not fit the
+      block its kind covers.</p>
+    </div>
+    <div class="card open">
+      <h3>New kinds for new uses</h3>
+      <p>A shop, a works, a school and a bandstand are building kinds this world does not
+      have. <code>model::Kind</code> is a match arm and the parametric fallback builds any of
+      them, but each wants a bake to look as good as the five that exist.</p>
+    </div>
+    <div class="card open">
+      <h3>An arm has to be LEVELLED</h3>
+      <p>This is the one that is not free. <code>Site::level_r</code> is
+      <code>edge(bearing) + APRON</code>, so the ground a town flattens follows its outline:
+      an arm that <em>adds</em> demand puts blocks outside that plateau, which is the buried
+      suburb this repository already measured at 1.13 m once. So <code>town::edge</code> has
+      to gain the same term, which means a <code>Site</code> has to carry the bearings of the
+      roads that reach it, which means the sites are installed <em>after</em> the network is
+      routed. The atlas has the roads; the order is what moves.</p>
+    </div>
+    <div class="card open">
+      <h3>A block a highway CLIPS is a partial block</h3>
+      <p>The plan above keeps every lot an arterial does not stand on, which the canvas can
+      do because a lot is a rectangle it either fills or skips. In the game a lot carries a
+      baked <code>Model</code>, so the same rule is <code>town::plot</code> refusing a lot
+      whose own footprint meets the road's right of way, and the road is
+      <code>road::corridor</code> rather than a ray. It costs a corridor query per lot at
+      plan time, which is what <code>Planet::around</code> already filters for a chunk.</p>
+    </div>
+    <div class="card open">
+      <h3>Every street number moves</h3>
+      <p><code>PITCH</code> is read by the street mesh, the traffic graph, the route a stolen
+      car takes out of town and the slip a highway joins on. A second and third street width
+      is the first time any of them has had to ask <em>which</em> street.</p>
+    </div>
+  </div>
+
+  <h2>Sources</h2>
+  <p class="src"><b>The six plans are real.</b> Map data &copy; OpenStreetMap contributors,
+  ODbL, pulled by <code>tools/fetch_city_grids.py</code> as a 780 m square about each point
+  it records, projected to metres. <b>Coverage is measured</b> off the building footprints
+  with nothing guessed; the <b>street share is estimated</b>, because OSM stores a centreline
+  and not a right of way, so a way's width is read from its own <code>width</code> or
+  <code>lanes</code> tag where the map has one and from a table by class where it does not.
+  The figure panel says how many ways carried a real width. &middot;
+  
+    <a href="https://en.wikipedia.org/wiki/City_block">City block</a> &middot;
+    <a href="https://en.wikipedia.org/wiki/Eixample">Eixample</a> &middot;
+    <a href="https://urbanland.uli.org/planning-design/northwestern-small-blocks-history-rationale-behind-urban-model">Northwestern Small Blocks</a>
+    (Portland's 200 ft block in a 60 ft right of way) &middot;
+    <a href="https://ecode360.com/8911490">Breckenridge MN</a> and
+    <a href="https://codelibrary.amlegal.com/codes/marshalltown/latest/marshalltown_ia/0-0-0-25062">Marshalltown IA</a>
+    subdivision standards (two tiers of lots, 20 ft alleys) &middot;
+    <a href="https://www.gothamcenter.org/blog/notes-on-19th-century-lot-sizes">19th century lot sizes</a> &middot;
+    <a href="https://www.birmingham.gov.uk/download/downloads/id/29294/street_hierarchy.pdf">Birmingham street hierarchy</a>
+    (5.5 m access road, 7.3 m local distributor) &middot;
+    <a href="https://grokipedia.com/page/Street_hierarchy">Street hierarchy</a> (Haussmann's 137 km at 30 m) &middot;
+    <a href="http://www.demographia.com/db-nyc-landuse.htm">New York City land use</a> &middot;
+    <a href="https://transportgeography.org/contents/chapter8/urban-land-use-transportation/sector-nuclei-land-use/">Sector and nuclei land use</a>
+    and <a href="https://en.wikipedia.org/wiki/Concentric_zone_model">the concentric zone model</a> &middot;
+    <a href="https://en.wikipedia.org/wiki/List_of_city_squares_by_size">City squares by size</a> &middot;
+    <a href="https://sfplanning.org/resource/zoning-use-districts">Zoning use districts</a> (the map palette) &middot;
+    <a href="https://dl.acm.org/doi/pdf/10.1145/1185657.1185716">Parish and M&uuml;ller</a>
+    (roads first, then blocks, then parcels).
+  </p>
+</div>
+
+<!-- The REAL city plans, off OpenStreetMap under ODbL, written by
+     tools/fetch_city_grids.py. -->
+<script src="city-grids.js"></script>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------------------------------------------------------- the numbers --
+  // FREEPORT's own cross section, from town/street.rs. One number said
+  // several ways: the street is the lanes plus the pavements, and the
+  // pitch is that plus the block. Nothing here is a second copy.
+  const LANE = 2.75, WALK = 1.5, LOT = 10.0;
+  const STREET = 2 * (LANE + WALK);            // 8.5 m
+  const pitchOf = side => side * LOT + STREET;
+
+  // How much ground the PICTURE carries, in metres. ONE SCALE for every
+  // plan on the page, fitted on the frame's shorter way to the 780 m
+  // `tools/fetch_city_grids.py` extracts, so a real city is shown whole
+  // and a FREEPORT town is shown beside it at the same metres to the
+  // pixel. Nothing is fitted to its own subject, which is what makes the
+  // six comparable at all.
+  const FRAME_M = 780;
+
+  // How big the town is, in metres of NOMINAL radius, which is the
+  // slider's own number. The game's `town::townRADIUS` is 537 and a
+  // roadside village is 23, so the range is a real one rather than a
+  // pretty one: `town::coastal` sizes every settlement on a body between
+  // those, by how near the sea it stands.
+  let townR = 230;
+  const SIZES = [[80, "hamlet"], [180, "village"], [380, "market town"],
+                 [620, "city"], [1e9, "capital"]];
+  const sizeName = r => SIZES.find(([at]) => r < at)[1];
+  const scaleFor = (w, h) => Math.min(w, h) / FRAME_M;
+
+  // The REAL plans, off OpenStreetMap, loaded as a sibling script rather
+  // than fetched: a `fetch` of a local file is refused under `file://`
+  // and a script tag is not, so the page still opens off the checkout.
+  const GRIDS = window.CITY_GRIDS || {};
+
+  // The street RANKS. The local one is FREEPORT's own and is already
+  // the right width for a local street; the two above it are what is
+  // missing. `every` is how many grid lines apart a rank falls, so a
+  // rank is a property of the LINE and the widths follow from it.
+  const RANKS = [
+    { key: "local",     carriage: 5.5,  walk: 1.5, every: 1, name: "Local street",
+      note: "FREEPORT's, and a 5.5 m access road" },
+    { key: "collector", carriage: 7.3,  walk: 2.6, every: 4, name: "Collector",
+      note: "a 7.3 m local distributor" },
+    { key: "avenue",    carriage: 11.0, walk: 2.5, every: 8, median: 4, name: "Avenue",
+      note: "Barcelona's own 20 m" },
+    { key: "boulevard", carriage: 14.0, walk: 4.0, median: 8, name: "Boulevard",
+      note: "Haussmann cut 137 km of these", off: true },
+  ];
+  const widthOf = r => r.carriage + 2 * r.walk + (r.median || 0);
+  const rankOf = k => {
+    for (let n = RANKS.length - 1; n >= 0; n--)
+      if (!RANKS[n].off && k % RANKS[n].every === 0) return RANKS[n];
+    return RANKS[0];
+  };
+
+  // Real grids, block and street in metres, from the sources listed on
+  // the page. A rectangular block carries two numbers.
+  const CITIES = [
+    { name: "FREEPORT today",     b: [10, 10],   s: [8.5, 8.5],   us: "now",  note: "one building per block" },
+    { name: "FREEPORT blocks",    b: [40, 40],   s: [8.5, 8.5],   us: "next", note: "sixteen lots per block" },
+    { key: "portland",  name: "Portland, OR",       b: [61, 61],   s: [18.3, 18.3], note: "200 ft block, 60 ft right of way" },
+    { key: "barcelona", name: "Barcelona Eixample", b: [113, 113], s: [20, 20],     note: "Cerdà's octagonal block, chamfered corners" },
+    { key: "chicago",   name: "Chicago Loop",       b: [100, 200], s: [20, 20],     note: "330 × 660 ft, an alley down the middle" },
+    { key: "manhattan", name: "Manhattan",          b: [80, 274],  s: [18.3, 30.5], note: "street 60 ft, avenue 100 ft" },
+    { key: "savannah",  name: "Savannah, GA",                                        note: "Oglethorpe's wards, a square every four blocks" },
+    { key: "siena",     name: "Siena",                                               note: "no grid at all: a hill town that grew" },
+  ];
+  const share = c => 1 - (c.b[0] * c.b[1]) / ((c.b[0] + c.s[0]) * (c.b[1] + c.s[1]));
+
+  // New York's own survey, which is the only honest thing to hold a
+  // made up town against.
+  const NYC = [
+    ["res",  22.9, "1 and 2 family"], ["mix", 10.6, "multi family and mixed"],
+    ["com",   3.7, "commercial"],     ["ind",  7.0, "industrial"],
+    ["civ",   6.1, "public and institutional"], ["open", 16.1, "open space"],
+    ["none",  9.8, "vacant"],         ["street", 22.4, "streets"],
+  ];
+  const USE_NAME = {
+    res: "houses", mix: "flats and mixed", com: "commercial", ind: "industry",
+    civ: "civic", open: "parks and squares", none: "courtyards and back land", street: "street",
+  };
+  const USE_VAR = {
+    res: "--u-res", mix: "--u-mix", com: "--u-com", ind: "--u-ind",
+    civ: "--u-civ", open: "--u-open", none: "--ground", street: "--tarmac",
+  };
+
+  // -------------------------------------------------------------- palette --
+  // Read once a frame, not once a rectangle: this draws thousands.
+  let PAL = {};
+  const NEED = ["--ground", "--ink", "--tarmac", "--walkway", "--house", "--big", "--yard",
+                "--rule", "--faint", "--u-res", "--u-mix", "--u-com", "--u-ind", "--u-civ",
+                "--u-open", "--u-sq", "--panel"];
+  function palette() {
+    const cs = getComputedStyle(document.documentElement);
+    for (const n of NEED) PAL[n] = cs.getPropertyValue(n).trim();
+  }
+  const css = n => PAL[n];
+
+  // A deterministic coin, so the picture is the same every draw.
+  function coin(i, j, k) {
+    let h = (i * 374761393 + j * 668265263 + k * 1274126177) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+
+  // Smoothed value noise on the same coin, which is `field::noise3` at
+  // two dimensions: a page cannot carry the core's own field, so this
+  // is the SHAPE of that rule rather than a transcription of it.
+  function value2(x, z, s) {
+    const i = Math.floor(x), j = Math.floor(z), fx = x - i, fz = z - j;
+    const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+    const a = coin(i, j, s), b = coin(i + 1, j, s);
+    const c = coin(i, j + 1, s), d = coin(i + 1, j + 1, s);
+    return (a + (b - a) * u) * (1 - v) + (c + (d - c) * u) * v;
+  }
+
+  // A CITY IS NOT AN OVAL, which is `town/shape.rs` and is already in
+  // the game: the fringe is bitten out by an octave sum at a
+  // PERSISTENCE of 0.8, because a sum that halves has a Hurst exponent
+  // of one and its level set is a smooth curve however many octaves are
+  // piled on it. The bite is scaled by how far out a block stands, so a
+  // core is solid and a fringe is shredded. Measured there as a box
+  // counting dimension of 1.173 against a bare ellipse's 0.987.
+  const GRAIN = 0.55, GRAIN_PERSIST = 0.8, GRAIN_LUMP = 0.9;
+
+  // The OCTAVE COUNT is read off the town's own size, because the finest
+  // octave is one block and no finer: past the block grid an octave is
+  // noise a plan cannot express, and a hamlet of four blocks has one
+  // scale and should have one lump. `town::shape::grain_octaves`.
+  const grainOctaves = (r, pitch) =>
+    Math.max(1, Math.min(8, Math.round(1 + Math.log2(Math.max(1, r * GRAIN_LUMP / pitch)))));
+
+  // And the SPREAD had to be measured per octave count rather than
+  // borrowed, because how hard a normalised octave sum piles up near its
+  // middle is a function of BOTH the persistence and the count. This is
+  // `town::shape::GRAIN_SPREAD`, which the core re-measures in a test:
+  // 0.184 at one octave down to 0.073 at eight.
+  const GRAIN_SPREAD = [0.184, 0.132, 0.109, 0.095, 0.087, 0.080, 0.076, 0.073];
+
+  function grain(x, z) {
+    const oct = grainOctaves(townR, pitchOf(side));
+    let sum = 0, amp = 1, norm = 0, f = 1 / (townR * GRAIN_LUMP);
+    for (let n = 0; n < oct; n++) {
+      sum += amp * value2(x * f, z * f, 900 + n);
+      norm += amp; amp *= GRAIN_PERSIST; f *= 2;
+    }
+    return Math.max(0, Math.min(1, (sum / norm - 0.5) / GRAIN_SPREAD[oct - 1] * 0.5));
+  }
+
+  // ------------------------------------------- a city grows along a road --
+  // CITIES GROW ALONG HIGHWAYS, which is the owner's own correction and
+  // is the thing Burgess's rings cannot say. A town does not spread
+  // evenly in every direction: it reaches out along every road that
+  // reaches it. That is ribbon development, it is Hoyt's 1939 sector
+  // model, and it is what every real plan on this page shows.
+  //
+  // FREEPORT's `town::shape::demand` is `1 - dist / edge(bearing)` with a
+  // fractal bite, which is radial: a town is a bitten disc wherever its
+  // roads happen to arrive. These are the ARMS it is missing.
+  const RIBBON = 0.5;                // share of an arterial's frontage that trades
+  const RIBBON_BAND = 0.9;           // how far off it a shop still fronts it, in blocks
+  const ARMS = [0.42, 2.44, 4.31];   // bearings the highways arrive on
+  const ARM_REACH = 0.95;            // how much further a town runs down one
+  const ARM_WIDE = 0.28;             // radians either side of a bearing
+  const ROAD_HALF = 11;              // the arterial's own half width, metres
+  const ROAD_CORE = 0.20;            // inside this share of the radius it IS a street
+  const ROAD_OPEN = 0.80;            // past this it is the country's own arterial
+
+  const wrap = a => ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+  const ease = t => t * t * (3 - 2 * t);
+
+  // How hard the roads are pulling a town outward at a bearing, 0 to 1.
+  function armPull(x, z) {
+    const d = Math.hypot(x, z);
+    if (d <= 0) return 1;
+    const b = Math.atan2(z, x);
+    let best = 0;
+    for (const a of ARMS)
+      best = Math.max(best, ease(Math.max(0, 1 - Math.abs(wrap(b - a)) / ARM_WIDE)));
+    return best;
+  }
+
+  // What a town WANTS at a point: one at its middle, nought at its edge,
+  // negative outside. The zones are this number's own thresholds, which
+  // is the game's rule and is what section four is about.
+  function demand(x, z) {
+    const reach = townR * (1 + ARM_REACH * armPull(x, z));
+    const want = 1 - Math.hypot(x, z) / reach;
+    return want - GRAIN * Math.max(0, Math.min(1, 1 - want)) * grain(x, z);
+  }
+
+  // HOW WIDE THE ARTERIAL IS at a radius, in metres. This is the whole
+  // of the merge and it replaces a road that stopped at a radius with a
+  // round cap and left the town's grid going on past it, joined to
+  // nothing. A trunk road that reaches a town does not end: it BECOMES
+  // the high street. So it is the country's own 22 m out past the town
+  // and tapers to `STREET` by the core, and all three arrive at the
+  // market square, which is what a market square is for.
+  //
+  // The game's own `road::slip` is the curved version of this, a cubic
+  // Hermite from the highway's mouth to the nearest crossing the town
+  // paved. Drawn at a plan's scale that curve is a hook a few pixels
+  // across, so the page draws the taper, which says the same thing about
+  // where the road goes and says it legibly.
+  const roadWide = t => {
+    const at = Math.max(0, Math.min(1,
+      (t / townR - ROAD_CORE) / (ROAD_OPEN - ROAD_CORE)));
+    return STREET + (ROAD_HALF * 2 - STREET) * at;
+  };
+
+  // The nearest arterial: how far off a point stands, how wide the road
+  // is there, and which BEARING it runs on, because a block is kept off
+  // it by its LOCAL width and not by the widest it ever gets, and how
+  // much of a block an oblique road eats is a function of its angle.
+  function roadAt(x, z) {
+    let best = { off: Infinity, wide: STREET, axis: 0 };
+    for (const a of ARMS) {
+      const ux = Math.cos(a), uz = Math.sin(a);
+      const t = x * ux + z * uz;
+      if (t < 0) continue;
+      const off = Math.abs(z * ux - x * uz);
+      if (off < best.off) best = { off, wide: roadWide(t), axis: a };
+    }
+    return best;
+  }
+
+  // How far an axis aligned block of `side` metres reaches ACROSS a road
+  // running on `axis`: the square's own support function in the road's
+  // normal direction, `(side / 2) (|sin| + |cos|)`. There is no constant
+  // in it, which is the point. A block nearer than this OVERLAPS the
+  // road, and a block at exactly this distance stands flush against it.
+  const reachAcross = (side, axis) =>
+    side / 2 * (Math.abs(Math.sin(axis)) + Math.abs(Math.cos(axis)));
+
+  // IS THIS GROUND THE ARTERIAL'S? Asked of a LOT rather than of a block,
+  // because an oblique road eats part of a block and leaves the rest, and
+  // asked in one place so the lot that is drawn and the footprint that is
+  // counted are the same set. The whole right of way, pavement included:
+  // a house does not stand on a pavement.
+  const onRoad = (x, z) => { const r = roadAt(x, z); return r.off < r.wide / 2; };
+
+  // Where a ray out of the origin leaves an axis aligned box, in metres:
+  // the nearer of the two slabs it can exit through. The square holds the
+  // origin by construction, so both hits are ahead of the ray.
+  function exitOf(sq, ux, uz) {
+    const slab = (lo, hi, u) => u > 1e-9 ? hi / u : u < -1e-9 ? lo / u : Infinity;
+    return Math.max(0, Math.min(slab(sq.x0, sq.x1, ux), slab(sq.z0, sq.z1, uz)));
+  }
+
+  // ---------------------------------------------------------- the town map --
+  // Where every grid line falls, in metres, once the ranks have their
+  // own widths. A uniform pitch cannot carry a hierarchy, so the line
+  // positions are walked out from the middle and each one is as wide as
+  // its own rank.
+  function lines(block, street, span, ranked) {
+    const plain = { key: "local", walk: Math.max(1.2, street * 0.18),
+                    carriage: street * 0.64, median: 0 };
+    const r = k => ranked ? rankOf(k) : plain;
+    const w = k => ranked ? widthOf(r(k)) : street;
+    const at = new Map(), rank = new Map();
+    at.set(0, 0); rank.set(0, r(0));
+    let x = 0;
+    for (let k = 1; k <= span + 1; k++) {
+      x += w(k - 1) / 2 + block + w(k) / 2;
+      at.set(k, x); rank.set(k, r(k));
+    }
+    x = 0;
+    for (let k = -1; k >= -span - 1; k--) {
+      x -= w(k + 1) / 2 + block + w(k) / 2;
+      at.set(k, x); rank.set(k, r(k));
+    }
+    return { at, rank, block, width: w };
+  }
+
+  // What a block IS. One function, because a block's use, its height and
+  // whether it is built at all are three readings of one decision.
+  // The SQUARE, in blocks, at the crossing. A hamlet has NONE: at a 60 m
+  // radius the two block square is wider than the town and the drawn
+  // plan came back 54.6% open space, which is a village that is mostly
+  // its own market place. Place des Vosges is 140 m square, which is
+  // three of these blocks and the two streets between them.
+  const squareOf = r => r < 120 ? 0 : r < 300 ? 1 : r < 620 ? 2 : 3;
+  const SQUARE = { i: 0, j: 0, get w() { return squareOf(townR); },
+                            get d() { return squareOf(townR); } };
+  function useAt(i, j, g, plain) {
+    // The block's OWN middle, which is its origin plus half a block and
+    // not the midpoint of the two grid lines: the lines either side of
+    // it are different ranks and so different widths.
+    const cx = g.at.get(i) + g.width(i) / 2 + g.block / 2;
+    const cz = g.at.get(j) + g.width(j) / 2 + g.block / 2;
+    const want = demand(cx, cz);
+    if (want <= 0) return null;
+    const d = 1 - want;                        // nought at the middle, one at the rim
+    const zone = d < 0.32 ? "core" : d < 0.70 ? "town" : "suburb";
+
+    // The SQUARE is asked FIRST, so the three arterials converge on it
+    // rather than being cut by it. A road that arrives at a market
+    // square has arrived, which is what a market square is for.
+    const inSq = SQUARE.w > 0 && i >= SQUARE.i && i < SQUARE.i + SQUARE.w &&
+                 j >= SQUARE.j && j < SQUARE.j + SQUARE.d;
+    if (inSq && !plain) return { zone, use: "square", d };
+
+    // THE ARTERIAL IS NOT A BLOCK. Ground it runs over is road, at its
+    // own LOCAL width, so the corridor narrows with it as it becomes a
+    // street rather than staying a country road's worth of bare ground
+    // all the way to the middle of town.
+    const road = roadAt(cx, cz);
+    // A block the road runs clean OVER is not a block. A block it merely
+    // CLIPS keeps every lot the road does not stand on, which is what a
+    // diagonal through a grid actually leaves and is the one answer that
+    // is right in the picture and in the number at once: `onRoad` is
+    // asked by the lot that is drawn AND by the footprint that is
+    // counted, so a building under a road cannot be in one and not the
+    // other. Rejecting the whole block instead sterilised a band as wide
+    // as a block's own diagonal (53 m at 4x4, whatever the road) and cut
+    // the town into three wedges; rejecting on a margin of a sixth of a
+    // block let the blocks paint the road out between them.
+    if (road.off < road.wide / 2) return null;
+    if (plain) return { zone, use: zone === "core" ? "mix" : "res", d };
+    // The blocks that FACE the square build civic, and only the ones that
+    // share an EDGE with it: the ring including the diagonals is twelve
+    // blocks, which measured 12% of the drawn ground against New York's
+    // own 6.1% of public and institutional land. Half of the four that
+    // front it is about right, and the rest is the commercial frontage a
+    // market square actually carries.
+    const near = (a, lo, n) => a >= lo && a < lo + n;
+    const faces = (near(i, SQUARE.i, SQUARE.w) &&
+                   (j === SQUARE.j - 1 || j === SQUARE.j + SQUARE.d)) ||
+                  (near(j, SQUARE.j, SQUARE.d) &&
+                   (i === SQUARE.i - 1 || i === SQUARE.i + SQUARE.w));
+    if (faces) return { zone, use: coin(i, j, 21) < 0.55 ? "civ" : "com", d };
+
+    // RIBBON COMMERCIAL: what fronts an arterial is a shop, which is the
+    // other half of growing along a road and is why every high street in
+    // the world is on one. Not EVERY plot on one is, and `RIBBON` is
+    // what says how many, SWEPT rather than guessed: at all of them the
+    // drawn town is 28.2% commercial, at 0.8 it is 24.9, at 0.66 21.1,
+    // at 0.5 18.2 and at 0.4 17.3. Half is where it stops moving much
+    // and is the honest statement anyway, that a high street is shops on
+    // one side of it and whatever was there on the other.
+    if (road.off < road.wide / 2 + RIBBON_BAND * g.block && coin(i, j, 31) < RIBBON)
+      return { zone, use: "com", d };
+
+    // HOYT: industry is a WEDGE and not a ring, down the road it came in
+    // on, far enough out to be off the high street.
+    const bearing = Math.atan2(cz, cx);
+    if (d > 0.55 && Math.abs(wrap(bearing - ARMS[0])) < 0.38)
+      return { zone, use: "ind", d };
+
+    // Commercial on the avenue, which is what a high street is.
+    const av = k => g.rank.get(k) && g.rank.get(k).key === "avenue";
+    if ((av(i) || av(i + 1) || av(j) || av(j + 1)) && d < 0.62)
+      return { zone, use: "com", d };
+
+    // Open space, to about a SIXTH of the ground, which is New York's own
+    // 16.1%. A block is 68% of the ground it sits on at this pitch, so
+    // the share of BLOCKS is the share of ground over that.
+    if (coin(i, j, 11) < 0.29) return { zone, use: "open", d };
+
+    // FLATS among the terraces, thinning outward rather than stopping at
+    // a zone boundary: it is the same field read once more, and a town
+    // whose every block is either a house or an office is the one grey
+    // this page is about.
+    if (coin(i, j, 13) < 0.85 - 0.65 * d) return { zone, use: "mix", d };
+    return { zone, use: zone === "core" ? "mix" : "res", d };
+  }
+
+  // ---------------------------------------------------------- the drawing --
+  const cv = document.getElementById("plan"), ctx = cv.getContext("2d");
+  let view = "freeport", side = 4, colour = "form";
+
+  // WHERE THE EYE IS, in metres and a share, and never in pixels: a zoom
+  // stored as pixels means a different place on every window width, and
+  // this page is resized by its own artifact frame.
+  const eye = { x: 0, z: 0, zoom: 1 };
+  const ZOOM_MIN = 0.45, ZOOM_MAX = 24;
+  const frame = () => {
+    const w = cv.clientWidth || 1040;
+    return { w, h: Math.round(w * 0.72) };
+  };
+
+  function outline(ox, oz, w, d, m) {
+    ctx.strokeStyle = css("--ink"); ctx.globalAlpha = 0.18; ctx.lineWidth = 1;
+    ctx.strokeRect(m.px(ox) + 0.5, m.pz(oz) + 0.5, w * m.k - 1, d * m.k - 1);
+    ctx.globalAlpha = 1;
+  }
+
+  // The cross section, not a box: carriageway between two pavements,
+  // with a planted median where the rank has one.
+  function drawStreet(x, z, w, d, m, rank) {
+    ctx.fillStyle = css("--walkway");
+    ctx.fillRect(m.px(x), m.pz(z), w * m.k, d * m.k);
+    const across = w > d ? d : w, walk = (rank ? rank.walk : WALK);
+    const carr = across - 2 * walk;
+    ctx.fillStyle = css("--tarmac");
+    if (w > d) ctx.fillRect(m.px(x), m.pz(z + walk), w * m.k, carr * m.k);
+    else       ctx.fillRect(m.px(x + walk), m.pz(z), carr * m.k, d * m.k);
+    if (rank && rank.median) {
+      ctx.fillStyle = css("--u-open");
+      const half = rank.median / 2, mid = across / 2;
+      if (w > d) ctx.fillRect(m.px(x), m.pz(z + mid - half), w * m.k, rank.median * m.k);
+      else       ctx.fillRect(m.px(x + mid - half), m.pz(z), rank.median * m.k, d * m.k);
+    }
+  }
+
+  function drawTown(m, side, plain) {
+    // The span has to cover the ARMS and not only the disc: a town that
+    // runs 0.95 of its own radius further down a highway needs grid out
+    // there to lay it on, and cut at the radius the arms were stubs.
+    const span = Math.ceil(townR * (1 + ARM_REACH) / pitchOf(side)) + 1;
+    const g = lines(side * LOT, STREET, span + 1, true);
+    const block = g.block;
+    const live = (i, j) => useAt(i, j, g, plain) !== null;
+    const tally = {}, add = (k, a) => tally[k] = (tally[k] || 0) + a;
+    let lots = 0, footprint = 0, blocks = 0, square = null;
+
+    // A STREET RUNS WHERE SOMEBODY BUILT and nowhere else, which is the
+    // rule `town::streets_of` already keeps. Drawn any other way a town
+    // is a grid clipped to a circle with tarmac in open country.
+    // A run spans the block it serves AND the crossing square either end
+    // of it, which is what leaves a crossing covered. Drawn from the
+    // grid line's own centre it came out as a dashed grid with the ground
+    // showing through at every junction.
+    const inSquare = (i, j) => {
+      const c = useAt(i, j, g, plain);
+      return c !== null && c.use === "square";
+    };
+    for (let k = -span; k <= span + 1; k++) {
+      const r = g.rank.get(k), w = widthOf(r);
+      for (let j = -span; j <= span; j++) {
+        if (!live(k, j) && !live(k - 1, j)) continue;
+        if (inSquare(k, j) && inSquare(k - 1, j)) continue;   // no street through a square
+        const a = g.rank.get(j), b = g.rank.get(j + 1);
+        const z0 = g.at.get(j) - widthOf(a) / 2;
+        const len = widthOf(a) + block + widthOf(b);
+        drawStreet(g.at.get(k) - w / 2, z0, w, len, m, r);
+        add("street", w * block);
+      }
+      for (let i = -span; i <= span; i++) {
+        if (!live(i, k) && !live(i, k - 1)) continue;
+        if (inSquare(i, k) && inSquare(i, k - 1)) continue;
+        const a = g.rank.get(i), b = g.rank.get(i + 1);
+        const x0 = g.at.get(i) - widthOf(a) / 2;
+        const len = widthOf(a) + block + widthOf(b);
+        drawStreet(x0, g.at.get(k) - w / 2, len, w, m, r);
+        add("street", w * block);
+      }
+    }
+
+    // Then the blocks themselves.
+    for (let i = -span; i <= span; i++) {
+      for (let j = -span; j <= span; j++) {
+        const cell = useAt(i, j, g, plain);
+        if (!cell) continue;
+        const ox = g.at.get(i) + widthOf(g.rank.get(i)) / 2;
+        const oz = g.at.get(j) + widthOf(g.rank.get(j)) / 2;
+        blocks++;
+        const land = colour === "use" && !plain;
+
+        // A SQUARE is ONE piece of paving, not four blocks with the
+        // ground showing through where its internal streets were taken
+        // out: drawn a block at a time it came out as a cream cross
+        // across the middle of the town. It is emitted once, at its own
+        // first block, over its whole extent.
+        if (cell.use === "square") {
+          if (i !== SQUARE.i || j !== SQUARE.j) continue;
+          const x1 = g.at.get(i + SQUARE.w) - widthOf(g.rank.get(i + SQUARE.w)) / 2;
+          const z1 = g.at.get(j + SQUARE.d) - widthOf(g.rank.get(j + SQUARE.d)) / 2;
+          ctx.fillStyle = land ? css("--u-open") : css("--u-sq");
+          ctx.fillRect(m.px(ox), m.pz(oz), (x1 - ox) * m.k, (z1 - oz) * m.k);
+          add("open", (x1 - ox) * (z1 - oz));
+          square = { x0: ox, z0: oz, x1, z1 };
+          outline(ox, oz, x1 - ox, z1 - oz, m);
+          continue;
+        }
+        if (cell.use === "open") {
+          ctx.fillStyle = css("--u-open");
+          ctx.fillRect(m.px(ox), m.pz(oz), block * m.k, block * m.k);
+          // A few trees, so a park is not a green rectangle.
+          ctx.fillStyle = css("--ink"); ctx.globalAlpha = 0.22;
+          for (let t = 0; t < 7; t++) {
+            const a = coin(i, j, 40 + t) * block, b = coin(i, j, 80 + t) * block;
+            ctx.beginPath();
+            ctx.arc(m.px(ox + a), m.pz(oz + b), Math.max(1.4, 2.2 * m.k), 0, 7);
+            ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+          add("open", block * block);
+          outline(ox, oz, block, block, m);
+          continue;
+        }
+
+        const fillFor = (k, fat) => land ? css(USE_VAR[k])
+                                        : css(fat ? "--big" : "--house");
+
+        if (side === 1) {
+          if (onRoad(ox + block / 2, oz + block / 2)) { add("street", block * block); continue; }
+          ctx.fillStyle = fillFor(cell.use, block * block >= BIG_AT);
+          ctx.fillRect(m.px(ox), m.pz(oz), block * m.k, block * m.k);
+          lots++; footprint += block * block; add(cell.use, block * block);
+          continue;
+        }
+
+        // Downtown, commercial and civic FILL their block with large
+        // buildings of 2x2 lots, each one a corner on two streets.
+        const big = cell.use === "com" || cell.use === "civ" || cell.use === "ind" ||
+                    (cell.zone === "core" && cell.use === "mix");
+        if (big && side >= 2) {
+          const n = Math.floor(side / 2);
+          ctx.fillStyle = fillFor(cell.use, true);
+          for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) {
+            if (onRoad(ox + (a + 1) * 2 * LOT - LOT, oz + (b + 1) * 2 * LOT - LOT)) {
+              add("street", 4 * LOT * LOT); continue;
+            }
+            ctx.fillRect(m.px(ox + a * 2 * LOT) + 1, m.pz(oz + b * 2 * LOT) + 1,
+                         2 * LOT * m.k - 2, 2 * LOT * m.k - 2);
+            lots++; footprint += 4 * LOT * LOT; add(cell.use, 4 * LOT * LOT);
+          }
+          if (side & 1) {
+            ctx.fillStyle = css("--yard");
+            ctx.fillRect(m.px(ox + n * 2 * LOT), m.pz(oz), LOT * m.k, block * m.k);
+            ctx.fillRect(m.px(ox), m.pz(oz + n * 2 * LOT), block * m.k, LOT * m.k);
+            add("none", block * block - 4 * n * n * LOT * LOT);
+          }
+          outline(ox, oz, block, block, m);
+          continue;
+        }
+
+        // Hollow: the perimeter builds, the interior is a court.
+        if (side >= 3) {
+          ctx.fillStyle = land ? css("--ground") : css("--yard");
+          ctx.fillRect(m.px(ox + LOT), m.pz(oz + LOT),
+                       (block - 2 * LOT) * m.k, (block - 2 * LOT) * m.k);
+          add("none", (block - 2 * LOT) ** 2);
+        }
+        const want = cell.zone === "suburb" ? 0.55 : 1.0;
+        ctx.fillStyle = fillFor(cell.use, false);
+        for (let a = 0; a < side; a++) for (let b = 0; b < side; b++) {
+          const rim = a === 0 || b === 0 || a === side - 1 || b === side - 1;
+          if (!rim && side >= 3) continue;            // no frontage, no lot
+          if (onRoad(ox + (a + 0.5) * LOT, oz + (b + 0.5) * LOT)) {
+            add("street", LOT * LOT); continue;
+          }
+          if (coin(i * 31 + a, j * 31 + b, 7) > want) { add("none", LOT * LOT); continue; }
+          ctx.fillRect(m.px(ox + a * LOT) + 1, m.pz(oz + b * LOT) + 1,
+                       LOT * m.k - 2, LOT * m.k - 2);
+          lots++; footprint += LOT * LOT; add(cell.use, LOT * LOT);
+        }
+        outline(ox, oz, block, block, m);
+      }
+    }
+    const total = Object.values(tally).reduce((a, b) => a + b, 0) || 1;
+    const pitch = block + STREET;
+    return { lots, footprint, blocks, pitch, block, side, tally, total, square };
+  }
+
+  // --------------------------------------------------- a REAL city's plan --
+  // Drawn from OpenStreetMap's own geometry rather than from a grid this
+  // page invented under a city's name. A way is a CENTRELINE, so it is
+  // stroked at its own right of way and then again at its carriageway,
+  // which is the same disc `tools/fetch_city_grids.py` stamps when it
+  // measures: the picture and the number come off one description.
+  function ribbon(pts, wide, m, colour) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = Math.max(0.6, wide * m.k);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(m.px(pts[0][0]), m.pz(pts[0][1]));
+    for (let n = 1; n < pts.length; n++) ctx.lineTo(m.px(pts[n][0]), m.pz(pts[n][1]));
+    ctx.stroke();
+  }
+
+  // A footprint's own area, which is how a real building is told from a
+  // real house without a tag: the shoelace over the ring.
+  function areaOf(ring) {
+    let a = 0;
+    for (let n = 0; n < ring.length; n++) {
+      const p = ring[n], q = ring[(n + 1) % ring.length];
+      a += p[0] * q[1] - q[0] * p[1];
+    }
+    return Math.abs(a) / 2;
+  }
+
+  function drawPlan(m, city) {
+    // Every pavement first, then every carriageway over it, so a junction
+    // is one surface rather than a pile of overlapping ribbons.
+    for (const w of city.ways) ribbon(w.pts, w.row, m, css("--walkway"));
+    for (const w of city.ways) {
+      const walk = Math.max(1.2, w.row * 0.18);
+      ribbon(w.pts, Math.max(2.5, w.row - 2 * walk), m, css("--tarmac"));
+    }
+    // Then the buildings, coloured by their own footprint: a big
+    // building is BIG_AT square metres or more, which is four of
+    // FREEPORT's own 10 m lots.
+    const land = colour === "use";
+    let big = 0, small = 0, area = 0;
+    for (const ring of city.builds) {
+      const a = areaOf(ring);
+      area += a;
+      const fat = a >= BIG_AT;
+      fat ? big++ : small++;
+      ctx.fillStyle = land ? css(fat ? "--u-mix" : "--u-res")
+                           : css(fat ? "--big" : "--house");
+      ctx.beginPath();
+      ctx.moveTo(m.px(ring[0][0]), m.pz(ring[0][1]));
+      for (let n = 1; n < ring.length; n++) ctx.lineTo(m.px(ring[n][0]), m.pz(ring[n][1]));
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = css("--ink"); ctx.globalAlpha = 0.22; ctx.lineWidth = 0.7;
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    return { city, big, small, area };
+  }
+
+  // A big building is four of FREEPORT's own lots, which is the size the
+  // owner asked a 2x2 to be and so is the one threshold worth having.
+  const BIG_AT = 4 * LOT * LOT;
+
+  // ------------------------------------------------- the highways drawn --
+  // The arterial runs the whole way in and TAPERS, which is the merge:
+  // drawn as a bar that stopped at a radius it ended in mid air with the
+  // town's grid carrying on past it, joined to nothing. A trunk road
+  // that reaches a town does not end, it becomes the high street.
+  //
+  // And each one STOPS AT THE SQUARE, because a road that arrives at a
+  // market square has arrived: run to the origin they paved over the one
+  // thing they converge on, and what the picture showed was three
+  // highways meeting in the middle of nothing.
+  function drawRoads(m, sq) {
+    const r1 = townR * (1 + ARM_REACH) * 1.35;
+    for (const a of ARMS) {
+      const ux = Math.cos(a), uz = Math.sin(a), n = 60;
+      const r0 = sq ? exitOf(sq, ux, uz) : 0;
+      // EVERY pavement, then every carriageway, and not both a segment at
+      // a time: canvas cannot vary a line's width along one path, so the
+      // taper is sixty strokes, and drawn a segment at a time the next
+      // one's round cap of pavement painted over the last one's tarmac
+      // and the road came out as a string of beads.
+      for (const lane of [0, 1]) {
+        for (let k = 1; k <= n; k++) {
+          const t0 = r0 + (k - 1) / n * (r1 - r0), t1 = r0 + k / n * (r1 - r0);
+          const seg = [[ux * t0, uz * t0], [ux * t1, uz * t1]];
+          const row = roadWide((t0 + t1) / 2);
+          ribbon(seg, lane ? Math.max(2.6, row - 2 * WALK) : row, m,
+                 css(lane ? "--tarmac" : "--walkway"));
+        }
+      }
+      // A dashed centreline, but only where it is still an ARTERIAL: a
+      // town's own street does not carry one, and drawn to the middle it
+      // put a motorway's marking across the market square.
+      ctx.strokeStyle = css("--paper"); ctx.globalAlpha = 0.7;
+      ctx.lineWidth = Math.max(0.8, 0.15 * m.k);
+      ctx.setLineDash([6 * m.k, 9 * m.k]);
+      ctx.beginPath();
+      ctx.moveTo(m.px(ux * townR * ROAD_OPEN), m.pz(uz * townR * ROAD_OPEN));
+      ctx.lineTo(m.px(ux * r1), m.pz(uz * r1));
+      ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+  }
+
+  function scaleBar(m, h) {
+    // The bar is a round number of METRES whose pixels suit the zoom, so
+    // it stays a bar rather than growing off the frame or shrinking to a
+    // tick: a scale that only ever says 100 m is a scale that lies the
+    // moment anything zooms.
+    const want = [1, 2, 5, 10, 25, 50, 100, 250, 500]
+      .find(v => v * m.k > 70) || 500;
+    const x0 = 18, y0 = h - 24;
+    ctx.strokeStyle = css("--ink"); ctx.fillStyle = css("--ink"); ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x0 + want * m.k, y0);
+    ctx.moveTo(x0, y0 - 5); ctx.lineTo(x0, y0 + 5);
+    ctx.moveTo(x0 + want * m.k, y0 - 5); ctx.lineTo(x0 + want * m.k, y0 + 5);
+    ctx.stroke();
+    ctx.font = '500 12px "IBM Plex Mono", monospace';
+    ctx.fillText(want + " m", x0 + want * m.k + 9, y0 + 4);
+  }
+
+  function render() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = cv.clientWidth || 1040, h = Math.round(w * 0.72);
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const k = scaleFor(w, h) * eye.zoom;
+    const m = { k, px: x => w / 2 + (x - eye.x) * k, pz: z => h / 2 + (z - eye.z) * k };
+
+    palette();
+    ctx.fillStyle = css("--ground"); ctx.fillRect(0, 0, w, h);
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
+    let drawn = null, real = null;
+    // The town FIRST and the arterials over it: nothing a road runs on
+    // is a block (`useAt` rejects every one the carriageway overlaps),
+    // so the order is z order alone and it is what keeps a highway one
+    // continuous road rather than a row of stubs between the blocks
+    // that happened to be painted after it.
+    if (view === "freeport") {
+      drawn = drawTown(m, side, side === 1);
+      drawRoads(m, drawn.square);
+    }
+    else if (GRIDS[view]) real = drawPlan(m, GRIDS[view]);
+    else missing(w, h);
+    ctx.restore();
+    scaleBar(m, h);
+    figures(drawn, real);
+    legend(drawn, real);
+    uses(drawn);
+    ranks();
+  }
+
+  // ---------------------------------------------------------- the figures --
+  const FIGS = document.getElementById("figs");
+  const fig = (l, v, n) => `<div class="fig"><dt>${l}</dt><dd>${v}${n ? ` <small>${n}</small>` : ""}</dd></div>`;
+
+  // COVERAGE is the one number both halves of this page can be held to,
+  // and it is the share of the ground a city occupies that carries a
+  // building. For a real plan the denominator is the box, because the
+  // box is all city; for FREEPORT it is the ground its own blocks and
+  // streets cover, because a town does not fill the frame. Said either
+  // way it is footprint over ground and nothing is invented.
+  function figures(drawn, real) {
+    if (real) {
+      const c = real.city;
+      const widths = new Set(c.ways.map(w => w.row)).size;
+      FIGS.innerHTML =
+        fig("Coverage", `${(c.cover * 100).toFixed(1)}%`, "measured, footprints") +
+        fig("Street", `${(c.street * 100).toFixed(1)}%`, "estimated, rights of way") +
+        fig("Buildings", `${c.builds.length}`, `${real.big} over 400 m&sup2;`) +
+        fig("Street widths", `${widths}`, "distinct, FREEPORT has 1") +
+        fig("Ground", `${c.span} m`, "square, off OpenStreetMap");
+      return;
+    }
+    if (!drawn) { FIGS.innerHTML = fig("No extract", "none", "see the canvas"); return; }
+    const c = { b: [drawn.block, drawn.block], s: [STREET, STREET] };
+    const ground = drawn.blocks * drawn.pitch * drawn.pitch;
+    const cover = ground ? drawn.footprint / ground : 0;
+    const open = (drawn.tally.open || 0) / drawn.total;
+    FIGS.innerHTML =
+      fig("Coverage", `${(cover * 100).toFixed(1)}%`, "of the ground it occupies") +
+      fig("Block", `${drawn.block.toFixed(0)} m`, `${drawn.side}&times;${drawn.side} lots`) +
+      fig("Pitch", `${drawn.pitch.toFixed(1)} m`, "block + street") +
+      fig("Street share", `${(share(c) * 100).toFixed(1)}%`, "local grid") +
+      fig("Open space", `${(open * 100).toFixed(1)}%`, "New York is 16.1");
+  }
+
+  const KEY = document.getElementById("key");
+  function legend(drawn, real) {
+    const form = [["--tarmac", "carriageway"], ["--walkway", "pavement"],
+                  ["--house", "building under 400 m&sup2;"],
+                  ["--big", "building over 400 m&sup2;"]];
+    const town = [["--tarmac", "carriageway"], ["--walkway", "pavement"],
+                  ["--house", "house, one lot"], ["--big", "large building, 2&times;2 lots"],
+                  ["--yard", "courtyards and back land"],
+                  ["--u-open", "parks and planted medians"], ["--u-sq", "the square"]];
+    const land = [["--u-res", "houses"], ["--u-mix", "flats and mixed"],
+                  ["--u-com", "commercial"], ["--u-ind", "industry"],
+                  ["--u-civ", "civic"], ["--u-open", "parks and squares"],
+                  ["--tarmac", "street"]];
+    const rows = real ? form : (colour === "use" && side > 1) ? land : town;
+    KEY.innerHTML = rows.map(([v, t]) =>
+      `<li><i style="background:var(${v})"></i>${t}</li>`).join("");
+  }
+
+  // ------------------------------------------------------ the land use bar --
+  const USES = document.getElementById("uses"), USEKEY = document.getElementById("usekey");
+  const ORDER = ["res", "mix", "com", "ind", "civ", "open", "none", "street"];
+  function stack(label, rows) {
+    const total = rows.reduce((a, r) => a + r[1], 0) || 1;
+    const bars = rows.filter(r => r[1] > 0).map(([k, v]) => {
+      const pc = v / total * 100;
+      return `<div style="flex:${pc} 0 0;background:var(${USE_VAR[k]})" title="${USE_NAME[k]} ${pc.toFixed(1)}%">` +
+             (pc > 7 ? `<span>${pc.toFixed(0)}</span>` : "") + `</div>`;
+    }).join("");
+    return `<div class="use-row"><span>${label}</span><div class="stack">${bars}</div></div>`;
+  }
+  function uses(drawn) {
+    const rows = [];
+    if (drawn) {
+      const got = ORDER.filter(k => drawn.tally[k]).map(k => [k, drawn.tally[k]]);
+      rows.push(stack(side === 1 ? "FREEPORT today" : "FREEPORT drawn above", got));
+    }
+    rows.push(stack("New York City", NYC.map(([k, v]) => [k === "none" ? "none" : k, v])));
+    USES.innerHTML = rows.join("");
+    USEKEY.innerHTML = ORDER.map(k =>
+      `<li><i style="background:var(${USE_VAR[k]})"></i>${USE_NAME[k]}</li>`).join("");
+  }
+
+  // --------------------------------------------------- the cross sections --
+  const rv = document.getElementById("ranks"), rx = rv.getContext("2d");
+  function ranks() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = rv.clientWidth || 1040, h = 340;
+    rv.width = Math.round(w * dpr); rv.height = Math.round(h * dpr);
+    rx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    rx.fillStyle = css("--ground"); rx.fillRect(0, 0, w, h);
+
+    // A CROSS SECTION IS ITS OWN SCALE. At the plan's 1.45 px a metre
+    // an 8.5 m street is twelve pixels and a 30 m boulevard is
+    // forty three: the four ranks are four dark slivers and the
+    // comparison, which is the whole of this section, cannot be read.
+    // So the widest rank fills the row and the metres are on the label.
+    const left = 236, tail = 210;
+    const widest = Math.max(...RANKS.map(widthOf));
+    const k = (w - left - tail) / widest;
+    const rowH = (h - 34) / RANKS.length;
+
+    RANKS.forEach((r, n) => {
+      const y = n * rowH + rowH / 2, total = widthOf(r), px = total * k;
+      rx.font = '600 13px "IBM Plex Sans Condensed", sans-serif';
+      rx.fillStyle = css("--ink");
+      rx.fillText(r.name.toUpperCase(), 16, y - 5);
+      rx.font = '400 11px "IBM Plex Sans", sans-serif';
+      rx.fillStyle = css("--faint");
+      rx.fillText(r.note, 16, y + 12);
+
+      const bh = Math.min(38, rowH * 0.52), top = y - bh / 2;
+      rx.fillStyle = css("--walkway"); rx.fillRect(left, top, px, bh);
+      rx.fillStyle = css("--tarmac");
+      rx.fillRect(left + r.walk * k, top, (total - 2 * r.walk) * k, bh);
+      if (r.median) {
+        rx.fillStyle = css("--u-open");
+        rx.fillRect(left + (total / 2 - r.median / 2) * k, top, r.median * k, bh);
+      }
+      // The lane lines, so a carriageway says how many cars pass on it.
+      rx.strokeStyle = css("--paper"); rx.globalAlpha = 0.5; rx.lineWidth = 1;
+      rx.beginPath();
+      const lanes = Math.max(2, Math.round((total - 2 * r.walk - (r.median || 0)) / LANE));
+      for (let i = 1; i < lanes; i++) {
+        const at = r.walk + (total - 2 * r.walk) * (i / lanes);
+        if (r.median && Math.abs(at - total / 2) < r.median / 2) continue;
+        rx.moveTo(left + at * k, top + 3); rx.lineTo(left + at * k, top + bh - 3);
+      }
+      rx.stroke(); rx.globalAlpha = 1;
+      rx.strokeStyle = css("--ink"); rx.globalAlpha = 0.25;
+      rx.strokeRect(left + 0.5, top + 0.5, px - 1, bh - 1);
+      rx.globalAlpha = 1;
+      rx.font = '500 13px "IBM Plex Mono", monospace';
+      rx.fillStyle = css("--ink");
+      rx.fillText(`${total.toFixed(1)} m`, left + px + 12, y + 5);
+      if (r.key === "local") {
+        rx.font = '500 12px "IBM Plex Mono", monospace';
+        rx.fillStyle = css("--u-com");
+        rx.fillText("the only one FREEPORT has", left + px + 74, y + 5);
+      }
+    });
+
+    // Its own scale bar, because this is NOT the plan's scale.
+    const y0 = h - 16;
+    rx.strokeStyle = css("--ink"); rx.fillStyle = css("--ink"); rx.lineWidth = 1.5;
+    rx.beginPath();
+    rx.moveTo(left, y0); rx.lineTo(left + 10 * k, y0);
+    rx.moveTo(left, y0 - 5); rx.lineTo(left, y0 + 5);
+    rx.moveTo(left + 10 * k, y0 - 5); rx.lineTo(left + 10 * k, y0 + 5);
+    rx.stroke();
+    rx.font = '500 12px "IBM Plex Mono", monospace';
+    rx.fillText("10 m", left + 10 * k + 9, y0 + 4);
+  }
+
+  // --------------------------------------------------------- the controls --
+  const BAR = document.getElementById("bar");
+  const VIEWS = [
+    ["today", "FREEPORT today"], ["freeport", "FREEPORT blocks"],
+    ["portland", "Portland"], ["barcelona", "Barcelona"], ["chicago", "Chicago"],
+    ["manhattan", "Manhattan"], ["savannah", "Savannah"], ["siena", "Siena"],
+  ];
+  BAR.innerHTML = VIEWS.map(([v, t]) => `<button type="button" data-v="${v}">${t}</button>`).join("") +
+    `<span class="gap"></span>` +
+    `<button type="button" data-c="form">Built form</button>` +
+    `<button type="button" data-c="use">Land use</button>`;
+
+  // The tab and the slider say the same thing, so one of them decides:
+  // "today" IS one lot to a block, and pressing it moves the slider.
+  function press() {
+    for (const el of BAR.querySelectorAll("button")) {
+      if (el.dataset.c) { el.setAttribute("aria-pressed", String(el.dataset.c === colour)); continue; }
+      const v = el.dataset.v;
+      const on = v === "today"    ? (view === "freeport" && side === 1)
+               : v === "freeport" ? (view === "freeport" && side > 1)
+               : v === view;
+      el.setAttribute("aria-pressed", String(on));
+    }
+  }
+  BAR.addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.c) colour = b.dataset.c;
+    else if (b.dataset.v === "today") { view = "freeport"; side = 1; }
+    else if (b.dataset.v === "freeport") { view = "freeport"; if (side === 1) side = 4; }
+    else view = b.dataset.v;
+    SIDE.value = String(side);
+    home();                       // a tab is a different place, so the eye goes back
+    sideLabel(); townLabel(); press(); render();
+  });
+
+  // ------------------------------------------------------ pan and zoom --
+  // The world point under the cursor does not move, which is the whole of
+  // what makes a wheel zoom feel like a zoom rather than a jump.
+  cv.addEventListener("wheel", e => {
+    e.preventDefault();
+    const { w, h } = frame(), r = cv.getBoundingClientRect();
+    const dx = e.clientX - r.left - w / 2, dz = e.clientY - r.top - h / 2;
+    const at = [dx / (scaleFor(w, h) * eye.zoom) + eye.x,
+                dz / (scaleFor(w, h) * eye.zoom) + eye.z];
+    // The wheel's UNIT is read off the event and never assumed: a mouse
+    // sends lines and a trackpad sends pixels, and reading a hundred
+    // pixels as a hundred lines is swarm-demo's own wheel bug. And the
+    // zoom goes through `exp`, which cannot return a negative number
+    // however big the input is, which is the other half of it.
+    const step = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    eye.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, eye.zoom * Math.exp(-step * 0.0016)));
+    const k = scaleFor(w, h) * eye.zoom;
+    eye.x = at[0] - dx / k;
+    eye.z = at[1] - dz / k;
+    render();
+  }, { passive: false });
+
+  let drag = null;
+  cv.style.cursor = "grab";
+  cv.addEventListener("pointerdown", e => {
+    drag = { x: e.clientX, z: e.clientY };
+    cv.setPointerCapture(e.pointerId);
+    cv.style.cursor = "grabbing";
+  });
+  cv.addEventListener("pointermove", e => {
+    if (!drag) return;
+    const { w, h } = frame(), k = scaleFor(w, h) * eye.zoom;
+    eye.x -= (e.clientX - drag.x) / k;
+    eye.z -= (e.clientY - drag.z) / k;
+    drag = { x: e.clientX, z: e.clientY };
+    render();
+  });
+  const letGo = () => { drag = null; cv.style.cursor = "grab"; };
+  cv.addEventListener("pointerup", letGo);
+  cv.addEventListener("pointercancel", letGo);
+  cv.addEventListener("dblclick", () => { home(); render(); });
+  const home = () => { eye.x = 0; eye.z = 0; eye.zoom = 1; };
+
+  const SIDE = document.getElementById("side"), SIDE_OUT = document.getElementById("sideOut");
+  const TOWN = document.getElementById("town"), TOWN_OUT = document.getElementById("townOut");
+  function townLabel() {
+    TOWN_OUT.textContent = `${townR} m radius \u00b7 ${sizeName(townR)} \u00b7 ` +
+      `${grainOctaves(townR, pitchOf(side))} octaves of grain`;
+  }
+  TOWN.addEventListener("input", () => {
+    townR = +TOWN.value; view = "freeport";
+    townLabel(); sideLabel(); press(); render();
+  });
+  function sideLabel() {
+    SIDE_OUT.textContent =
+      `${side}×${side} · block ${(side * LOT).toFixed(0)} m · pitch ${pitchOf(side).toFixed(1)} m`;
+  }
+  SIDE.addEventListener("input", () => {
+    side = +SIDE.value; view = "freeport";
+    sideLabel(); townLabel(); press(); render();
+  });
+
+  // ----------------------------------------------------------- the table --
+  // What the textbooks PUBLISH beside what the map MEASURES. A row with
+  // no published block is a city that has none, which is the honest
+  // entry for a hill town and is the whole of Siena's argument.
+  document.getElementById("cities").innerHTML = CITIES.map(c => {
+    const g = c.key && GRIDS[c.key];
+    const cells = [];
+    if (c.b) {
+      const b = c.b[0] === c.b[1] ? `${c.b[0]}` : `${c.b[0]}×${c.b[1]}`;
+      const st = c.s[0] === c.s[1] ? `${c.s[0]}` : `${c.s[0]}/${c.s[1]}`;
+      const p = c.b[0] === c.b[1] ? `${(c.b[0] + c.s[0]).toFixed(0)}`
+                                  : `${(c.b[0] + c.s[0]).toFixed(0)}×${(c.b[1] + c.s[1]).toFixed(0)}`;
+      cells.push(`${b} m`, `${st} m`, `${p} m`, `${(share(c) * 100).toFixed(1)}%`);
+    } else {
+      cells.push("no grid", "no grid", "no grid", "n/a");
+    }
+    cells.push(g ? `${(g.cover * 100).toFixed(1)}%` : "not fetched");
+    return `<tr${c.us ? ` data-us="${c.us}"` : ""}>` +
+           `<td>${c.name}<br><span class="src">${c.note}</span></td>` +
+           cells.map(x => `<td>${x}</td>`).join("") + `</tr>`;
+  }).join("");
+
+  sideLabel(); townLabel(); press(); render();
+  addEventListener("resize", render);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+  document.fonts?.ready.then(render);
+})();
+</script>
