@@ -48,9 +48,20 @@ import urllib.request
 
 import numpy as np
 
-# Overpass mirrors, tried in order with a backoff. The main one refuses
-# this container outright with a 406 and private.coffee answers, which is
-# written down here so nobody spends an afternoon finding it twice.
+# OpenStreetMap's OWN api is the source, and Overpass is the fallback.
+# Measured on the same Portland box: the api answered a quarter of the
+# ground in 1.6 SECONDS where Overpass took minutes and then handed back
+# a 504 from every mirror in turn. The api also gives the whole bbox in
+# ONE request rather than one query per kind of feature, so a city is one
+# call instead of five. Its own limit is 50,000 nodes; a 780 m square of
+# downtown is about eleven thousand, and `quarters` is what a denser box
+# would be split into.
+#
+# Overpass's own main instance refuses this container outright with a 406
+# and private.coffee answers when it is not overloaded, which is written
+# down here so nobody spends an afternoon finding it twice.
+OSM_API = "https://api.openstreetmap.org/api/0.6/map.json"
+
 MIRRORS = [
     "https://overpass.private.coffee/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
@@ -92,6 +103,9 @@ CITIES = [
 # a car park aisle is not a street and would flatter every share here.
 ROADS = ("motorway|trunk|primary|secondary|tertiary|residential|"
          "unclassified|living_street|pedestrian|service")
+ROAD_SET = set(ROADS.split("|")) | {r + "_link" for r in
+                                    ("motorway", "trunk", "primary",
+                                     "secondary", "tertiary")}
 
 # The RIGHT OF WAY a class occupies where the map does not say, in metres:
 # carriageway plus its pavements, because that is what the page's own
@@ -112,6 +126,57 @@ def box_of(city):
     dlon = half / (111_320.0 * math.cos(math.radians(city["lat"])))
     return (f"{city['lat'] - dlat:.6f},{city['lon'] - dlon:.6f},"
             f"{city['lat'] + dlat:.6f},{city['lon'] + dlon:.6f}")
+
+
+def api(box):
+    """The whole box off OpenStreetMap's own api, as ways with geometry.
+
+    The api hands back nodes and ways separately where Overpass's
+    `out geom` does the join for us, so the node table is built once and
+    every way reads its own points off it. A way with a node outside the
+    box is dropped rather than drawn with a gap in it.
+    """
+    s, w, n, e = box.split(",")
+    url = f"{OSM_API}?bbox={w},{s},{e},{n}"      # the api wants it the other way round
+    req = urllib.request.Request(url, headers={"User-Agent": AGENT})
+    data = None
+    for attempt in range(TRIES):
+        try:
+            time.sleep(GAP)
+            with urllib.request.urlopen(req, timeout=WAIT) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            break
+        except Exception as exc:                  # noqa: BLE001
+            print(f"      osm api: {exc}", file=sys.stderr)
+            if attempt + 1 >= TRIES:
+                return None
+            time.sleep(8 * (attempt + 1))
+    at = {el["id"]: el for el in data["elements"] if el["type"] == "node"}
+    out = []
+    for el in data["elements"]:
+        if el["type"] != "way":
+            continue
+        refs = el.get("nodes", [])
+        pts = [at[i] for i in refs if i in at]
+        if len(pts) != len(refs) or len(pts) < 2:
+            continue                              # a way that leaves the box
+        out.append(dict(id=el["id"], tags=el.get("tags") or {},
+                        geometry=[{"lat": p["lat"], "lon": p["lon"]} for p in pts]))
+    return {"elements": out}
+
+
+def keep(tags):
+    """Whether this way is a STREET rather than a path or a driveway.
+
+    Overpass filtered this in the query; the api hands back everything in
+    the box, so the filter lives here. `service` is kept only where it is
+    an ALLEY, because that is the thing a Chicago block is built round
+    and a driveway is not a street.
+    """
+    hw = tags.get("highway", "")
+    if hw not in ROAD_SET:
+        return False
+    return not (hw == "service" and tags.get("service") != "alley")
 
 
 def fetch(ql):
@@ -251,17 +316,18 @@ def one(city):
     print(f"{city['name']:<22} {box}")
     to_m = metres(city)
 
-    road_ql = f'[out:json][timeout:80];way["highway"~"^({ROADS})$"]({box});out geom;'
-    roads = fetch(road_ql)
-    if roads is None:
-        print("    no streets, so this city is skipped rather than half drawn",
+    got = api(box)
+    if got is None:                               # fall back to Overpass
+        got = fetch(f'[out:json][timeout:80];way({box});out geom;')
+    if got is None:
+        print("    nothing came back, so this city is skipped rather than half drawn",
               file=sys.stderr)
         return None
+
     ways, tagged = [], 0
-    for el in roads.get("elements", []):
+    for el in got["elements"]:
         tags, geom = el.get("tags") or {}, el.get("geometry")
-        if not geom or (tags.get("highway") == "service"
-                        and tags.get("service") != "alley"):
+        if not geom or not keep(tags):
             continue
         pts = [to_m(p) for p in geom]
         if len(pts) < 2:
@@ -270,20 +336,14 @@ def one(city):
         tagged += bool(read)
         ways.append(dict(hw=tags["highway"], row=round(row, 1), pts=thin(pts, 0.6)))
 
-    builds, seen = [], set()
-    for quarter in quarters(box):
-        got = fetch(f'[out:json][timeout:80];way["building"]({quarter});out geom;')
-        if got is None:
-            print(f"    a quarter of the buildings is missing: {quarter}", file=sys.stderr)
+    builds = []
+    for el in got["elements"]:
+        geom = el.get("geometry")
+        if "building" not in (el.get("tags") or {}) or not geom or len(geom) < 4:
             continue
-        for el in got.get("elements", []):
-            geom = el.get("geometry")
-            if not geom or len(geom) < 4 or el["id"] in seen:
-                continue                     # a way on a seam is in two quarters
-            seen.add(el["id"])
-            ring = thin([to_m(p) for p in geom])
-            if len(ring) >= 4:
-                builds.append(ring)
+        ring = thin([to_m(p) for p in geom])
+        if len(ring) >= 4:
+            builds.append(ring)
 
     road_mask, n, cell = rasterise(SPAN)
     stamp_ways(road_mask, n, cell, SPAN, ways)

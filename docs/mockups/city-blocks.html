@@ -222,11 +222,20 @@
   <p style="margin-top:18px">The number that settles it is <b>coverage</b>: the share of
   the ground a place occupies that carries a building. It is the one figure both halves of
   this page can be held to, because it is <b>measured</b> either way, off OSM's own
-  footprints for a real city and off the drawn plan for FREEPORT. Portland's downtown is
-  <b>46.7%</b>, Barcelona's Eixample <b>43.5%</b>, Chicago's Loop <b>55.8%</b>. FREEPORT
-  today, one 10 m building on a 19 m pitch, is <b>27.7%</b>: half a city. At <b>4&times;4
-  blocks with a courtyard</b> it is <b>43.3%</b>, which is Barcelona to a tenth of a per
-  cent. The owner's number lands the town exactly where real downtowns are.</p>
+  footprints for a real city and off the drawn plan for FREEPORT. Measured on the six:
+  Chicago's Loop <b>55.8%</b>, Manhattan <b>52.9%</b>, Portland's downtown <b>46.7%</b>,
+  Barcelona's Eixample <b>42.6%</b>, and then the two that are not grids at all, Savannah
+  <b>31.7%</b> and Siena <b>31.6%</b>.</p>
+
+  <p>FREEPORT today, one 10 m building on a 19 m pitch, is <b>27.7%</b>: <b>under every one
+  of them</b>, including a medieval hill town. At <b>4&times;4 blocks with a courtyard</b>
+  the drawn plan measures <b>39.4%</b>, which puts it between Siena and the Eixample. The
+  owner's arithmetic lands the town inside the real range; the 10 m block never was.</p>
+
+  <p class="note">The FREEPORT tabs do not fill the frame and the city tabs do, which is not
+  a framing accident: at <code>TOWN_RADIUS</code> a whole town is about 460 m across and
+  each of these is 760 m of one city's <em>middle</em>. A FREEPORT town is a district, not a
+  downtown, and the arms down its roads are most of what carries it past half a kilometre.</p>
 
   <p>The older measure is <b>how much of the ground is street</b>, and the table keeps it
   because it is what the textbooks publish: <code>1 - (block / pitch)&sup2;</code>, the pitch
@@ -275,8 +284,9 @@
 
   <p>That is measurable now rather than asserted. Press any city tab above and the figure
   panel counts <b>how many distinct rights of way</b> the kilometre actually carries, off
-  the map's own <code>width</code> and <code>lanes</code> tags. Every one of them is in
-  double figures. FREEPORT's is <b>one</b>.</p>
+  the map's own <code>width</code> and <code>lanes</code> tags. Portland carries <b>6</b>
+  over its kilometre, Siena 7, Manhattan and Savannah 8, Chicago 11 and Barcelona
+  <b>22</b>. FREEPORT's is <b>one</b>, everywhere, on every world.</p>
 
   <div class="plate" style="margin-bottom:0">
     <canvas id="ranks" width="1040" height="340" aria-label="Street cross sections drawn to scale"></canvas>
