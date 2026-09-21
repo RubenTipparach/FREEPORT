@@ -4242,6 +4242,44 @@ change when you fly to another planet. And nothing else knows what time
 it is yet: the traffic runs at the same rate at midnight as at noon, and
 a shop is not shut.
 
+## The driver's HUD and the MAP are a mockup, waiting on the owner
+
+The owner's ask: a proper gauge for the fuel, a speedometer, the money
+in the wallet, a frame counter in the corner, and a map to know where
+you are driving with markers you can put down by hand for a route, A*
+being a feature after it. A screen goes through this file's own mockup
+rule (rendered, published, approved, then built), and
+`docs/mockups/driving-hud.html` is the page: the HUD drawn as glass
+over a road that moves at the car's own speed, the map behind M, and a
+table under both saying where every figure comes from.
+
+**Nothing on it is a number the core does not already compute.** The
+speed is `Driver::speed`, the gauge is `Tank`, a SHARE of a full one,
+so the figure under it is RANGE at eighty kilometres a fill, which is
+what a driver actually wants; the wallet moves on G at a pump and
+nowhere else; the next pump is the nearest forecourt along the road,
+beside the gauge, because "amber and 6 km" and "amber and 40 km" are
+different decisions and the gauge is for that decision; the frame
+counter is a real clock and prints the milliseconds as well as the
+rate, because 16.7 ms is a number that can be held against a budget.
+The compass strip at the top carries the car's heading under a lubber
+line and the first marker as a tick with its distance, so a route is
+driven without opening the map.
+
+**The map is a MODE and not a screen**, which is swarm-demo's sensors
+manager rule: M dims the drive rather than leaving it, a click sets a
+numbered marker, a right click takes the last one back, the legs are
+straight lines summed against the tank, and the wheel zooms about the
+cursor from the region down to a town. A marker is a PLACE and never a
+road: the total is the crow's distance and understates a drive round a
+bay, and a route that follows the roads between markers is A* over the
+road graph, whose input this is.
+
+**What it decided against is a minimap.** A small always-on map in a
+corner was drawn and taken out: at the scale a car covers ground it is
+either a blur of the road under the car or too coarse to place a pump
+on, and the compass strip carries the one thing a driver needs from it.
+
 ## The hour is a MENU now, and it writes the one offset there is
 
 `clock.rs` is a drawn panel the player opens with **H**: the hour, four
@@ -4737,6 +4775,7 @@ from the repository root, and published:
 - hex terrain: https://claude.ai/code/artifact/87905fd8-d47b-4f2e-8cc3-8c226251a799
 - road mound: https://claude.ai/artifact/FMimcpVizLa3yttJYdBPtd
 - city blocks: https://claude.ai/artifact/CamvaxSusg8UXXRYb3UUfW
+- driving HUD and map: https://claude.ai/artifact/2i1EWdyyK5pkHbxB1KH16P
 
 `docs/mockups/README.md` is the index of them, each file beside its link
 and what it decided, so a page can be found again from the checkout.

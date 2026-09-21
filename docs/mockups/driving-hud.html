@@ -1,0 +1,734 @@
+<title>Freeport Driving HUD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&display=swap">
+
+<style>
+  :root {
+    --paper:   #e7e5dc;
+    --ground:  #dcd9cd;
+    --ink:     #1b1e1a;
+    --faint:   #6d7069;
+    --rule:    #bcb9ac;
+    --panel:   #f0eee6;
+    --signal:  #2f6089;
+    /* the screen: what the HUD is drawn over and with */
+    --glass:   rgba(12, 14, 17, 0.58);
+    --glass-edge: rgba(233, 230, 216, 0.16);
+    --hud:     #e9e6d8;
+    --hud-dim: #9a988c;
+    --amber:   #f0b34a;
+    --route:   #7fd0e8;
+    --alarm:   #e0513f;
+    --ok:      #8ccf7a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:   #16181a;
+      --ground:  #1e2124;
+      --ink:     #e6e6e0;
+      --faint:   #9a9d98;
+      --rule:    #383c40;
+      --panel:   #1d2023;
+      --signal:  #6aa6d8;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:   #16181a;
+    --ground:  #1e2124;
+    --ink:     #e6e6e0;
+    --faint:   #9a9d98;
+    --rule:    #383c40;
+    --panel:   #1d2023;
+    --signal:  #6aa6d8;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    padding-block: 28px 64px;
+    padding-inline: 20px;
+  }
+  main { max-width: 1120px; margin: 0 auto; }
+  h1 {
+    font-family: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+    font-weight: 700;
+    font-size: clamp(28px, 4vw, 40px);
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  h2 {
+    font-family: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+    font-weight: 600;
+    font-size: 22px;
+    margin: 40px 0 10px;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  p { max-width: 68ch; margin: 0 0 12px; }
+  code { font-family: "IBM Plex Mono", monospace; font-size: 0.92em; }
+  /* the SCREEN */
+  .screen {
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 16 / 9;
+    margin: 20px 0 12px;
+    background: #0b0d10;
+    border: 1px solid var(--rule);
+    overflow: hidden;
+    user-select: none;
+    font-family: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+    color: var(--hud);
+  }
+  .screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .hud { position: absolute; inset: 0; pointer-events: none; }
+  .hud .panel {
+    position: absolute;
+    background: var(--glass);
+    border: 1px solid var(--glass-edge);
+    border-radius: 3px;
+    backdrop-filter: blur(2px);
+  }
+  .mono { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+  .label {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--hud-dim);
+  }
+  /* bottom left: the dials */
+  .dials {
+    left: 2.2%; bottom: 3.5%;
+    display: flex; gap: 14px; align-items: flex-end;
+    padding: 10px 14px 8px;
+  }
+  .dial { position: relative; width: 132px; height: 104px; }
+  .dial svg { width: 132px; height: 84px; display: block; overflow: visible; }
+  .dial .big {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    text-align: center; font-size: 24px; font-weight: 600; line-height: 1;
+  }
+  .dial .big small { font-size: 11px; font-weight: 500; color: var(--hud-dim); margin-left: 3px; }
+  .dial .label { position: absolute; left: 0; right: 0; top: 0; text-align: center; }
+  .gauge-fill { color: var(--ok); }
+  .gauge-fill.low { color: var(--amber); }
+  .gauge-fill.dry { color: var(--alarm); }
+  /* bottom right: the purse and the pump */
+  .purse {
+    right: 2.2%; bottom: 3.5%;
+    padding: 10px 14px 9px;
+    min-width: 168px;
+    display: grid; gap: 6px;
+  }
+  .purse .row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+  .purse .cash { font-size: 24px; font-weight: 600; line-height: 1; }
+  .purse .pump { font-size: 14px; }
+  /* top: the compass strip and the corner */
+  .compass {
+    left: 50%; top: 3.5%; transform: translateX(-50%);
+    width: 46%; min-width: 280px; height: 44px;
+    overflow: hidden;
+  }
+  .compass canvas { position: absolute; inset: 0; }
+  .compass .lubber {
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
+    background: var(--amber); transform: translateX(-1px);
+  }
+  .compass .goal {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    font-size: 13px; color: var(--route);
+  }
+  .fps {
+    right: 2.2%; top: 3.5%;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: var(--hud-dim);
+  }
+  .fps b { color: var(--hud); font-weight: 500; }
+  .keys {
+    left: 2.2%; top: 3.5%;
+    padding: 5px 9px;
+    font-size: 12px; color: var(--hud-dim);
+    display: flex; gap: 12px;
+  }
+  .keys b { color: var(--hud); font-weight: 600; }
+  .toast {
+    position: absolute; left: 50%; bottom: 26%; transform: translateX(-50%);
+    padding: 6px 12px; font-size: 14px;
+    opacity: 0; transition: opacity 0.4s;
+  }
+  .toast.on { opacity: 1; }
+  /* the MAP */
+  .map {
+    position: absolute; inset: 0;
+    background: rgba(8, 10, 13, 0.82);
+    display: none;
+  }
+  .map.on { display: block; }
+  .map canvas { cursor: crosshair; }
+  .map .legend {
+    position: absolute; left: 2.2%; bottom: 3.5%;
+    background: var(--glass); border: 1px solid var(--glass-edge); border-radius: 3px;
+    padding: 8px 12px; font-size: 12px; color: var(--hud-dim);
+    display: grid; gap: 3px; pointer-events: none;
+  }
+  .map .legend b { color: var(--hud); font-weight: 600; }
+  .map .route {
+    position: absolute; right: 2.2%; top: 3.5%;
+    background: var(--glass); border: 1px solid var(--glass-edge); border-radius: 3px;
+    padding: 8px 12px; min-width: 200px; font-size: 13px;
+    display: grid; gap: 4px;
+  }
+  .map .route .leg { display: flex; justify-content: space-between; gap: 12px; }
+  .map .route .leg span:first-child { color: var(--route); }
+  .map .route .total { border-top: 1px solid var(--glass-edge); padding-top: 4px; margin-top: 2px; display: flex; justify-content: space-between; }
+  .map .route button {
+    margin-top: 4px; font: inherit; font-size: 12px;
+    background: transparent; color: var(--hud); border: 1px solid var(--glass-edge);
+    border-radius: 3px; padding: 4px 8px; cursor: pointer;
+  }
+  .map .route button:focus-visible, .bar button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .map .title {
+    position: absolute; left: 50%; top: 3.5%; transform: translateX(-50%);
+    font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--hud-dim);
+    pointer-events: none;
+  }
+  /* the bar under the screen, for a viewer with no keyboard */
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    font-size: 13px; color: var(--faint);
+  }
+  .bar button {
+    font: inherit; font-size: 13px;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--rule); border-radius: 3px;
+    padding: 5px 10px; cursor: pointer;
+  }
+  .bar button[aria-pressed="true"] { border-color: var(--signal); color: var(--signal); }
+  /* the rationale */
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--rule); }
+  th { font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; }
+  td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 32px; }
+  .note { border-left: 3px solid var(--signal); padding-left: 12px; color: var(--faint); font-size: 14px; }
+  @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+  @media (max-width: 640px) {
+    .dial { width: 96px; height: 80px; }
+    .dial svg { width: 96px; height: 62px; }
+    .dial .big { font-size: 20px; }
+    .purse { min-width: 120px; }
+    .compass { width: 60%; min-width: 0; height: 36px; }
+    .keys { display: none; }
+  }
+</style>
+
+<main>
+  <div class="eyebrow">Mockup 5 of the driving game</div>
+  <h1>What a driver reads: the HUD and the map</h1>
+  <p>The owner's ask, in one line: a proper gauge for the fuel, a speedometer, the money in the
+  wallet, a frame counter in the corner, and a map to know where you are driving with markers
+  you can put down by hand for a route. This page is that, drawn over a driving scene so the
+  numbers move: the car below is on the road out of the port, burning its tank at the game's
+  own eighty kilometres a fill, and every readout is read off it. Press <b>M</b> (or the
+  button) for the map, click to drop a marker, and the compass strip at the top turns to the
+  first one.</p>
+
+  <div class="screen" id="screen" tabindex="0" aria-label="the driving screen">
+    <canvas id="scene"></canvas>
+    <div class="hud">
+      <div class="panel keys"><span><b>M</b> map</span><span><b>G</b> gas</span><span><b>E</b> out</span><span><b>H</b> time</span></div>
+      <div class="panel fps mono" id="fps"><b>60</b> fps <span id="ms">16.7 ms</span></div>
+      <div class="panel compass"><canvas id="compass"></canvas><div class="lubber"></div><div class="goal mono" id="goal"></div></div>
+      <div class="panel dials">
+        <div class="dial">
+          <div class="label">km/h</div>
+          <svg viewBox="0 0 132 84" aria-hidden="true">
+            <path d="M 12 74 A 54 54 0 0 1 120 74" fill="none" stroke="rgba(233,230,216,0.22)" stroke-width="6" stroke-linecap="butt"/>
+            <path id="speed-arc" d="M 12 74 A 54 54 0 0 1 120 74" fill="none" stroke="#e9e6d8" stroke-width="6" stroke-dasharray="169.6" stroke-dashoffset="169.6"/>
+            <g id="speed-ticks" fill="none" stroke="rgba(233,230,216,0.5)" stroke-width="1.5"></g>
+            <line id="needle" x1="66" y1="74" x2="14" y2="74" stroke="#f0b34a" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="66" cy="74" r="3.5" fill="#f0b34a"/>
+          </svg>
+          <div class="big mono" id="speed">0</div>
+        </div>
+        <div class="dial">
+          <div class="label">fuel</div>
+          <svg viewBox="0 0 132 84" aria-hidden="true">
+            <path d="M 12 74 A 54 54 0 0 1 120 74" fill="none" stroke="rgba(233,230,216,0.22)" stroke-width="6"/>
+            <path id="fuel-arc" class="gauge-fill" d="M 12 74 A 54 54 0 0 1 120 74" fill="none" stroke="currentColor" stroke-width="6" stroke-dasharray="169.6" stroke-dashoffset="0"/>
+            <text x="12" y="84" font-size="10" fill="#9a988c" font-family="IBM Plex Mono, monospace">E</text>
+            <text x="113" y="84" font-size="10" fill="#9a988c" font-family="IBM Plex Mono, monospace">F</text>
+            <line x1="66" y1="20" x2="66" y2="27" stroke="rgba(233,230,216,0.5)" stroke-width="1.5"/>
+          </svg>
+          <div class="big mono" id="range">80<small>km</small></div>
+        </div>
+      </div>
+      <div class="panel purse">
+        <div class="row"><span class="label">wallet</span><span class="cash mono" id="cash">$1,000</span></div>
+        <div class="row"><span class="label">next pump</span><span class="pump mono" id="pump">8.0 km</span></div>
+        <div class="row"><span class="label">tank</span><span class="pump mono" id="tank">100%</span></div>
+      </div>
+      <div class="panel toast mono" id="toast"></div>
+    </div>
+    <div class="map" id="map">
+      <canvas id="chart"></canvas>
+      <div class="title">The map. Click to set a marker, wheel to zoom, drag to pan</div>
+      <div class="legend">
+        <span><b>Road</b> the highways, with their pumps</span>
+        <span><b>Town</b> a settlement, the port ringed</span>
+        <span><b>Marker</b> a stop you set, in order</span>
+        <span><b>Right click</b> removes the last marker</span>
+      </div>
+      <div class="route mono">
+        <div class="label" style="font-family: 'IBM Plex Sans Condensed', sans-serif">route</div>
+        <div id="legs"></div>
+        <div class="total"><span>total</span><span id="total">0.0 km</span></div>
+        <div class="total"><span>tank holds</span><span id="holds">80 km</span></div>
+        <button type="button" id="clear">Clear markers</button>
+      </div>
+    </div>
+  </div>
+  <div class="bar">
+    <button type="button" id="btn-map" aria-pressed="false">Map (M)</button>
+    <button type="button" id="btn-gas">Gas (G)</button>
+    <button type="button" id="btn-pause" aria-pressed="false">Pause the drive</button>
+    <span id="status">on the road out of the port</span>
+  </div>
+
+  <h2>What each readout is, and where its number comes from</h2>
+  <div class="two">
+    <div>
+      <table>
+        <tr><th>readout</th><th>reads</th><th>rule</th></tr>
+        <tr><td>speedometer</td><td class="num">0 to 160 km/h</td><td>the car's measured speed, the wheel's setting only in the fly camera; the arc fills to the car's own <code>driver::TOP</code> and the needle is the same number twice, because a dial is read at a glance and a figure is read when it matters</td></tr>
+        <tr><td>fuel gauge</td><td class="num">E to F, and km</td><td>the <code>Tank</code> is a share of a full one, never litres, so the figure under it is RANGE, which is what a driver actually wants: at 80 km a tank the gauge and the range say one thing</td></tr>
+        <tr><td>low fuel</td><td class="num">under 25% amber, under 10% red</td><td>the pump distance beside it is the nearest forecourt along the road, so a driver can tell "amber and 6 km" from "amber and 40 km", which is the decision the gauge is for</td></tr>
+        <tr><td>wallet</td><td class="num">$ with thousands</td><td>a fill is $10; the purse moves when G is pressed at a pump and nowhere else, and the toast says what was paid</td></tr>
+        <tr><td>frame counter</td><td class="num">fps and ms</td><td>the corner, off a real clock and never the engine's delta, and both figures, because 16.7 ms is a number that can be held against a budget and 60 fps is not</td></tr>
+        <tr><td>compass strip</td><td class="num">bearing, marker, km</td><td>the car's heading under the lubber line; the first marker is a tick on the strip with its distance, so the route is driven without opening the map</td></tr>
+      </table>
+    </div>
+    <div>
+      <table>
+        <tr><th>map</th><th>what it draws</th></tr>
+        <tr><td>the region</td><td>a plan of the roads round the car, the towns, the pumps and the sea, north up, with a scale bar; it is the same road network the car drives, drawn from the atlas, and not a picture of the chart</td></tr>
+        <tr><td>the car</td><td>an arrow at its own heading, and the road it is on brightened</td></tr>
+        <tr><td>a marker</td><td>a click sets one, numbered in the order set; a right click takes the last back; the legs are straight lines between them and the route panel sums them against the tank</td></tr>
+        <tr><td>the route</td><td>legs and a total, and whether the tank holds it: a route longer than the range is the moment to plan a pump into it</td></tr>
+        <tr><td>zoom and pan</td><td>the wheel zooms about the cursor from the region down to a town; a drag pans; the map opens centred on the car</td></tr>
+      </table>
+      <p class="note">A marker is a place and never a road: the legs are straight and the total is
+      the crow's distance, which understates a drive round a bay. A route that FOLLOWS the roads
+      between markers is A* over the road graph, and that is the next feature, not this one: the
+      markers are its input, and this page is what the input looks like.</p>
+    </div>
+  </div>
+
+  <h2>What this decides</h2>
+  <p>The HUD is three glass panels and a strip, in the game's own type, with the two dials at the
+  driver's left hand where a dashboard puts them and the money on the right where a phone would
+  be. Nothing on it is a control except through a key, and every figure on it is one the core
+  already computes: the mockup invents no number, it only lays them out. The map is a mode and
+  not a screen, which is the RTS's sensors manager rule from swarm-demo: it dims the drive rather
+  than leaving it, so a marker is set and the drive carries on behind it.</p>
+  <p>What it does not decide: the minimap. A small always-on map in a corner was drawn and taken
+  out, because at the scale a car covers ground a corner map is either a blur of the road under
+  the car or too coarse to place a pump on, and the compass strip carries the one thing a driver
+  needs from it, which is where the next marker is.</p>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  // ---------- the region: a synthetic plan in the game's own numbers ----------
+  // Metres, x east and y north. Sixty kilometres by forty, with the sea
+  // along the south. The port is town 0, which the drive starts in.
+  var TOWNS = [
+    { x: 9000,  y: 11000, r: 537, name: 'the port', size: 2 },
+    { x: 24000, y: 24000, r: 260, name: 'town 1', size: 1 },
+    { x: 43000, y: 13000, r: 380, name: 'town 2', size: 2 },
+    { x: 51000, y: 31000, r: 180, name: 'town 3', size: 1 },
+    { x: 15000, y: 33000, r: 150, name: 'village 4', size: 0 },
+    { x: 33000, y: 6500,  r: 150, name: 'village 5', size: 0 }
+  ];
+  // Roads as polylines of metres; the first is the drive's own.
+  var ROADS = [
+    [[9000,11000],[12500,12800],[16000,16500],[19000,20500],[22000,23000],[24000,24000]],
+    [[9000,11000],[14000,9500],[20000,8200],[27000,7000],[33000,6500],[38500,9000],[43000,13000]],
+    [[24000,24000],[30000,21000],[36000,17500],[43000,13000]],
+    [[24000,24000],[31000,27000],[40000,30000],[51000,31000]],
+    [[43000,13000],[47000,20000],[50000,26000],[51000,31000]],
+    [[24000,24000],[20000,28000],[15000,33000]]
+  ];
+  // Pumps: on a road, at a fraction along it. Every 35 km in the game;
+  // this region is small, so a pump sits out of each town.
+  var PUMPS = [ {road: 0, t: 0.42}, {road: 1, t: 0.33}, {road: 1, t: 0.78}, {road: 3, t: 0.55}, {road: 4, t: 0.5} ];
+  var COAST = [[0,1500],[6000,2500],[12000,1800],[18000,3200],[26000,2600],[34000,3800],[42000,2400],[50000,4200],[60000,3000]];
+
+  var TOP = 44.4;          // driver::TOP, m/s
+  var RANGE = 80000;       // fuel::RANGE, metres a tank
+  var PRICE = 10;          // fuel::TANK_PRICE
+  var CASH0 = 1000;        // fuel::START_CASH
+  var SPEEDUP = 6;         // the drive runs six times real time, so a region this size is minutes
+
+  function roadLength(r) { var s = 0; for (var i = 1; i < r.length; i++) s += Math.hypot(r[i][0]-r[i-1][0], r[i][1]-r[i-1][1]); return s; }
+  function alongRoad(r, d) {
+    // the point d metres along the polyline, and its heading
+    for (var i = 1; i < r.length; i++) {
+      var seg = Math.hypot(r[i][0]-r[i-1][0], r[i][1]-r[i-1][1]);
+      if (d <= seg || i === r.length - 1) {
+        var t = Math.max(0, Math.min(1, d / seg));
+        return { x: r[i-1][0] + (r[i][0]-r[i-1][0]) * t, y: r[i-1][1] + (r[i][1]-r[i-1][1]) * t,
+                 h: Math.atan2(r[i][0]-r[i-1][0], r[i][1]-r[i-1][1]) };
+      }
+      d -= seg;
+    }
+    return { x: r[0][0], y: r[0][1], h: 0 };
+  }
+  var pumpAt = PUMPS.map(function (p) { var r = ROADS[p.road]; var q = alongRoad(r, roadLength(r) * p.t); return { x: q.x, y: q.y, road: p.road, d: roadLength(r) * p.t }; });
+
+  // ---------- the car: the drive, on the road out of the port ----------
+  var car = { road: 0, d: 0, speed: 0, tank: 0.62, cash: CASH0, x: 0, y: 0, h: 0, gone: 0 };
+  var paused = false;
+  var lastFill = -1e9;
+  function stepCar(dt) {
+    var road = ROADS[car.road];
+    var len = roadLength(road);
+    // a bend ahead slows the car: the deflection at the next vertex over the distance to it
+    var brake = 1.0;
+    var acc = 0, i;
+    for (i = 1; i < road.length - 1; i++) {
+      acc += Math.hypot(road[i][0]-road[i-1][0], road[i][1]-road[i-1][1]);
+      if (acc > car.d) {
+        var a0 = Math.atan2(road[i][0]-road[i-1][0], road[i][1]-road[i-1][1]);
+        var a1 = Math.atan2(road[i+1][0]-road[i][0], road[i+1][1]-road[i][1]);
+        var turn = Math.abs(((a1 - a0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        var ahead = acc - car.d;
+        brake = Math.max(0.35, Math.min(1, 1 - turn * 0.9 * Math.max(0, 1 - ahead / 900)));
+        break;
+      }
+    }
+    var end = len - car.d;
+    if (end < 600) brake = Math.min(brake, Math.max(0.15, end / 600));
+    var want = TOP * brake;
+    if (car.tank <= 0) want = 0;
+    var ACCEL = 5.5, BRAKE = 12.0;
+    if (car.speed < want) car.speed = Math.min(want, car.speed + ACCEL * dt);
+    else car.speed = Math.max(want, car.speed - BRAKE * dt);
+    var made = car.speed * dt;
+    car.d += made;
+    car.gone += made;
+    car.tank = Math.max(0, car.tank - made / RANGE);
+    if (car.d >= len) {
+      // the end of the road is a town: turn onto the next road out of it
+      var here = road[road.length - 1];
+      var next = [];
+      ROADS.forEach(function (r, k) { if (k !== car.road && Math.hypot(r[0][0]-here[0], r[0][1]-here[1]) < 10) next.push({ k: k, rev: false }); if (k !== car.road && Math.hypot(r[r.length-1][0]-here[0], r[r.length-1][1]-here[1]) < 10) next.push({ k: k, rev: true }); });
+      if (next.length) {
+        var pick = next[Math.floor(car.gone / 1000) % next.length];
+        if (pick.rev) { ROADS[pick.k] = ROADS[pick.k].slice().reverse(); pumpAt.forEach(function (p) { if (p.road === pick.k) p.d = roadLength(ROADS[pick.k]) - p.d; }); }
+        car.road = pick.k; car.d = 0;
+      } else { car.d = len; car.speed = 0; }
+    }
+    var q = alongRoad(ROADS[car.road], car.d);
+    car.x = q.x; car.y = q.y; car.h = q.h;
+  }
+  function nextPump() {
+    var best = null;
+    pumpAt.forEach(function (p) {
+      var d = (p.road === car.road && p.d >= car.d) ? p.d - car.d : Math.hypot(p.x - car.x, p.y - car.y);
+      if (best === null || d < best.d) best = { d: d, p: p };
+    });
+    return best;
+  }
+  function fill() {
+    var np = nextPump();
+    if (!np || np.d > 14) { toast('no pump within reach: the nearest is ' + (np.d / 1000).toFixed(1) + ' km'); return; }
+    if (car.cash < PRICE) { toast('the wallet is empty'); return; }
+    car.cash -= PRICE; car.tank = 1; lastFill = perf();
+    toast('filled the tank: $' + PRICE);
+  }
+
+  // ---------- the HUD ----------
+  var $ = function (id) { return document.getElementById(id); };
+  var els = { speed: $('speed'), arc: $('speed-arc'), needle: $('needle'), fuel: $('fuel-arc'), range: $('range'), cash: $('cash'), pump: $('pump'), tank: $('tank'), goal: $('goal'), fps: $('fps'), status: $('status'), toast: $('toast') };
+  var ARC = 169.6;
+  (function ticks() {
+    var g = $('speed-ticks'); var s = '';
+    for (var k = 0; k <= 8; k++) {
+      var a = Math.PI + (k / 8) * Math.PI;
+      var r0 = k % 2 ? 50 : 46, r1 = 57;
+      s += '<line x1="' + (66 + Math.cos(a) * r0).toFixed(1) + '" y1="' + (74 + Math.sin(a) * r0).toFixed(1) + '" x2="' + (66 + Math.cos(a) * r1).toFixed(1) + '" y2="' + (74 + Math.sin(a) * r1).toFixed(1) + '"/>';
+    }
+    g.innerHTML = s;
+  })();
+  var toastTimer = 0;
+  function toast(text) { els.toast.textContent = text; els.toast.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(function () { els.toast.classList.remove('on'); }, 2400); }
+  function fmtCash(c) { return '$' + Math.round(c).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function drawHud() {
+    var kmh = car.speed * 3.6;
+    els.speed.textContent = Math.round(kmh);
+    var share = Math.min(1, car.speed / TOP);
+    els.arc.setAttribute('stroke-dashoffset', (ARC * (1 - share)).toFixed(1));
+    var a = Math.PI + share * Math.PI;
+    els.needle.setAttribute('x2', (66 + Math.cos(a) * 50).toFixed(1));
+    els.needle.setAttribute('y2', (74 + Math.sin(a) * 50).toFixed(1));
+    els.fuel.setAttribute('stroke-dashoffset', (ARC * (1 - car.tank)).toFixed(1));
+    els.fuel.setAttribute('class', 'gauge-fill' + (car.tank < 0.1 ? ' dry' : car.tank < 0.25 ? ' low' : ''));
+    els.range.innerHTML = Math.round(car.tank * RANGE / 1000) + '<small>km</small>';
+    els.cash.textContent = fmtCash(car.cash);
+    els.tank.textContent = Math.round(car.tank * 100) + '%';
+    var np = nextPump();
+    els.pump.textContent = np ? (np.d / 1000).toFixed(1) + ' km' : 'none';
+    els.pump.style.color = (np && np.d / 1000 > car.tank * RANGE / 1000) ? 'var(--alarm)' : '';
+    els.status.textContent = car.tank <= 0 ? 'out of gas: walk to a pump with a jerrycan' : 'on road ' + car.road + ', ' + (car.gone / 1000).toFixed(1) + ' km driven';
+  }
+
+  // ---------- the compass strip ----------
+  var cmp = $('compass');
+  function drawCompass() {
+    var W = cmp.clientWidth, H = cmp.clientHeight;
+    if (cmp.width !== W * 2 || cmp.height !== H * 2) { cmp.width = W * 2; cmp.height = H * 2; }
+    var c = cmp.getContext('2d'); c.setTransform(2, 0, 0, 2, 0, 0); c.clearRect(0, 0, W, H);
+    var span = Math.PI * 0.9; // the strip shows 162 degrees
+    var px = W / span;
+    c.font = '11px "IBM Plex Mono", monospace'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    var names = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    for (var deg = -360; deg < 720; deg += 15) {
+      var rel = ((deg * Math.PI / 180 - car.h + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      if (Math.abs(rel) > span / 2) continue;
+      var x = W / 2 + rel * px;
+      var major = deg % 45 === 0;
+      c.strokeStyle = 'rgba(233,230,216,' + (major ? 0.8 : 0.35) + ')'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x, H); c.lineTo(x, H - (major ? 12 : 6)); c.stroke();
+      if (major) { c.fillStyle = '#e9e6d8'; c.fillText(names[((deg % 360) + 360) % 360 / 45], x, 12); }
+    }
+    if (markers.length) {
+      var m = markers[0];
+      var bear = Math.atan2(m.x - car.x, m.y - car.y);
+      var relm = ((bear - car.h + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      var xm = Math.max(6, Math.min(W - 6, W / 2 + relm * px));
+      c.fillStyle = '#7fd0e8';
+      c.beginPath(); c.moveTo(xm, H - 2); c.lineTo(xm - 6, H - 14); c.lineTo(xm + 6, H - 14); c.closePath(); c.fill();
+      els.goal.textContent = '1  ' + (Math.hypot(m.x - car.x, m.y - car.y) / 1000).toFixed(1) + ' km';
+    } else {
+      els.goal.textContent = '';
+    }
+  }
+
+  // ---------- the scene: a road painted in perspective ----------
+  var scene = $('scene');
+  var phase = 0;
+  function drawScene(dt) {
+    var W = scene.clientWidth, H = scene.clientHeight;
+    if (scene.width !== W || scene.height !== H) { scene.width = W; scene.height = H; }
+    var c = scene.getContext('2d');
+    var horizon = H * 0.46;
+    var sky = c.createLinearGradient(0, 0, 0, horizon);
+    sky.addColorStop(0, '#2a3f5f'); sky.addColorStop(0.7, '#8fa9c2'); sky.addColorStop(1, '#d9c6a0');
+    c.fillStyle = sky; c.fillRect(0, 0, W, horizon);
+    var ground = c.createLinearGradient(0, horizon, 0, H);
+    ground.addColorStop(0, '#5a6b3a'); ground.addColorStop(1, '#3c4a28');
+    c.fillStyle = ground; c.fillRect(0, horizon, W, H - horizon);
+    // a range on the horizon
+    c.fillStyle = '#41506b';
+    c.beginPath(); c.moveTo(0, horizon);
+    for (var x = 0; x <= W; x += 24) c.lineTo(x, horizon - 10 - 26 * Math.abs(Math.sin(x * 0.013 + 1.2)) * Math.abs(Math.sin(x * 0.0031)));
+    c.lineTo(W, horizon); c.closePath(); c.fill();
+    // the road: a trapezoid from the bottom to the vanishing point, bending with the heading
+    var bend = Math.sin(car.h * 3) * W * 0.06;
+    var vx = W / 2 + bend, vy = horizon + 2;
+    var halfBottom = W * 0.30;
+    c.fillStyle = '#3a3c3a';
+    c.beginPath(); c.moveTo(W / 2 - halfBottom, H); c.lineTo(vx - 4, vy); c.lineTo(vx + 4, vy); c.lineTo(W / 2 + halfBottom, H); c.closePath(); c.fill();
+    // edge lines and the dashed centreline, moving at the car's speed
+    c.strokeStyle = '#d8d3c0'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(W / 2 - halfBottom * 0.94, H); c.lineTo(vx - 3, vy); c.moveTo(W / 2 + halfBottom * 0.94, H); c.lineTo(vx + 3, vy); c.stroke();
+    phase = (phase + car.speed * dt) % 9; // a dash is 3 m and a gap 6
+    var n = 22;
+    for (var k = 0; k < n; k++) {
+      var d0 = (k * 9 + 9 - phase) / (n * 9); // the share of the way to the horizon, near first
+      var d1 = (k * 9 + 12 - phase) / (n * 9);
+      if (d0 < 0 || d1 > 1) continue;
+      var y0 = H - Math.pow(d0, 0.55) * (H - vy), y1 = H - Math.pow(d1, 0.55) * (H - vy);
+      var w0 = 3 * (1 - d0) + 0.5, w1 = 3 * (1 - d1) + 0.5;
+      var cx0 = W / 2 + (vx - W / 2) * Math.pow(d0, 0.55), cx1 = W / 2 + (vx - W / 2) * Math.pow(d1, 0.55);
+      c.fillStyle = '#d8d3c0';
+      c.beginPath(); c.moveTo(cx0 - w0, y0); c.lineTo(cx0 + w0, y0); c.lineTo(cx1 + w1, y1); c.lineTo(cx1 - w1, y1); c.closePath(); c.fill();
+    }
+    // the car, from the chase camera: a roof, a rear window and two tail lamps
+    var cw = W * 0.19, ch = H * 0.13, cx = W / 2, cy = H * 0.86;
+    c.fillStyle = '#7d2e28'; c.fillRect(cx - cw / 2, cy - ch / 2, cw, ch);
+    c.fillStyle = '#24272b'; c.fillRect(cx - cw * 0.36, cy - ch * 0.42, cw * 0.72, ch * 0.34);
+    c.fillStyle = car.speed < 0.5 ? '#ff5a3c' : '#c8402c';
+    c.fillRect(cx - cw * 0.46, cy + ch * 0.12, cw * 0.14, ch * 0.16);
+    c.fillRect(cx + cw * 0.32, cy + ch * 0.12, cw * 0.14, ch * 0.16);
+  }
+
+  // ---------- the map ----------
+  var map = $('map'), chart = $('chart');
+  var view = { cx: 0, cy: 0, scale: 0 }; // metres to pixels
+  var markers = [];
+  var mapOn = false;
+  function openMap(on) {
+    mapOn = on; map.classList.toggle('on', on); $('btn-map').setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) { view.cx = car.x; view.cy = car.y; view.scale = 0; drawMap(); }
+  }
+  function fit() {
+    var W = chart.clientWidth, H = chart.clientHeight;
+    if (!view.scale) { view.scale = Math.min(W / 62000, H / 41000); view.cx = 30000; view.cy = 20000; }
+  }
+  function toPx(x, y) { var W = chart.clientWidth, H = chart.clientHeight; return [W / 2 + (x - view.cx) * view.scale, H / 2 - (y - view.cy) * view.scale]; }
+  function toM(px, py) { var W = chart.clientWidth, H = chart.clientHeight; return [view.cx + (px - W / 2) / view.scale, view.cy - (py - H / 2) / view.scale]; }
+  function drawMap() {
+    if (!mapOn) return;
+    var W = chart.clientWidth, H = chart.clientHeight;
+    if (chart.width !== W * 2 || chart.height !== H * 2) { chart.width = W * 2; chart.height = H * 2; }
+    fit();
+    var c = chart.getContext('2d'); c.setTransform(2, 0, 0, 2, 0, 0);
+    c.fillStyle = '#12161b'; c.fillRect(0, 0, W, H);
+    // the sea, south of the coast
+    c.fillStyle = '#1b3550';
+    c.beginPath(); var p0 = toPx(COAST[0][0], COAST[0][1]); c.moveTo(p0[0], p0[1]);
+    COAST.forEach(function (q) { var p = toPx(q[0], q[1]); c.lineTo(p[0], p[1]); });
+    var pe = toPx(60000, -20000); c.lineTo(pe[0], pe[1]); var ps = toPx(0, -20000); c.lineTo(ps[0], ps[1]); c.closePath(); c.fill();
+    // the land: a faint lattice a kilometre apart, so the scale is readable
+    c.strokeStyle = 'rgba(233,230,216,0.06)'; c.lineWidth = 1;
+    var step = view.scale < 0.02 ? 5000 : 1000;
+    for (var gx = 0; gx <= 60000; gx += step) { var a = toPx(gx, 0), b = toPx(gx, 40000); c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke(); }
+    for (var gy = 0; gy <= 40000; gy += step) { var a2 = toPx(0, gy), b2 = toPx(60000, gy); c.beginPath(); c.moveTo(a2[0], a2[1]); c.lineTo(b2[0], b2[1]); c.stroke(); }
+    // the roads, the car's own brightened
+    ROADS.forEach(function (r, k) {
+      c.strokeStyle = k === car.road ? '#d8d3c0' : '#8a8676'; c.lineWidth = k === car.road ? 3 : 2;
+      c.lineJoin = 'round'; c.beginPath();
+      r.forEach(function (q, i) { var p = toPx(q[0], q[1]); if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); });
+      c.stroke();
+    });
+    // the pumps
+    pumpAt.forEach(function (p) {
+      var q = toPx(p.x, p.y);
+      c.fillStyle = '#f0b34a'; c.fillRect(q[0] - 4, q[1] - 5, 8, 10);
+      c.fillStyle = '#12161b'; c.fillRect(q[0] - 2, q[1] - 3, 4, 3);
+    });
+    // the towns, the port ringed
+    c.font = '11px "IBM Plex Sans Condensed", sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
+    TOWNS.forEach(function (t, i) {
+      var q = toPx(t.x, t.y);
+      var rr = Math.max(3, t.r * view.scale * 2.06);
+      c.fillStyle = t.size === 2 ? '#c9c4b0' : t.size === 1 ? '#a9a593' : '#8a8676';
+      c.beginPath(); c.arc(q[0], q[1], rr, 0, Math.PI * 2); c.fill();
+      if (i === 0) { c.strokeStyle = '#7fd0e8'; c.lineWidth = 1.5; c.beginPath(); c.arc(q[0], q[1], rr + 4, 0, Math.PI * 2); c.stroke(); }
+      c.fillStyle = '#e9e6d8'; c.fillText(t.name, q[0] + rr + 6, q[1]);
+    });
+    // the route: the car to each marker in order
+    if (markers.length) {
+      c.strokeStyle = '#7fd0e8'; c.lineWidth = 1.5; c.setLineDash([6, 5]);
+      c.beginPath(); var pc = toPx(car.x, car.y); c.moveTo(pc[0], pc[1]);
+      markers.forEach(function (m) { var p = toPx(m.x, m.y); c.lineTo(p[0], p[1]); });
+      c.stroke(); c.setLineDash([]);
+      markers.forEach(function (m, i) {
+        var p = toPx(m.x, m.y);
+        c.fillStyle = '#7fd0e8'; c.beginPath(); c.arc(p[0], p[1], 8, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#12161b'; c.font = 'bold 11px "IBM Plex Mono", monospace'; c.textAlign = 'center'; c.fillText(String(i + 1), p[0], p[1] + 0.5);
+        c.textAlign = 'left'; c.font = '11px "IBM Plex Sans Condensed", sans-serif';
+      });
+    }
+    // the car: an arrow at its heading
+    var pcar = toPx(car.x, car.y);
+    c.save(); c.translate(pcar[0], pcar[1]); c.rotate(car.h);
+    c.fillStyle = '#f0b34a'; c.beginPath(); c.moveTo(0, -10); c.lineTo(6, 8); c.lineTo(0, 4); c.lineTo(-6, 8); c.closePath(); c.fill();
+    c.restore();
+    // the scale bar
+    var km = view.scale * 1000 > 60 ? 1 : view.scale * 5000 > 60 ? 5 : 10;
+    var bx = W - 24 - km * 1000 * view.scale, by = H - 22;
+    c.strokeStyle = '#e9e6d8'; c.lineWidth = 2; c.beginPath(); c.moveTo(bx, by); c.lineTo(bx + km * 1000 * view.scale, by); c.stroke();
+    c.fillStyle = '#e9e6d8'; c.font = '11px "IBM Plex Mono", monospace'; c.textAlign = 'right'; c.fillText(km + ' km', W - 24, by - 8);
+    // north
+    c.textAlign = 'center'; c.fillText('N', W - 24 - km * 500 * view.scale, 20);
+    drawRoute();
+  }
+  function drawRoute() {
+    var legs = $('legs'), total = 0, s = '', from = [car.x, car.y];
+    markers.forEach(function (m, i) {
+      var d = Math.hypot(m.x - from[0], m.y - from[1]); total += d; from = [m.x, m.y];
+      s += '<div class="leg"><span>' + (i ? i + ' to ' + (i + 1) : 'car to 1') + '</span><span>' + (d / 1000).toFixed(1) + ' km</span></div>';
+    });
+    legs.innerHTML = s || '<div class="leg"><span style="color:var(--hud-dim)">no markers set</span><span></span></div>';
+    $('total').textContent = (total / 1000).toFixed(1) + ' km';
+    var holds = car.tank * RANGE;
+    var h = $('holds'); h.textContent = Math.round(holds / 1000) + ' km' + (total > holds ? ', short' : '');
+    h.style.color = total > holds ? 'var(--alarm)' : '';
+  }
+  // input on the map: a click sets a marker, a drag pans, the wheel zooms about the cursor
+  var down = null, dragged = false;
+  chart.addEventListener('mousedown', function (e) { down = [e.offsetX, e.offsetY, view.cx, view.cy]; dragged = false; });
+  chart.addEventListener('mousemove', function (e) {
+    if (!down) return;
+    var dx = e.offsetX - down[0], dy = e.offsetY - down[1];
+    if (Math.hypot(dx, dy) > 4) dragged = true;
+    if (dragged) { view.cx = down[2] - dx / view.scale; view.cy = down[3] + dy / view.scale; drawMap(); }
+  });
+  window.addEventListener('mouseup', function (e) {
+    if (!down) return;
+    if (!dragged && e.target === chart) { var m = toM(e.offsetX, e.offsetY); markers.push({ x: m[0], y: m[1] }); drawMap(); }
+    down = null;
+  });
+  chart.addEventListener('contextmenu', function (e) { e.preventDefault(); markers.pop(); drawMap(); down = null; });
+  chart.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var at = toM(e.offsetX, e.offsetY);
+    var f = Math.exp(-e.deltaY * 0.0012);
+    var W = chart.clientWidth;
+    var floor = W / 62000, ceiling = floor * 24;
+    view.scale = Math.max(floor, Math.min(ceiling, view.scale * f));
+    var back = toM(e.offsetX, e.offsetY);
+    view.cx += at[0] - back[0]; view.cy += at[1] - back[1];
+    drawMap();
+  }, { passive: false });
+  $('clear').addEventListener('click', function () { markers = []; drawMap(); });
+
+  // ---------- keys and buttons ----------
+  var screen = $('screen');
+  function key(e) {
+    if (e.key === 'm' || e.key === 'M') { openMap(!mapOn); e.preventDefault(); }
+    else if (e.key === 'g' || e.key === 'G') { fill(); }
+    else if (e.key === 'Escape' && mapOn) { openMap(false); }
+  }
+  screen.addEventListener('keydown', key);
+  $('btn-map').addEventListener('click', function () { openMap(!mapOn); screen.focus(); });
+  $('btn-gas').addEventListener('click', function () { fill(); screen.focus(); });
+  $('btn-pause').addEventListener('click', function () { paused = !paused; this.setAttribute('aria-pressed', paused ? 'true' : 'false'); screen.focus(); });
+
+  // ---------- the loop, with a real clock in the corner ----------
+  function perf() { return performance.now() / 1000; }
+  var last = perf(), frames = 0, acc = 0, fpsAt = last;
+  function frame() {
+    var now = perf(); var dt = Math.min(0.1, now - last); last = now;
+    frames++; acc += dt;
+    if (now - fpsAt >= 0.5) {
+      var fps = frames / acc;
+      els.fps.innerHTML = '<b>' + Math.round(fps) + '</b> fps <span id="ms">' + (1000 / Math.max(1e-6, fps)).toFixed(1) + ' ms</span>';
+      frames = 0; acc = 0; fpsAt = now;
+    }
+    if (!paused) stepCar(dt * SPEEDUP);
+    drawScene(dt * SPEEDUP);
+    drawHud();
+    drawCompass();
+    if (mapOn) drawMap();
+    requestAnimationFrame(frame);
+  }
+  stepCar(0);
+  requestAnimationFrame(frame);
+})();
+</script>
