@@ -1,0 +1,616 @@
+<title>What a City Block Is</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&display=swap">
+
+<style>
+  :root {
+    --paper:   #e7e5dc;
+    --ground:  #dcd9cd;
+    --ink:     #1b1e1a;
+    --faint:   #6d7069;
+    --rule:    #bcb9ac;
+    --tarmac:  #43463f;
+    --walkway: #b3af9e;
+    --paint:   #e9e3cc;
+    --house:   #96543c;
+    --big:     #92a0a6;
+    --yard:    #7c8a56;
+    --signal:  #2f6089;
+    --panel:   #f0eee6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:   #16181a;
+      --ground:  #1e2124;
+      --ink:     #e6e6e0;
+      --faint:   #9a9d98;
+      --rule:    #383c40;
+      --tarmac:  #2a2d31;
+      --walkway: #555a60;
+      --paint:   #c8c2a4;
+      --house:   #b9674a;
+      --big:     #7e8f97;
+      --yard:    #6f8048;
+      --signal:  #6aa6d8;
+      --panel:   #1d2023;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:   #16181a;
+    --ground:  #1e2124;
+    --ink:     #e6e6e0;
+    --faint:   #9a9d98;
+    --rule:    #383c40;
+    --tarmac:  #2a2d31;
+    --walkway: #555a60;
+    --paint:   #c8c2a4;
+    --house:   #b9674a;
+    --big:     #7e8f97;
+    --yard:    #6f8048;
+    --signal:  #6aa6d8;
+    --panel:   #1d2023;
+  }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 15px/1.55 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; }
+
+  h1 {
+    font: 700 clamp(26px, 4.4vw, 40px)/1.08 "IBM Plex Sans Condensed", ui-sans-serif, sans-serif;
+    letter-spacing: -0.015em; margin: 0 0 6px; text-wrap: balance;
+  }
+  .sub { color: var(--faint); max-width: 62ch; margin: 0 0 4px; }
+  .quote {
+    font-style: italic; color: var(--ink); margin: 18px 0 26px;
+    border-left: 3px solid var(--signal); padding: 2px 0 2px 14px; max-width: 62ch;
+  }
+  h2 {
+    font: 600 13px/1.2 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.13em; text-transform: uppercase; color: var(--faint);
+    margin: 38px 0 12px; padding-bottom: 7px; border-bottom: 1px solid var(--rule);
+  }
+  p { max-width: 68ch; }
+  code, .num {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  code { font-size: 0.9em; background: var(--ground); padding: 1px 4px; border-radius: 2px; }
+  b { font-weight: 600; }
+
+  /* ---- the drawing ---- */
+  .plate { background: var(--ground); border: 1px solid var(--rule); }
+  canvas { display: block; width: 100%; height: auto; }
+
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    border-bottom: 1px solid var(--rule); padding: 8px; background: var(--panel);
+  }
+  .bar button {
+    font: 500 12px/1 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    background: transparent; color: var(--faint);
+    border: 1px solid var(--rule); border-radius: 2px;
+    padding: 7px 11px; cursor: pointer;
+  }
+  .bar button:hover { color: var(--ink); }
+  .bar button[aria-pressed="true"] { background: var(--signal); border-color: var(--signal); color: #fff; }
+  .bar button:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+  .slide {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 12px; border-top: 1px solid var(--rule); background: var(--panel);
+  }
+  .slide label {
+    font: 600 12px/1 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+  }
+  .slide input[type=range] { flex: 1 1 200px; accent-color: var(--signal); min-width: 160px; }
+  .slide output { font-family: "IBM Plex Mono", monospace; font-weight: 500; font-size: 13px; }
+
+  /* ---- readouts ---- */
+  .figs {
+    display: grid; gap: 1px; background: var(--rule);
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    border: 1px solid var(--rule); border-top: 0;
+  }
+  .fig { background: var(--panel); padding: 11px 13px; }
+  .fig dt {
+    font: 600 10.5px/1.3 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+  }
+  .fig dd {
+    margin: 3px 0 0; font-family: "IBM Plex Mono", monospace;
+    font-variant-numeric: tabular-nums; font-size: 19px; font-weight: 500;
+  }
+  .fig dd small { font-size: 11px; color: var(--faint); font-weight: 400; }
+
+  .key { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0 0; padding: 0; list-style: none; }
+  .key li { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--faint); }
+  .key i { width: 13px; height: 13px; border: 1px solid rgba(128,128,128,.45); display: block; }
+
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 560px; }
+  th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--rule); }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    font: 600 10.5px/1.3 "IBM Plex Sans Condensed", sans-serif;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+    background: var(--panel); position: sticky; top: 0;
+  }
+  tbody td { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+  tbody td:first-child { font-family: "IBM Plex Sans", sans-serif; }
+  tr[data-us] td { background: color-mix(in srgb, var(--signal) 9%, transparent); }
+  tr[data-us="now"] td { color: var(--house); }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  .cols { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  .card { border: 1px solid var(--rule); border-left: 3px solid var(--signal); padding: 14px 16px; background: var(--panel); }
+  .card h3 { font: 600 15px/1.25 "IBM Plex Sans Condensed", sans-serif; margin: 0 0 6px; letter-spacing: 0.01em; }
+  .card p { margin: 0; font-size: 14px; color: var(--faint); max-width: none; }
+  .card.open { border-left-color: var(--house); }
+
+  .src { font-size: 12.5px; color: var(--faint); }
+  .src a { color: var(--signal); }
+</style>
+
+<div class="wrap">
+
+  <h1>What a city block is</h1>
+  <p class="sub">FREEPORT calls a 10 m square with one house on it a <b>block</b>, and lays a
+  full two lane street with pavements both sides around every one of them. This page
+  is what a block is on real ground, drawn to one scale, and what the arithmetic says
+  it costs to get it wrong.</p>
+
+  <p class="quote">city blocks are more than one building in size lol &middot; a city block should be
+  at least 4x4 houses. large buildings should be the size of 2x2 houses, so those blocks are
+  2x2 buildings there</p>
+
+  <h2>The same scale, six grids</h2>
+  <div class="plate">
+    <div class="bar" id="bar"></div>
+    <canvas id="plan" width="1024" height="620" aria-label="Plan view of a city grid at the selected setting"></canvas>
+    <div class="slide">
+      <label for="side">Lots per block side</label>
+      <input type="range" id="side" min="1" max="6" step="1" value="4">
+      <output id="sideOut"></output>
+    </div>
+  </div>
+  <dl class="figs" id="figs"></dl>
+  <ul class="key">
+    <li><i style="background:var(--tarmac)"></i>carriageway</li>
+    <li><i style="background:var(--walkway)"></i>pavement</li>
+    <li><i style="background:var(--house)"></i>house, one lot</li>
+    <li><i style="background:var(--big)"></i>large building, 2&times;2 lots</li>
+    <li><i style="background:var(--yard)"></i>block interior: yards, courtyard</li>
+  </ul>
+
+  <h2>What the numbers say</h2>
+  <p>A grid has one number that says whether it is a city or a car park: <b>how much of the
+  ground is street</b>. It is <code>1 - (block / pitch)&sup2;</code>, and the pitch is the
+  block plus the street, which is a distinction this codebase already makes
+  (<code>town::PITCH = BLOCK + STREET</code>). Portland's famous 260 ft grid is a
+  <b>200 ft block</b> inside a <b>60 ft right of way</b>: the 260 is the pitch.</p>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>grid</th><th>block</th><th>street</th><th>pitch</th><th>street share</th></tr>
+      </thead>
+      <tbody id="cities"></tbody>
+    </table>
+  </div>
+  <p class="src" style="margin-top:10px">Real dimensions from the sources at the foot of this page.
+  Street share is computed from those figures here, not quoted.</p>
+
+  <h2>Three things real blocks do that this one does not</h2>
+  <div class="cols">
+    <div class="card">
+      <h3>A block holds many lots</h3>
+      <p>A block is the ground <em>inside</em> four streets. Manhattan's is 80 by 274 m,
+      Chicago's and Melbourne's 100 by 200, Barcelona's 113 square, Portland's 61 square.
+      FREEPORT's is 10 m, which is one lot, so every house in the world stands on its own
+      island with tarmac on four sides.</p>
+    </div>
+    <div class="card">
+      <h3>Lots front the street, two tiers deep</h3>
+      <p>Subdivision codes put it plainly: a block is sized to hold <em>two tiers of lots
+      of approximately equal depth</em>, back to back, with the rear boundaries or an alley
+      between them. Lots are deep and narrow, 7.6 to 15 m of frontage by 30 to 38 m deep.
+      Nobody plats a lot with no street on it.</p>
+    </div>
+    <div class="card">
+      <h3>The middle is not building</h3>
+      <p>Cerd&agrave; drew the Eixample with <em>two or three sides built around a garden</em>.
+      Developers filled all four sides and the interior too, which is the difference between
+      the plan and the Barcelona that exists. Either way the interior is a decision, and a
+      4&times;4 block has one to make: four lots in the middle with no frontage.</p>
+    </div>
+  </div>
+
+  <h2>What this suggests for FREEPORT</h2>
+  <p>Keep the 10 m square as the <b>lot</b>, which is what the baked building library is cut
+  to, and make a <b>block</b> four lots a side. The street grid then runs on block boundaries
+  only. One rule decides the interior, and it is the zone rule already in the code:</p>
+
+  <div class="cols">
+    <div class="card">
+      <h3>Downtown &mdash; filled, 2&times;2 large</h3>
+      <p>Four large buildings of 2&times;2 lots each fill the block. Every one of them is a
+      corner building fronting two streets. This is the owner's own arithmetic and it is a
+      Manhattan tower block.</p>
+    </div>
+    <div class="card">
+      <h3>Town &mdash; hollow, 12 round a court</h3>
+      <p>The twelve perimeter lots build, the 2&times;2 interior is a courtyard. Every
+      building fronts a street; nothing is platted without frontage. This is Cerd&agrave;'s
+      hollow block.</p>
+    </div>
+    <div class="card">
+      <h3>Suburb &mdash; hollow and sparse</h3>
+      <p>The same perimeter, thinned by the fractal grain the towns already carry, with the
+      interior as gardens. What makes a suburb a suburb stays the space, not the house.</p>
+    </div>
+  </div>
+
+  <h2>What it would cost, named rather than hidden</h2>
+  <div class="cols">
+    <div class="card open">
+      <h3>Large buildings need a re-bake</h3>
+      <p>The library is thirteen Blender bakes at <code>width 10.0, depth 10.0</code>. A
+      2&times;2 building is 20 m, so the large kinds want a bake at the new footprint. The
+      guard for it already exists: <code>Bake::models</code> refuses a bake that does not fit
+      the block its kind covers.</p>
+    </div>
+    <div class="card open">
+      <h3>More buildings per town</h3>
+      <p>Filling in street that should never have been street means more of everything: at
+      4&times;4 hollow blocks a town of the same radius carries about <b>1.7&times;</b> the
+      buildings. That is the point of the change and it is also its cost, in triangles,
+      collision boxes and lamps.</p>
+    </div>
+    <div class="card open">
+      <h3>Every street number moves</h3>
+      <p><code>PITCH</code> is read by the street mesh, the traffic graph, the route a stolen
+      car takes out of town, and the slip a highway joins on. All of them derive it from one
+      constant, so they follow &mdash; but every measured number in the design notes is
+      re-measured.</p>
+    </div>
+  </div>
+
+  <h2>Sources</h2>
+  <p class="src">
+    <a href="https://en.wikipedia.org/wiki/City_block">City block</a> (Manhattan 264&times;900 ft,
+    Chicago and Melbourne 330&times;660 ft, the alley down the middle) &middot;
+    <a href="https://en.wikipedia.org/wiki/Eixample">Eixample</a> (octagonal blocks, chamfers,
+    two or three sides around a garden as planned) &middot;
+    <a href="https://urbanland.uli.org/planning-design/northwestern-small-blocks-history-rationale-behind-urban-model">Northwestern Small Blocks</a>
+    (Portland's 200 ft block in a 60 ft right of way) &middot;
+    <a href="https://ecode360.com/8911490">Breckenridge MN design standards</a> and
+    <a href="https://codelibrary.amlegal.com/codes/marshalltown/latest/marshalltown_ia/0-0-0-25062">Marshalltown IA plat standards</a>
+    (two tiers of lots, 20 ft alleys) &middot;
+    <a href="https://www.gothamcenter.org/blog/notes-on-19th-century-lot-sizes">Notes on 19th Century Lot Sizes</a>
+    (the 25&times;100 ft lot) &middot;
+    <a href="https://dl.acm.org/doi/pdf/10.1145/1185657.1185716">Procedural Modeling of Urban Environments</a>
+    (Parish and M&uuml;ller: roads first, then blocks, then parcels).
+  </p>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ------------------------------------------------------------ the numbers --
+  // FREEPORT's own cross section, from town/street.rs. One number said
+  // several ways: the street is the lanes plus the pavements, and the
+  // pitch is that plus the block. Nothing here is a second copy.
+  const LANE = 2.75, WALK = 1.5, LOT = 10.0;
+  const STREET = 2 * (LANE + WALK);          // 8.5 m
+  const pitchOf = side => side * LOT + STREET;
+
+  // How much ground the frame carries and how far the drawn town
+  // reaches, both in metres. One scale for all six grids, so a FREEPORT
+  // block and a Manhattan block are the same picture's worth of ground:
+  // at 520 m across, Manhattan's own 274 m block just fills the frame
+  // down its long axis, and the town shows its core, its middle and its
+  // suburb in one view rather than a screenful of downtown.
+  const FRAME = 520, TOWN_R = 230;
+
+  // Real grids, block and street in metres, from the sources listed above.
+  // A rectangular block carries two numbers; a square one repeats itself.
+  const CITIES = [
+    { name: "FREEPORT today",      b: [10, 10],   s: [8.5, 8.5],   us: "now",
+      note: "one building per block" },
+    { name: "FREEPORT 4×4",   b: [40, 40],   s: [8.5, 8.5],   us: "next",
+      note: "sixteen lots per block" },
+    { name: "Portland, OR",        b: [61, 61],   s: [18.3, 18.3], note: "200 ft block, 60 ft right of way" },
+    { name: "Barcelona Eixample",  b: [113, 113], s: [20, 20],     note: "Cerdà's octagonal block" },
+    { name: "Chicago / Melbourne", b: [100, 200], s: [20, 20],     note: "330 × 660 ft, alley down the middle" },
+    { name: "Manhattan",           b: [80, 274],  s: [18.3, 30.5], note: "street 60 ft, avenue 100 ft" },
+  ];
+  const share = c => 1 - (c.b[0] * c.b[1]) / ((c.b[0] + c.s[0]) * (c.b[1] + c.s[1]));
+
+  // ------------------------------------------------------------ the drawing --
+  const cv = document.getElementById("plan");
+  const ctx = cv.getContext("2d");
+  let view = "freeport", side = 4;
+
+  // Read once a frame, not once a rectangle: this draws thousands.
+  let PAL = {};
+  function palette() {
+    const cs = getComputedStyle(document.documentElement);
+    for (const n of ["--ground", "--ink", "--tarmac", "--walkway", "--house", "--big", "--yard"])
+      PAL[n] = cs.getPropertyValue(n).trim();
+  }
+  const css = n => PAL[n];
+
+  // How many storeys a zone builds, which is only ever used to shade: a
+  // plan cannot show height, so a taller building is a darker one.
+  // Which zone a block is in, by how far out it stands. The real rule is
+  // the demand field's own thresholds; this is that shape at a glance.
+  function zoneAt(metres) {
+    const d = metres / TOWN_R;
+    if (d < 0.32) return "core";
+    if (d < 0.70) return "town";
+    return "suburb";
+  }
+
+  // A deterministic coin for a lot, so the picture is the same every
+  // draw and a thinned suburb is thinned the same way twice.
+  function coin(i, j, k) {
+    let h = (i * 374761393 + j * 668265263 + k * 1274126177) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+
+  // The block's own edge, so a group of lots reads as one thing.
+  function outline(ox, oz, block, m) {
+    ctx.strokeStyle = css("--ink"); ctx.globalAlpha = 0.18; ctx.lineWidth = 1;
+    ctx.strokeRect(m.px(ox) + 0.5, m.pz(oz) + 0.5, block * m.k - 1, block * m.k - 1);
+    ctx.globalAlpha = 1;
+  }
+
+  function drawStreet(x, z, w, d, m) {
+    // The cross section, not a box: carriageway between two pavements.
+    ctx.fillStyle = css("--walkway");
+    ctx.fillRect(m.px(x), m.pz(z), w * m.k, d * m.k);
+    ctx.fillStyle = css("--tarmac");
+    if (w > d) ctx.fillRect(m.px(x), m.pz(z + WALK), w * m.k, (d - 2 * WALK) * m.k);
+    else       ctx.fillRect(m.px(x + WALK), m.pz(z), (w - 2 * WALK) * m.k, d * m.k);
+  }
+
+  // A town's worth of blocks at the current setting, in metres, centred
+  // on nought. Returns what was drawn so the figures can be counted
+  // rather than asserted: the page measures its own picture.
+  function drawFreeport(m, side) {
+    const pitch = pitchOf(side), block = side * LOT;
+    const span = Math.ceil(TOWN_R / pitch) + 2;
+    const inTown = (i, j) => Math.hypot(i, j) * pitch <= TOWN_R;
+    let lots = 0, footprint = 0, blocks = 0;
+
+    // A STREET RUNS WHERE SOMEBODY BUILT and nowhere else, which is the
+    // rule `town::streets_of` already keeps: a piece is laid along a
+    // block's frontage only when that block or its neighbour carries a
+    // lot. Drawn any other way a town is a grid clipped to a circle,
+    // with tarmac running off into open country.
+    for (let i = -span; i <= span; i++) {
+      for (let j = -span; j <= span; j++) {
+        const ox = i * pitch - block / 2, oz = j * pitch - block / 2;
+        if (inTown(i, j) || inTown(i - 1, j))
+          drawStreet(ox - STREET, oz - STREET, STREET, block + 2 * STREET, m);
+        if (inTown(i, j) || inTown(i, j - 1))
+          drawStreet(ox, oz - STREET, block, STREET, m);
+      }
+    }
+
+    for (let i = -span; i <= span; i++) {
+      for (let j = -span; j <= span; j++) {
+        if (!inTown(i, j)) continue;
+        const ox = i * pitch - block / 2, oz = j * pitch - block / 2;
+        blocks++;
+        const zone = zoneAt(Math.hypot(i, j) * pitch);
+
+        if (side === 1) {
+          // Today: the block IS the lot and it carries one building.
+          ctx.fillStyle = zone === "core" ? css("--big") : css("--house");
+          ctx.fillRect(m.px(ox), m.pz(oz), block * m.k, block * m.k);
+          lots++; footprint += block * block;
+          continue;
+        }
+
+        if (zone === "core") {
+          // Filled: large buildings of 2x2 lots, every one a corner.
+          const big = Math.floor(side / 2);
+          ctx.fillStyle = css("--big");
+          for (let a = 0; a < big; a++) for (let b = 0; b < big; b++) {
+            ctx.fillRect(m.px(ox + a * 2 * LOT) + 1, m.pz(oz + b * 2 * LOT) + 1,
+                         2 * LOT * m.k - 2, 2 * LOT * m.k - 2);
+            lots++; footprint += 4 * LOT * LOT;
+          }
+          // Whatever the halving left over stays yard.
+          if (side & 1) {
+            ctx.fillStyle = css("--yard");
+            ctx.fillRect(m.px(ox + big * 2 * LOT), m.pz(oz), LOT * m.k, block * m.k);
+            ctx.fillRect(m.px(ox), m.pz(oz + big * 2 * LOT), block * m.k, LOT * m.k);
+          }
+          outline(ox, oz, block, m);
+          continue;
+        }
+
+        // Hollow: the perimeter builds and the interior is a court.
+        if (side >= 3) {
+          ctx.fillStyle = css("--yard");
+          ctx.fillRect(m.px(ox + LOT), m.pz(oz + LOT), (block - 2 * LOT) * m.k, (block - 2 * LOT) * m.k);
+        }
+        const fill = zone === "suburb" ? 0.55 : 1.0;
+        ctx.fillStyle = css("--house");
+        for (let a = 0; a < side; a++) for (let b = 0; b < side; b++) {
+          const rim = a === 0 || b === 0 || a === side - 1 || b === side - 1;
+          if (!rim && side >= 3) continue;             // no frontage, no lot
+          if (coin(i * 31 + a, j * 31 + b, 7) > fill) continue;
+          ctx.fillRect(m.px(ox + a * LOT) + 1, m.pz(oz + b * LOT) + 1, LOT * m.k - 2, LOT * m.k - 2);
+          lots++; footprint += LOT * LOT;
+        }
+        outline(ox, oz, block, m);
+      }
+    }
+    return { lots, footprint, blocks, pitch, block, side };
+  }
+
+  function drawCity(m, c) {
+    const [bw, bd] = c.b, [sw, sd] = c.s;
+    const px = bw + sw, pz = bd + sd;
+    const span = Math.ceil(FRAME / Math.min(px, pz)) + 1;
+    for (let i = -span; i <= span; i++) {
+      for (let j = -span; j <= span; j++) {
+        const ox = i * px - bw / 2, oz = j * pz - bd / 2;
+        drawStreet(ox - sw, oz - sd, sw, bd + 2 * sd, m);
+        drawStreet(ox, oz - sd, bw, sd, m);
+        // A real block drawn the way this page reads one: a built
+        // perimeter two tiers deep round whatever the middle is.
+        ctx.fillStyle = css("--yard");
+        ctx.fillRect(m.px(ox), m.pz(oz), bw * m.k, bd * m.k);
+        ctx.fillStyle = css("--house");
+        const tier = Math.min(30, bw / 2, bd / 2);      // a lot is about 30 m deep
+        ctx.fillRect(m.px(ox), m.pz(oz), bw * m.k, tier * m.k);
+        ctx.fillRect(m.px(ox), m.pz(oz + bd - tier), bw * m.k, tier * m.k);
+        ctx.fillRect(m.px(ox), m.pz(oz), tier * m.k, bd * m.k);
+        ctx.fillRect(m.px(ox + bw - tier), m.pz(oz), tier * m.k, bd * m.k);
+        ctx.strokeStyle = css("--ink"); ctx.globalAlpha = 0.18; ctx.lineWidth = 1;
+        ctx.strokeRect(m.px(ox) + 0.5, m.pz(oz) + 0.5, bw * m.k - 1, bd * m.k - 1);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  function scaleBar(m) {
+    // Every drawing on this page is at ONE scale, so the bar is the
+    // whole argument: a FREEPORT block against a Manhattan one.
+    const want = 100;                                   // metres
+    const x0 = 18, y0 = cv.height / m.dpr - 26;
+    ctx.strokeStyle = css("--ink"); ctx.fillStyle = css("--ink");
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x0 + want * m.k, y0);
+    ctx.moveTo(x0, y0 - 5); ctx.lineTo(x0, y0 + 5);
+    ctx.moveTo(x0 + want * m.k, y0 - 5); ctx.lineTo(x0 + want * m.k, y0 + 5);
+    ctx.stroke();
+    ctx.font = '500 12px "IBM Plex Mono", monospace';
+    ctx.fillText(want + " m", x0 + want * m.k + 9, y0 + 4);
+  }
+
+  function render() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = cv.clientWidth || 1024, h = Math.round(w * 0.6);
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // One scale for all six grids, which is the whole argument.
+    const k = w / FRAME;
+    const m = { k, dpr, px: x => w / 2 + x * k, pz: z => h / 2 + z * k };
+
+    palette();
+    ctx.fillStyle = css("--ground");
+    ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
+
+    let drawn = null;
+    if (view === "freeport") drawn = drawFreeport(m, side);
+    else drawCity(m, CITIES.find(c => c.name === view));
+    ctx.restore();
+    scaleBar(m);
+    figures(drawn);
+  }
+
+  // ------------------------------------------------------------ the figures --
+  const FIGS = document.getElementById("figs");
+  function fig(label, value, note) {
+    return `<div class="fig"><dt>${label}</dt><dd>${value}${note ? ` <small>${note}</small>` : ""}</dd></div>`;
+  }
+  function figures(drawn) {
+    let c;
+    if (drawn) {
+      c = { b: [drawn.block, drawn.block], s: [STREET, STREET] };
+      const perHa = drawn.blocks ? (drawn.lots / drawn.blocks) / (drawn.pitch ** 2) * 10000 : 0;
+      const cover = drawn.blocks ? (drawn.footprint / drawn.blocks) / (drawn.pitch ** 2) : 0;
+      FIGS.innerHTML =
+        fig("Block", `${drawn.block.toFixed(0)} m`, `${drawn.side}×${drawn.side} lots`) +
+        fig("Pitch", `${drawn.pitch.toFixed(1)} m`, "block + street") +
+        fig("Street share", `${(share(c) * 100).toFixed(1)}%`, "of the ground") +
+        fig("Buildings", `${perHa.toFixed(0)}`, "per hectare") +
+        fig("Built ground", `${(cover * 100).toFixed(0)}%`, "footprint");
+    } else {
+      const city = CITIES.find(x => x.name === view);
+      FIGS.innerHTML =
+        fig("Block", city.b[0] === city.b[1] ? `${city.b[0]} m` : `${city.b[0]}×${city.b[1]} m`) +
+        fig("Street", city.s[0] === city.s[1] ? `${city.s[0]} m` : `${city.s[0]}/${city.s[1]} m`) +
+        fig("Pitch", `${(city.b[0] + city.s[0]).toFixed(0)} m`, "short way") +
+        fig("Street share", `${(share(city) * 100).toFixed(1)}%`, "of the ground") +
+        fig("Lots across", `${Math.round(city.b[0] / LOT)}`, "at a 10 m lot");
+    }
+  }
+
+  // ------------------------------------------------------------ the controls --
+  const BAR = document.getElementById("bar");
+  const VIEWS = [
+    ["today", "FREEPORT today"], ["freeport", "FREEPORT blocks"],
+    ["Portland, OR", "Portland"], ["Barcelona Eixample", "Barcelona"],
+    ["Chicago / Melbourne", "Chicago"], ["Manhattan", "Manhattan"],
+  ];
+  BAR.innerHTML = VIEWS.map(([v, t]) =>
+    `<button type="button" data-v="${v}">${t}</button>`).join("");
+
+  // The tab and the slider say the same thing, so one of them decides:
+  // "today" IS one lot to a block, and pressing it moves the slider.
+  function press() {
+    for (const el of BAR.children) {
+      const v = el.dataset.v;
+      const on = v === "today"    ? (view === "freeport" && side === 1)
+               : v === "freeport" ? (view === "freeport" && side > 1)
+               : v === view;
+      el.setAttribute("aria-pressed", String(on));
+    }
+  }
+  BAR.addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.v === "today") { view = "freeport"; side = 1; }
+    else if (b.dataset.v === "freeport") { view = "freeport"; if (side === 1) side = 4; }
+    else view = b.dataset.v;
+    SIDE.value = String(side);
+    sideLabel(); press(); render();
+  });
+
+  const SIDE = document.getElementById("side"), SIDE_OUT = document.getElementById("sideOut");
+  function sideLabel() {
+    const p = pitchOf(side);
+    SIDE_OUT.textContent = `${side}×${side} · block ${(side * LOT).toFixed(0)} m · pitch ${p.toFixed(1)} m`;
+  }
+  SIDE.addEventListener("input", () => {
+    side = +SIDE.value;
+    view = "freeport";                          // the slider is about FREEPORT
+    sideLabel(); press(); render();
+  });
+
+  // ------------------------------------------------------------- the table --
+  document.getElementById("cities").innerHTML = CITIES.map(c => {
+    const b = c.b[0] === c.b[1] ? `${c.b[0]}` : `${c.b[0]}×${c.b[1]}`;
+    const s = c.s[0] === c.s[1] ? `${c.s[0]}` : `${c.s[0]}/${c.s[1]}`;
+    const p = c.b[0] === c.b[1] ? `${(c.b[0] + c.s[0]).toFixed(0)}`
+                                : `${(c.b[0] + c.s[0]).toFixed(0)}×${(c.b[1] + c.s[1]).toFixed(0)}`;
+    return `<tr${c.us ? ` data-us="${c.us}"` : ""}><td>${c.name}<br><span class="src">${c.note}</span></td>` +
+           `<td>${b} m</td><td>${s} m</td><td>${p} m</td><td>${(share(c) * 100).toFixed(1)}%</td></tr>`;
+  }).join("");
+
+  sideLabel();
+  press();
+  render();
+  addEventListener("resize", render);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+  document.fonts?.ready.then(render);
+})();
+</script>
