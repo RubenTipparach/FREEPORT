@@ -573,6 +573,9 @@ pub use align::*;
 pub mod commute;
 
 mod reach;
+
+/// Shared trunks: where two roads run on one line, one owns it.
+pub mod trunk;
 pub use reach::*;
 
 pub mod ribbon;
@@ -886,12 +889,7 @@ fn smooth(mut run: Vec<f64>, gap: &[f64], dry: f64, mid: &[f64]) -> Vec<f64> {
     for h in &mut run {
         *h = h.max(dry);
     }
-    for k in 1..run.len() {
-        run[k] = run[k].max(run[k - 1] - STEEPEST * gap[k - 1]);
-    }
-    for k in (0..run.len() - 1).rev() {
-        run[k] = run[k].max(run[k + 1] - STEEPEST * gap[k]);
-    }
+    trunk::envelope(&mut run, gap);
     // And the EMBANKMENT, last, so it rides on top of a profile that
     // already clears the ground everywhere.
     for h in &mut run {

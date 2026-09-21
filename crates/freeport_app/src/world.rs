@@ -73,6 +73,14 @@ pub(crate) struct Route {
     /// (`road::station::plan`), planned once the slips are spliced so
     /// the pieces they name are the pieces that are drawn.
     pub pumps: Vec<road::station::Station>,
+    /// Which points stand on another road's TRUNK or fork off it through
+    /// the owner's corridor (`road::trunk::merge`), so the census can
+    /// tell a join from a mouth left bare.
+    pub trunk: Vec<bool>,
+    /// How many points at the head and the tail stand on another road's
+    /// TRUNK: an end that is not this road's own gets no slip, because
+    /// the owner's is there.
+    pub shared: (usize, usize),
 }
 
 /// One BUILT town: the boxes its models were drawn from, the lamps in
@@ -328,6 +336,7 @@ fn route_of(road: &Road, run: &[f64], radius: f64, discs: &freeport_core::field:
     let open = road::open(&line, radius, discs);
     let lit = road::lit(&line, radius, discs);
     Route {
+        trunk: vec![false; line.len()],
         line,
         run: run.to_vec(),
         graded: open.clone(),
@@ -336,6 +345,84 @@ fn route_of(road: &Road, run: &[f64], radius: f64, discs: &freeport_core::field:
         slip: (0, 0),
         sea: SEA,
         pumps: Vec::new(),
+        shared: (0, 0),
+    }
+}
+
+/// Every road's laying handed to `road::trunk::merge`, which moves a road
+/// standing on another's trunk onto that road's line and profile.
+fn merge_trunks(routes: &mut [Route], radius: f64) -> road::trunk::Merged {
+    let mut lanes: Vec<road::trunk::Laying<'_>> = routes
+        .iter_mut()
+        .map(|r| road::trunk::Laying {
+            line: &mut r.line,
+            run: &mut r.run,
+            open: &mut r.open,
+            graded: &mut r.graded,
+            lit: &mut r.lit,
+            trunk: &mut r.trunk,
+            shared: &mut r.shared,
+        })
+        .collect();
+    road::trunk::merge(&mut lanes, radius)
+}
+
+/// Every road's centreline, profile and flags, MERGED where they share
+/// a trunk, and the corridor under each one pushed onto `sites`.
+///
+/// The merge comes before anything is cut from the lines: every road
+/// out of a town runs on the same chain of waypoints as its neighbours
+/// until their routes split, and laid on their own they stood three and
+/// four deep with the ground stepping between their profiles.
+fn lay_routes(
+    roads: &[Road],
+    runs: &[Vec<f64>],
+    radius: f64,
+    discs: &freeport_core::field::Sites,
+    sites: &mut Vec<freeport_core::town::Site>,
+) -> Vec<Route> {
+    let mut routes: Vec<Route> = roads
+        .iter()
+        .zip(runs)
+        .map(|(road, run)| route_of(road, run, radius, discs))
+        .collect();
+    let merged = merge_trunks(&mut routes, radius);
+    info!(
+        "{} roads stand on another road's trunk for {} points, the longest trunk {:.1} km, the steepest piece at a shared point climbs at {:.1}%, and the profiles settled in {} passes",
+        merged.roads,
+        merged.points,
+        merged.longest / 1000.0,
+        merged.steepest * 100.0,
+        merged.passes
+    );
+    for route in &routes {
+        sites.extend(road::corridor_of(&route.line, &route.run, &route.open));
+    }
+    routes
+}
+
+/// The SLIPS, one at each end of every road, which is what turns a
+/// highway that STOPS near a town into one that joins its streets.
+///
+/// AFTER the sites are installed, and that ordering is the whole of it.
+/// A slip reads `town::surface_radius` to stand on the ground, and the
+/// ground is the field WITH the towns' plateaus and the roads' corridors
+/// cut into it: read off a planet whose `sites` are still empty it
+/// stands on the BARE relief instead, which near a town's mouth is
+/// metres under the corridor's own embankment. The first picture of one
+/// showed the slip's own SHADOW curving across an empty field with the
+/// tarmac nowhere in it, which is a road buried under the ground it was
+/// laid on.
+fn join_towns(routes: &mut [Route], roads: &[Road], towns: &[Town], planet: &Planet) {
+    for (route, road) in routes.iter_mut().zip(roads) {
+        for town_of in [road.from, road.to] {
+            // An end standing on another road's trunk has that road's
+            // slip and none of its own.
+            if let Some(town) = towns.get(town_of).filter(|_| route.shared.0 == 0) {
+                splice_slip(route, planet, town, planet.radius);
+            }
+            route.flip();
+        }
     }
 }
 
@@ -373,33 +460,10 @@ pub(crate) fn build(args: &Args) -> World {
     // town's to hold and its streets are the town's to pave.
     let discs: freeport_core::field::Sites = towns.iter().map(town::site_of).collect();
     let mut sites: Vec<_> = discs.iter().copied().collect();
-    let mut routes = Vec::with_capacity(roads.len());
-    for (road, run) in roads.iter().zip(&runs) {
-        sites.extend(road::corridor(road, run, planet.radius, &discs));
-        routes.push(route_of(road, run, planet.radius, &discs));
-    }
+    let mut routes = lay_routes(&roads, &runs, planet.radius, &discs, &mut sites);
     let corridors = sites.len() - towns.len();
     planet.sites = sites.into();
-    // And the SLIPS, one at each end of every road, which is what turns
-    // a highway that STOPS near a town into one that joins its streets.
-    //
-    // AFTER the sites are installed, and that ordering is the whole of
-    // it. A slip reads `town::surface_radius` to stand on the ground,
-    // and the ground is the field WITH the towns' plateaus and the
-    // roads' corridors cut into it: read off a planet whose `sites` are
-    // still empty it stands on the BARE relief instead, which near a
-    // town's mouth is metres under the corridor's own embankment. The
-    // first picture of one showed the slip's own SHADOW curving across
-    // an empty field with the tarmac nowhere in it, which is a road
-    // buried under the ground it was laid on.
-    for (route, road) in routes.iter_mut().zip(&roads) {
-        for town_of in [road.from, road.to] {
-            if let Some(town) = towns.get(town_of) {
-                splice_slip(route, &planet, town, planet.radius);
-            }
-            route.flip();
-        }
-    }
+    join_towns(&mut routes, &roads, &towns, &planet);
     // And the GAS STATIONS, after the slips, so the pieces they stand
     // on are the pieces that are drawn.
     let mut pumps = 0;
@@ -588,7 +652,9 @@ impl Route {
         self.open.reverse();
         self.graded.reverse();
         self.lit.reverse();
+        self.trunk.reverse();
         self.slip = (self.slip.1, self.slip.0);
+        self.shared = (self.shared.1, self.shared.0);
         // A station keeps its place on the ground: its piece counts from
         // the other end now and its side is the other side of a road
         // walked the other way.
@@ -669,6 +735,9 @@ fn splice_slip(route: &mut Route, planet: &Planet, town: &freeport_core::town::T
         .collect();
     route.lit = std::iter::repeat_n(lit, head)
         .chain(route.lit[rest..].iter().copied())
+        .collect();
+    route.trunk = std::iter::repeat_n(false, head)
+        .chain(route.trunk[rest..].iter().copied())
         .collect();
     route.slip.0 = head;
 }

@@ -195,6 +195,35 @@ a couple of kilometres is wider than that, so a cutting the mesher
 cannot resolve closes over the road, while a fill it cannot resolve
 merely leaves the road standing proud of the ground.
 
+## Junctions, where two alignments share one formation
+
+Every road on this body comes off one Dijkstra tree, so the roads out
+of a town run on the same chain of waypoints until their routes split
+and are laid over one another for kilometres. Practice has no such
+thing as two carriageways on one formation: where two alignments meet
+they are ONE road, graded to one profile, and a road that leaves it
+does so on a ramp at the design grade. `road::trunk` is that rule at
+load, and its numbers:
+
+| part | real practice | FREEPORT |
+| --- | --- | --- |
+| two alignments are one road when | their carriageways overlap | centrelines within 4 m (`trunk::SHARE`), a lane and a half, since a carriageway is two lanes of 2.75 m |
+| a crossing is not a merge when | the overlap is a junction's own length | fewer than 3 stations, 170 m (`trunk::LEAST`) |
+| the shared profile | the higher alignment's, filled up to, never cut down to | the highest of the roads on it, every road raised to it at the grade (`trunk::merge`) |
+| the merging road's tarmac over the trunk's | a surfacing overlay, 25 to 50 mm | 30 mm (`trunk::FORK_LIFT`) |
+| the ramp off a trunk | the design grade, 7% here | `road::STEEPEST`, held by the same envelope `smooth` bakes with |
+
+The shared profile is the HIGHER one and not the owner's, for the reason
+the grade section gives: a road only ever rises, because a cutting is
+the one thing this terrain cannot draw at distance. A road pinned down
+to a lower trunk has to climb back to its own baked profile past the
+fork, and its own profile was raised to hold the grade toward its own
+high ground, so the whole climb landed on the one piece past the fork:
+measured, 103% on the steepest fork on the body. Raising the trunk to
+the higher road and easing every road off it at the grade puts nothing
+over seven per cent anywhere, and the price is embankment on the lower
+road through the junction, which is what a real merge is built on.
+
 ## Sight distance and clear zones, which this world does not model
 
 Real geometry is driven as much by what a driver can SEE as by what a

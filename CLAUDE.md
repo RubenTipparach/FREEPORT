@@ -2352,6 +2352,115 @@ the highways themselves are over the seven per cent, and the port's slip
 stands over its ground everywhere by its own lift, -0.05 m at the
 worst**, at the crossing end where the plateau weighs 1.00.
 
+## Two highways on ONE TRUNK are one road, and the trunk carries the higher profile
+
+The owner's picture was two highways overlapping out of the port
+without merging into one geometry, and the second was the consequence:
+"I get stuck instantly as I drive down the road". Both are one fact
+about the router. Every road on a body comes off ONE Dijkstra tree
+(`road::route`), so the roads leaving a town run on the same chain of
+waypoints until their routes split, and each was then laid on its
+own: its own tarmac, its own corridor, its own mound and its own
+profile, three and four deep on the trunk out of a city. Measured on
+the atlas: **727 of 730 road ends stand on a trunk shared with another
+road, 1,573 pairs of roads share waypoints, the deepest share is 23
+waypoints (230 km), and all four of the port's own roads share their
+first two**.
+
+**The profiles DIFFER, and that is the wall.** `road::smooth` envelopes
+each road over its own whole length, so two roads surveyed over the
+same ground on the trunk carry two profiles there, metres apart
+wherever one of them had a hill of its own to climb toward. The field
+takes the nearest arc's level, and two arcs a metre apart at two
+heights is ground that steps between them: a car driving the trunk met
+a wall in the road.
+
+**The merge is at LOAD, in `road/trunk.rs`, and the atlas is untouched.**
+The file keeps each road's own line and profile; `trunk::merge` decides
+who owns what once the centrelines are laid, and `world::lay_routes`
+runs it before a single corridor is cut. The lowest indexed road owns
+a trunk. Every later road standing within `SHARE` (4 m, a lane and a
+half: where two carriageways overlap) of an earlier one for at least
+`LEAST` (three) stations is SNAPPED onto the owner's line there and
+CLOSED: no tarmac, no corridor, no mound and no lamps, because the
+owner's are there, and no slip of its own at an end that is on a
+trunk, which `Route::shared` says. A road forks off through the
+owner's corridor and its tarmac is held `FORK_LIFT` (3 cm, a surfacing
+overlay) over the trunk's where the two overlap, so the two sheets do
+not fight for the depth test. `docs/civil-engineering.md` carries the
+table.
+
+**The trunk's profile is the HIGHEST of the roads on it, and that is
+the envelope's own rule arriving at a junction.** The first cut pinned
+a sharer DOWN to the owner's profile. A road only ever rises, so the
+sharer then had to climb back to its own baked profile past the fork,
+and its profile was raised precisely to hold the grade toward its own
+high ground: the whole climb landed on the one piece past the fork,
+and the steepest fork on the body came out at **103%**. So the owner is
+raised to the sharer wherever the sharer stands higher, eased along its
+own length at `STEEPEST` by the very envelope `smooth` bakes with
+(`trunk::envelope`, one function with two callers now), and the sharer
+is pinned to it. A raise on one road is a demand on every road it
+shares a trunk with, so `merge` carries the profiles round until
+nothing moves by a millimetre.
+
+**And the raise walks the pins HIGHEST ROAD FIRST, or it never
+settles.** An owner's point can itself be a pin on a road below it.
+Raised in road order, a demand road C put on road B's pinned point was
+reset by B's own pin to A before B's pin could carry it down to A,
+C's own envelope raised it again the next pass, and the three chased
+each other to the cap: **64 passes and four shared pieces left at up
+to 47.5%**. Every owner has a lower index than its sharer, so walking
+the pins downward carries a demand the whole way down its chain in one
+pass, and `a_demand_on_a_pinned_point_is_carried_down_to_the_road_that_owns_it`
+holds it with a road that forks off a road that forks off the owner.
+
+**What a JOIN is not, is a dead end.** The harness's census counted
+every place a road's tarmac stops as a mouth left bare, and a road
+joining a trunk stops laying tarmac: 2,027 mouths with the worst 98 km
+from any paving, which was a fork in open country and not a town
+anybody had left a road short of. `Route::trunk` marks the points that
+stand on another road's trunk or fork off it, and the census reports
+the joins on their own.
+
+**What is MISSING, named rather than hidden.** A road that climbs off a
+trunk lifts the trunk with it through the fork, which is embankment on
+the lower road through the junction and is what a real merge is built
+on; it is not a ramp beside the trunk, and there is no widening, no
+give way and no fan of tarmac where the two carriageways part, so the
+fork's own tarmac is two sheets a lip apart and the mound is the
+owner's. A CROSSING, two roads meeting at an angle for fewer than three
+stations, is left exactly as it was, which is the junction the roads
+section already names as missing.
+
+**And a point is pinned ONCE.** A run's fork zone was extended while
+the point was inside any owner's corridor, so it ran straight through
+the next run on the same road and pinned that run's interior a second
+time with the fork's lip: a point pinned once at the trunk's height and
+once a lip over it asked its owner for the lip every pass, and the
+profiles rose three centimetres a pass to the cap. A fork zone stops at
+the neighbouring run now. And a raise is spread over the owner's
+segment by the interpolation's own weights, because raised at both ends
+by the whole difference a pin standing at a station lifted the next
+station too and the next pin lifted it again: the fixture's ten point
+fork came out **two metres over what any road on it stood at**, and
+`a_road_that_leaves_a_trunk_and_comes_back_is_pinned_once_at_every_point`
+holds both.
+
+Measured on the harness body, one binary either side: **350 of the 365
+roads stand on another road's trunk for 78,182 points, the longest
+trunk is 226.7 km, the profiles settle in 8 passes, and the steepest
+piece touching a shared point climbs at 7.0%**, which is the grade and
+nothing over it; **nought of 718,864 pieces on the highways themselves
+are over the seven per cent**, against four at up to 47.5% and one at
+103% on the way here. The body cuts **633,198 corridor pieces against
+708,185**, lays **10,377 stretches of tarmac against 11,664** and
+carries **1,621 gas stations against 1,757**, which is the trunks no
+longer cut, laid and furnished three and four times over. The census
+reads **581 joins and 1,446 bare mouths through settlements with the
+worst 124 m from any paving**, against 2,027 mouths and 97,890 m with
+the joins counted among them.
+
 ## A building is built of a TRADE, and a town is not one grey
 
 Every house and every office wore `CONCRETE`, so a suburb and a downtown
@@ -4970,6 +5079,20 @@ Numbers in the commit message. What is measured so far:
   0 is 224 buildings, 1,821 pieces of street, 51,539 collision boxes and
   448 lamps, and the eight within the 200 km reach are built one a
   frame. Town 160, the 9 km village, is 31 buildings and 5,739 boxes.
+- **Two highways on ONE TRUNK**, on the harness body: 727 of 730 road
+  ends stand on a trunk shared with another road, 1,573 pairs share
+  waypoints and the deepest share is 23 waypoints (230 km). Merged at
+  load, **350 of 365 roads stand on another's trunk for 78,182 points,
+  the longest trunk is 226.7 km, the profiles settle in 8 passes and
+  the steepest shared piece climbs at 7.0%**, with nought of 718,864
+  highway pieces over the grade: the first cut pinned a sharer down and
+  put its whole climb back on one piece at 103%, the second raised
+  owners in road order and chased itself to the cap at 64 passes with
+  four pieces at 47.5%, and the third pinned a point twice and rose a
+  lip a pass for ever. The body cuts 633,198 corridor pieces against
+  708,185 and lays 10,377 stretches against 11,664; the census reads
+  581 joins and 1,446 bare mouths at worst 124 m from paving, against
+  2,027 mouths at 97,890 m with the joins counted as dead ends.
 - **The port as BLOCKS, on the re-baked body**: town 0 is **1,676
   buildings, 7,621 pieces of street, 168,209 collision boxes and 3,705
   lamps**, against 224, 1,821, 51,539 and 448 as one building a block,
