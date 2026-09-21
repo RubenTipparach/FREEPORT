@@ -3118,11 +3118,82 @@ car from a wall and there is no second resolution path.
 **What is MISSING, named rather than hidden.** A car on the rails does
 not know the player is there. It is a closed form function of its town
 or its road and the clock, and knowing would mean state, which is the
-one thing rails do not have: so the player is stopped by the traffic and
-the traffic drives on through the player. Nothing is saved, so a car is
+one thing rails do not have: so the traffic never gives way, and what
+happens when the two MEET is the section on ramming below. Nothing is saved, so a car is
 stolen afresh every run. And the sea does not stop it: the bounds it
 drives against carry no water, so a car driven off a beach keeps going
 down the sea bed.
+
+## A car that is HIT leaves the rails, and both cars take the knock
+
+The owner's ask: "when I ram other cars only I get affected by physics,
+both cars should be affected, I should be able to ram others off the
+road." A car on the rails is a closed form function of its town or its
+road and the clock, and it cannot be moved, because moving it would be
+state; so the moment a car is hit it comes OFF the rails for good,
+exactly as a stolen one does, and from then on it is a `Driver` with
+nobody at the wheel: it takes the shove, slides on its tyres, turns if
+it was struck off centre, rolls to a stop wherever that puts it, is a
+box to the player's car, is drawn by `show_cars` like a parked car, and
+is boarded with E like one. `Theft::who` is a `Rails` now, a town's
+agent or a road's commuter, because a road car can be hit where it
+could never be stolen, and the highway skips a knocked one the way the
+streets skip a stolen one.
+
+**What the two exchange is the core's, `ram.rs`**, because it is a rule
+two clients have to agree on: equal masses and a restitution, which is a
+car to car collision to first order. The closing speed along the
+contact's normal is shared out, each car's own changes by
+`(1 + RESTITUTION) / 2` of it, so momentum is kept exactly and
+`RESTITUTION` (0.3, the middle of the 0.2 to 0.5 crash tests put a car
+at, because a car is crumple and not a billiard ball) of the closing
+speed comes back as separation. The normal is the least penetrated of
+the two cars' own axes, which is the FACE the hit is on, and the
+contact is where the two edges driven together OVERLAP along that face:
+a nose square on a tail meets it at the middle of the bumper and turns
+nothing, and a nose on a flank behind the other car's middle meets it
+there and turns it by that lever over a rectangle's own moment of
+inertia. The first cut asked whose face the axis was and found no lever
+at all, because a nose on a flank is on both cars' axes at once.
+`SPIN_SHARE` (0.35) is how much of the rigid body's turn a car takes,
+since tyres resist a spin the way they resist a slide; at one a rear
+quarter hit at 30 km/h turned a car twice round.
+
+**A knock is two things on a `Driver`, and the pedals own neither.**
+Along the car it is `speed`, which the throttle, the brake and the drag
+already own; across it is `shove`, a velocity in the tangent plane the
+tyres take back at `SKID` (6 m/s^2, six tenths of a gravity, a tyre's
+grip on dry tarmac), sub stepped and pushed out of walls exactly as the
+roll is; and `spin` is worn off at `SPIN_DRAG` (3 rad/s^2). A car
+struck at 10 m/s across slides 7.87 m and stops, and a spin of a radian
+a second turns it ten degrees.
+
+**The harness asks every car near the wheel, before the car is driven.**
+`ram::ram_cars` reads the rails a tick apart for each car's velocity,
+because a rail is a place and not a velocity, which is what makes the
+other half of the ask true: a rails car that drives into the player
+shoves the player and comes off the rails for it. The knock comes off
+the speed the car ARRIVED at and not off what the wall it then meets
+leaves of it, and for `CLEAR` (a quarter of a second) after a hit the
+two pass through each other's boxes, because a car sent on its way at
+`(1 + e) / 2` of the closing speed is faster than the one that sent it
+and a wall on top of the knock took `CRASH` of what was left: a rammer
+that stopped dead against the car it had just shoved. And the rails no
+longer put a GHOST box where a car off them would have got to, which
+was an invisible wall driving down the road behind every stolen car.
+
+Measured, on the core's own ball: a car rammed square from behind at
+16 m/s takes **10.40 m/s** and the rammer goes on at **5.60**, which
+sums to the 16 it arrived with; a car struck on its rear quarter across
+its path at 10 m/s is shoved at 6.5 m/s and turned at **1.69 rad/s**
+toward the rammer's line.
+
+**What is MISSING, named rather than hidden.** A knocked car rolls on
+with nothing on the pedals, so it never brakes, never steers back onto
+the road and never rejoins the traffic; two knocked cars do not hit each
+other, only the player's car hands out knocks; and a car on the rails
+still does not know the player is there until it touches, because
+knowing would mean state.
 
 ## A road is ON THE GROUND now, and its corridor is levelled like a town's
 
@@ -5079,6 +5150,14 @@ Numbers in the commit message. What is measured so far:
   0 is 224 buildings, 1,821 pieces of street, 51,539 collision boxes and
   448 lamps, and the eight within the 200 km reach are built one a
   frame. Town 160, the 9 km village, is 31 buildings and 5,739 boxes.
+- **RAMMING, on the core's own ball**: a car rammed square from behind
+  at 16 m/s takes 10.40 m/s and the rammer keeps 5.60, momentum to a
+  part in a hundred thousand (the two stand 4 m apart on a 2 km ball,
+  so the normal is two milliradians off the struck car's tangent
+  plane); a rear quarter hit across at 10 m/s shoves the struck car at
+  6.5 m/s and turns it at 1.69 rad/s; a car shoved sideways at 10 m/s
+  slides 7.87 m and stops, and a spin of a radian a second turns it ten
+  degrees before the tyres take it.
 - **Two highways on ONE TRUNK**, on the harness body: 727 of 730 road
   ends stand on a trunk shared with another road, 1,573 pairs share
   waypoints and the deepest share is 23 waypoints (230 km). Merged at

@@ -44,6 +44,7 @@ mod lod_debug;
 mod meshing;
 mod planet_view;
 mod planets;
+mod ram;
 mod render_probe;
 mod roads;
 mod sky;
@@ -292,7 +293,10 @@ fn tick(app: &mut App) {
                     (board, fuel::refuel).chain(),
                     (walk, fuel::show_purse).chain(),
                     aim_drive,
-                    drive_car,
+                    // Paired, for the twenty: a hit is handed out
+                    // before the car is driven, so the knock comes off
+                    // the speed it arrived at.
+                    (ram::ram_cars, drive_car).chain(),
                     fly,
                     flight_bench::drive,
                     planets::activate,
