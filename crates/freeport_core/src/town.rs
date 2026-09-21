@@ -12,7 +12,7 @@
 //! plumb on its own patch of the sphere (`lot_frame`), so nothing long
 //! enough for the ground to curve under it is placed in one piece.
 
-use crate::field::{hash3, noise3, Density, Planet};
+use crate::field::{hash3, Density, Planet};
 use crate::model::Kind;
 use glam::{DVec2, DVec3};
 
@@ -147,67 +147,14 @@ const CUT: f64 = 15.0;
 /// from competing with the cities the road joins.
 pub(crate) const WAYSIDE: f64 = 0.42;
 
-/// A town's own OUTLINE, which is not a circle.
-///
-/// `LOBE` is how many lobes across the town the noise deciding its edge
-/// has, and `REACH` how far that noise can push the edge either way as a
-/// share of the nominal radius. A town is what grew where growing was
-/// easy, so it reaches down one valley and stops short against whatever
-/// was in the way on the other side: a disc reads as a stamp, and the
-/// same disc at every one of a hundred and sixty sites reads as a stamp
-/// used a hundred and sixty times.
-const LOBE: f64 = 1.6;
-const REACH: f64 = 0.42;
-/// How far a town is stretched along its own shore, and squeezed across
-/// it by the same factor so the ground it covers is unchanged.
-const STRETCH: f64 = 1.45;
-/// The furthest a town's own outline can reach, as a multiple of its
-/// nominal radius: the lobes and the stretch together.
-pub const OUTLINE: f64 = (1.0 + REACH) * STRETCH;
-
-/// How fast that outline can MOVE as you walk round it, metres of edge
-/// per metre of arc.
-///
-/// It is the one thing a disc does not have and it is the price of an
-/// outline that is not one: a fade over a fixed width past a boundary
-/// that is not radial is steeper than the same fade past one that is,
-/// by `hypot(1, WOBBLE)`. `field::site_skirt` widens a town's skirt by
-/// exactly that, so the planet's own slope bound is untouched and no
-/// chunk is ruled on ground the levelling reaches into.
-///
-/// MEASURED over every bearing of a thousand towns of every size,
-/// stretch and seed rather than reasoned about
-/// (`the_outline_never_moves_faster_than_the_bound`): the worst is
-/// 1.571, and this is 2, which is the headroom a bound on noise wants.
-/// Reasoned from the lobes' own gradient instead it is 4.65, which is a
-/// fifty metre apron round every town for a swing no town ever takes.
-pub(crate) const WOBBLE: f64 = 2.0;
-
-/// Where a town stops being one thing and starts being another, in the
-/// same demand the outline is cut from: over `CORE_AT` is downtown and
-/// over `TOWN_AT` is the town proper, and everything out to nought is
-/// SUBURB.
-///
-/// They are set from the MIX rather than chosen, which is the owner's
-/// own ask: about a quarter of a town's buildings tall and three
-/// quarters small houses. The shares are not the thresholds, because a
-/// suburb leaves `SUBURB_FILL` of its blocks empty and downtown leaves
-/// 0.15: at 0.66 and 0.38 the town proper and its core covered 38.4% of
-/// the demand disc and carried 49.1% of the BUILDINGS, which is half a
-/// city of offices. SWEPT rather than solved, because the demand is
-/// stretched and lobed and its area shares are not `(1 - t)^2`: 0.58
-/// gave 21.5%, 0.56 gave 23.3, 0.55 gave 24.3 and 0.54 gives **25.4%
-/// on a 537 m town and 25.2% on a 170 m one**, which is the owner's
-/// quarter at both ends of the size law.
-/// `a_town_is_a_quarter_towers_and_three_quarters_houses` holds it.
-const CORE_AT: f64 = 0.77;
-const TOWN_AT: f64 = 0.54;
-
 /// How many of a suburb's blocks carry a house at all. A suburb is a town
 /// with SPACE in it, and what says so is the space rather than the house:
 /// at one it is the same grid as downtown with shorter buildings on it,
 /// which is what this was.
 const SUBURB_FILL: f64 = 0.55;
+/// How much of DOWNTOWN is a plaza, a yard or a car park rather than a
+/// building, on the same hash and thinned by the same grain.
+const PLAZA: f64 = 0.15;
 /// How far a suburban house WANTS to stand off the middle of its own
 /// block, metres either way, against a town house's own small jitter. A
 /// setback and a garden are the other thing that says suburb.
@@ -622,92 +569,6 @@ pub(crate) fn lay_all_from(
         .collect()
 }
 
-/// How much TOWN there is at a point of a town's own grid, metres east
-/// and north of its middle: one at the very middle, nought at the edge,
-/// and negative outside it.
-///
-/// It is the one number a town's shape is made of, and everything else is
-/// read off it: where the town STOPS, which of the three zones a block is
-/// in, and how tall what stands there is. One number with three
-/// consequences rather than three rules that have to agree.
-///
-/// The LOBES are why an outline is not a circle. Two octaves of the
-/// core's own value noise on the block's own place, a couple of lobes
-/// across the town, pushing the edge in and out by `REACH` of the
-/// nominal radius: a town is what grew where growing was easy, so it runs
-/// a long way down one side and stops short on another. Circles at a
-/// hundred and sixty sites read as one stamp used a hundred and sixty
-/// times, which is exactly what the owner was looking at.
-fn demand(x: f64, z: f64, radius: f64, along: DVec2, seed: u32) -> f64 {
-    let p = DVec2::new(x, z);
-    let d = p.length();
-    // Dead on the middle, and never a NaN out of a zero length divide.
-    if d <= 0.0 || !d.is_finite() {
-        return 1.0;
-    }
-    1.0 - d / edge(p / d, radius, along, seed)
-}
-
-/// How far a town reaches along a BEARING out of its own middle, metres.
-///
-/// The stretch and the lobes, in one function, because this is the one
-/// place a town's edge is decided: `demand` reads it to say where the
-/// town stops and `Site::level_r` reads it to say how far the ground is
-/// levelled, and a town whose plateau and whose lots came off two
-/// answers is the disc the owner was looking at.
-///
-/// The lobes are read at the NOMINAL edge rather than at the query
-/// point, which is what makes this a function of the bearing alone: a
-/// ray out of the middle of a town then crosses the outline exactly
-/// once, so there is an edge to level up to rather than a level set
-/// somebody has to root find.
-fn edge(b: DVec2, radius: f64, along: DVec2, seed: u32) -> f64 {
-    // Stretched ALONG the shore and squeezed across it, at the same area:
-    // a coastal town runs up and down its own beach, because the water
-    // stops it one way and the hill behind it stops it the other. A town
-    // with no slope under it gets no stretch and stays round.
-    let (u, v) = if along.length_squared() < 0.5 {
-        (b.x, b.y)
-    } else {
-        (b.x * along.x + b.y * along.y, b.y * along.x - b.x * along.y)
-    };
-    let s = (u / STRETCH).hypot(v * STRETCH);
-    let nominal = radius / s.max(f64::MIN_POSITIVE);
-    let at = b * nominal;
-    let p = DVec3::new(at.x / (radius * LOBE), 3.5, at.y / (radius * LOBE));
-    let lobe = (noise3(p, seed) - 0.5) + (noise3(p * 2.7, seed ^ 0x5B2D) - 0.5) * 0.5;
-    nominal * (1.0 + lobe * REACH)
-}
-
-/// What a block of a town's grid IS. The zones are the demand's own
-/// thresholds, so a town's outline, its density and its skyline are three
-/// readings of one field and cannot disagree.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Zone {
-    /// Not town at all: country, and no block here.
-    Away,
-    /// Houses with space between them, one storey, set well back.
-    Suburb,
-    /// The town proper: streets of two and three storey buildings.
-    Town,
-    /// Downtown: the towers.
-    Core,
-}
-
-impl Zone {
-    fn of(want: f64) -> Zone {
-        if want > CORE_AT {
-            Zone::Core
-        } else if want > TOWN_AT {
-            Zone::Town
-        } else if want > 0.0 {
-            Zone::Suburb
-        } else {
-            Zone::Away
-        }
-    }
-}
-
 /// A town's own seed, off the body's and its index: one function, so
 /// anything that has to ask a town's plan the same question it asked
 /// itself gets the same dice.
@@ -770,9 +631,17 @@ fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> (Vec<Lot>, Vec<u8>) {
             let empty = if zone == Zone::Suburb {
                 1.0 - SUBURB_FILL
             } else {
-                0.15
+                PLAZA
             };
-            if hash(i, j, 0) < empty {
+            // And the GRAIN thins as well as frays. A town's empty
+            // ground had no structure at all: a flat coin toss a
+            // block, which from the air is static inside a fractal
+            // outline. The bite is the same number `demand` subtracts,
+            // so the holes in a suburb are the shape of the holes in
+            // its own edge and there is ONE rule about where a town is
+            // not rather than two.
+            let thin = shape::bite(cx, cz, radius, along, seed);
+            if hash(i, j, 0) < empty + (1.0 - empty) * thin {
                 continue;
             }
             // How far INTO the town proper this block stands, nought at
@@ -870,6 +739,15 @@ pub fn ground_at(planet: &dyn Density, dir: DVec3, near: f64, far: f64) -> f64 {
     }
     0.5 * (lo + hi)
 }
+
+/// How big a town is, how much town there is at a point of it, and
+/// which zone that point is in.
+mod shape;
+pub use shape::*;
+
+/// The box counting dimension of a town's own plan, which is a
+/// measurement and not a feature.
+mod fractal;
 
 mod site;
 pub use site::*;

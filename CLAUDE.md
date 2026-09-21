@@ -1852,12 +1852,121 @@ towers and three quarters small houses, and the town was 51.7% tall.
 falls off from a town's middle, so what decides the mix is where the
 second of them sits: a town is the DISC out to `TOWN_AT` of its own
 demand, and the share of its lots inside that goes as the area. It is
-0.54 rather than 0.38 now, swept rather than guessed (0.58 gives 21.5%,
-0.56 gives 23.3, 0.55 gives 24.3 and 0.54 gives **25.4% on a 537 m
-town and 25.2% on a 170 m one**), and `CORE_AT` moved with it so
-downtown is still the inner part of what is tall. That the two town
-sizes agree to a fifth of a per cent is what says the mix is a fact
-about the field and not about the radius.
+0.55 rather than 0.38 now, swept rather than guessed, and `CORE_AT`
+moved with it so downtown is still the inner part of what is tall. It
+was 0.54 for a commit and the GRAIN below moved it, because a bite
+that takes ground off the FRINGE is a bite that takes one storey
+houses: re-swept, 0.50 gives 29.9%, 0.52 gives 27.3 and 28.2, 0.54
+gives 25.5 and 26.4, and 0.55 gives **25.5% on a 170 m town and 25.5%
+on a 537 m one**. That the two town sizes agree to a tenth of a per
+cent is what says the mix is a fact about the field and not about the
+radius.
+
+**A CITY IS NOT AN OVAL, which is the owner's own word for it, and
+what it wanted is a GRAIN.** `town/shape.rs` is where a town's shape
+lives now, split out when `town.rs` went over this file's own nine
+hundred lines, and the whole of the change is one term in `demand`.
+
+What a town was is a stretched ellipse with two gentle dents in it.
+`edge` is two octaves of value noise on the BEARING, which is ONE
+scale and ONE closed curve, so from a kilometre up a hundred and sixty
+of them read as one smooth blob each; and the only other thing
+deciding where a town is not was a flat coin toss a block
+(`SUBURB_FILL`), which has no structure at any scale. A fractal
+outline round a field of static is what that is.
+
+A real city is ragged at every scale it HAS, which is the thing Batty
+and Longley measured and called a fractal city: a built up area is a
+cluster with holes in it, arms down its roads and outlying pieces off
+its fringe, and its boundary is crinkled from the district down to the
+block. **A level set of a fractal IS a fractal**, which this file
+already says about continents, so the grain is an octave sum on the
+block's own PLACE rather than on its bearing.
+
+**The MEASURE is the boundary's own box counting dimension**, which is
+Batty and Longley's and is the one number that tells an oval from a
+city: count the boxes of each size that hold any of the outline and
+fit the slope. A smooth closed curve is one whatever the ladder,
+because halving the box doubles the count; a crinkled one more than
+doubles it. `town::fractal` is that, on a ladder from one `PITCH` to
+half a town, because finer than a block a plan has nothing to say (a
+lot is on its block or it is not) and coarser than half a town there
+are no boxes left to count.
+
+**Measured: the outline goes from 0.987 to 1.173**, and it climbs at
+every step of the bite (0.987, 1.105, 1.173, 1.212 at nought, a
+quarter, the shipped 0.55 and 0.8), which is what says the number is
+reading the grain and not the lobes underneath it.
+
+**The PERSISTENCE is the whole of it, and `fbm3` could not have done
+this.** A sum that halves its amplitude every octave has a Hurst
+exponent of ONE, and a level set of a field with `H` = 1 has dimension
+`2 - H` = 1: a smooth curve however many octaves are piled on it.
+Grained by an `fbm3` a town measures **1.007** against the bare
+ellipse's 0.987, which is a picture nobody could tell from the oval,
+and that was the first cut of this. `noise::fbm3_rough` is the same
+sum with the persistence handed in and `fbm3` is it at a half, which
+is one implementation and a parameter rather than a second function.
+SWEPT with the stretch HELD so only the roughness moves: 0.50 gives
+1.007, 0.60 gives 1.056, 0.70 gives 1.114, **0.80 gives 1.173** and
+0.88 gives 1.223, while the share of the frame the plan covers stays
+between 16.2 and 16.6% throughout. That last column is the control: it
+says the dimension is reading how ROUGH the bite is and not how much
+of the town it took.
+
+**And the SPREAD had to be measured again, which is this file's oldest
+lesson arriving at a second sum.** A share handed a raw octave sum is
+worth about a fifth of what it says, because a sum of many small
+numbers piles up near its middle. How much it piles up is a function
+of BOTH the persistence and the count, so the grain cannot borrow
+`fbm3`'s 0.498 and 0.106: it is a TABLE by octave count (0.184 at one
+octave down to 0.073 at eight) and every row is re-measured by
+`measure_the_grains_own_spread`. Every row is also NARROWER than
+`fbm3`'s at the same count (0.080 against 0.108 at six), which is not
+what a rougher field sounds like and is what the normalisation does:
+an octave kept at 0.80 rather than halved means more nearly equal
+INDEPENDENT terms in one average, so the sum piles up harder. What
+makes a field rough is the SHARE of its variance the fine octaves
+carry, and the number that reads that is its level set's dimension and
+never its spread.
+
+**The octave count is read off the TOWN's own size**, because the
+finest octave is one block and no finer: past the block grid an octave
+is noise a plan cannot express, and a hamlet of four blocks has one
+scale and should have one lump. A 537 m town runs to six octaves, a
+170 m one to four and a 23 m one to one. It is this file's own "every
+term is capped by the planet's octave count" rule arriving at a city.
+
+**It only ever takes demand AWAY, and that is the whole of what keeps
+it affordable.** `Site::level_r` is `edge(bearing) + APRON` and the
+ground a town levels follows it, so a grain that could ADD demand
+would put blocks outside that plateau, which is the buried suburb this
+file measured at 1.13 m once already. Subtracting leaves the built set
+a SUBSET of the star shaped region the outline bounds, so
+`Site::level_r`, `field::site_skirt`, `town::WOBBLE` and the planet's
+own slope bound are exactly what they were, not one chunk is contoured
+differently, and **the atlas needs no re-bake**: what it stores is
+where a town STANDS and `lay` derives its grid again in milliseconds.
+`a_towns_middle_is_never_bitten_through` measures both halves on
+sixty four seeds and three sizes: nought points outside the outline,
+and the least demand anywhere inside 0.645 of the edge is 0.0010.
+
+**And a town always has a SOLID MIDDLE, which is arithmetic rather
+than a coincidence.** The bite is scaled by `1 - want`, nought at the
+middle and one at the rim, so it can only take a block out where
+`want < GRAIN / (1 + GRAIN)`, which is 0.645 of the way out to that
+bearing's own edge. A city's core is solid and its fringe is shredded,
+which is what the density of a real built up area does as you walk out
+of one; a uniform bite would eat the towers at the same rate and leave
+a town that is merely thinner everywhere, and a one block hamlet would
+be shredded to nothing.
+
+**And `plot` reads the same bite**, which is the divergent path rule
+arriving at a town's empty ground: what FRAYS a town's edge and what
+THINS the ground inside it are one number now (`shape::bite`) rather
+than a fractal outline round a coin toss. A suburb still has its own
+base emptiness, because what makes a suburb a suburb is the space, but
+the holes in it are the shape of the holes in its own edge.
 
 **And the jitter is a TOWN's own and not a suburb's.** `plot` moved a
 lot by `SUBURB_SETBACK` everywhere, which is a suburban house standing
@@ -4080,7 +4189,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 183, the core, about 34 s
+cargo test -p freeport_core                       # 187, the core, about 34 s
 cargo test -p freeport_app                        # 49, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
@@ -4219,7 +4328,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 183 tests in about 34 s, and `freeport_app` 49 in 3. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 187 tests in about 34 s, and `freeport_app` 49 in 3. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -4562,6 +4671,30 @@ Numbers in the commit message. What is measured so far:
   version allowed. Every piece still over it is a slip crossing a town's
   own graded apron, which is the town's skirt and not the road's grade,
   and it is named rather than hidden.
+- **A town's own OUTLINE, box counted**: the bare lobed ellipse is
+  **0.987** and the grained plan **1.173**, on a ladder from one
+  `PITCH` to half a town over four seeds. It climbs at every step of
+  the bite (0.987, 1.105, 1.173, 1.212) and at every step of the
+  ROUGHNESS with the stretch held (0.50 gives 1.007, 0.60 gives 1.056,
+  0.70 gives 1.114, 0.80 gives 1.173, 0.88 gives 1.223) while the fill
+  stays between 16.2 and 16.6%, which is what says the number reads the
+  grain rather than how much of the town it took. An `fbm3`'s own half
+  is 1.007, a picture nobody could tell from the oval, which is why the
+  persistence had to become a parameter. The grain's own spread is a
+  TABLE by octave count, 0.184 at one octave to 0.073 at eight, every
+  row narrower than `fbm3`'s at the same count (0.080 against 0.108 at
+  six). Nought of 49,152 points stand outside the outline and the least
+  demand inside 0.645 of the edge is 0.0010, so the levelling, the
+  skirt, the slope bound and the baked atlas are all untouched.
+- **And as a PICTURE**, the port from 1,200 m up looking straight down
+  on the same 2,748 chunks and the same 383,516 triangles either side:
+  **4.650% of the frame moved by more than 8 of 255**, all of it the
+  town. Before it is a smooth ellipse of blocks with a uniform lace
+  right out to its rim; after it has a notch bitten out of one flank,
+  holes in the fringe and arms running out along its streets. Nothing
+  in the terrain moved at all, which is what the identical chunk and
+  triangle counts say: the grain is in the PLAN and never in the
+  ground.
 - **A town BUILT as the eye comes near it**, on the harness planet: town
   0 is 224 buildings, 1,821 pieces of street, 51,539 collision boxes and
   448 lamps, and the eight within the 200 km reach are built one a

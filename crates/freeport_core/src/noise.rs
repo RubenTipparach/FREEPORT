@@ -95,11 +95,35 @@ mod simd;
 /// Fractal sum of `noise3`, in 0..1: each octave doubles the frequency and
 /// halves the weight.
 pub fn fbm3(p: DVec3, seed: u32, octaves: u32) -> f64 {
+    fbm3_rough(p, seed, octaves, 0.5)
+}
+
+/// The same sum with the PERSISTENCE handed in: how much of its weight
+/// each octave keeps against the one before it.
+///
+/// It is the one thing about a fractal sum that decides what its LEVEL
+/// SETS look like, which is why it is a parameter rather than a second
+/// function. A sum that halves has a Hurst exponent of one, so its
+/// level set is a smooth curve of dimension `2 - H` = 1: a few broad
+/// dents and nothing finer, whatever the octave count. Keeping more of
+/// each octave lowers the exponent (`H = -log2(persistence)`) and the
+/// level set crinkles at every scale it has, which is what a coastline
+/// and a city's own edge both are (`town::shape`'s GRAIN is the
+/// caller, and `town::fractal` measures the dimension it buys).
+///
+/// The mean and the SPREAD move with it and both are measured rather
+/// than assumed, and the sign is the surprise: a sum of many small
+/// numbers piles up near its middle, and it piles up HARDER the more
+/// each octave keeps, because more nearly equal INDEPENDENT terms go
+/// into one average. A rougher field is a NARROWER one
+/// (`town::shape::GRAIN_SPREAD` is the table), so nothing about how
+/// rough a sum is can be read off its spread.
+pub fn fbm3_rough(p: DVec3, seed: u32, octaves: u32, persistence: f64) -> f64 {
     let (mut total, mut amp, mut norm, mut freq) = (0.0, 1.0, 0.0, 1.0);
     for i in 0..octaves.max(1) {
         total += amp * noise3(p * freq, seed.wrapping_add(i));
         norm += amp;
-        amp *= 0.5;
+        amp *= persistence;
         freq *= 2.0;
     }
     total / norm

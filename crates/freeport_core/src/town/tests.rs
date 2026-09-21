@@ -4,7 +4,7 @@
 /// A picture is the only check there is on a shape. The numbers say a
 /// town has lots and streets and said exactly that when every town on
 /// the body was the same circle.
-fn drawn(town: &Town) -> String {
+pub(super) fn drawn(town: &Town) -> String {
     let n = ((town.radius * (1.0 + super::REACH)) / PITCH).ceil() as i64;
     let mut out = String::new();
     for j in -n..=n {
