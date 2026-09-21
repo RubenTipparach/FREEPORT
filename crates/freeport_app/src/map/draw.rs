@@ -33,8 +33,13 @@ const LAYER: usize = 2;
 const SEA_GRID: (usize, usize) = (96, 54);
 /// How wide a road's line is drawn, pixels.
 const LINE: f32 = 2.0;
-/// The page's own colours for what only the map has.
-const DIMMER: Color = Color::srgba(0.031, 0.039, 0.051, 0.82);
+/// The page's own colours for what only the map has. The dimmer's alpha
+/// is not the page's 0.82: a browser composites in sRGB, where 0.82
+/// leaves the drive at 18% of its brightness, and Bevy composites in
+/// linear light, where the same 18% of sRGB is 2.7% and wants 0.97.
+/// Measured on the first render, which left the street under the map
+/// at about half its brightness.
+const DIMMER: Color = Color::srgba(0.031, 0.039, 0.051, 0.97);
 const SEA: Color = Color::srgba(0.16, 0.30, 0.48, 0.55);
 const ROAD: Color = Color::srgb(0.55, 0.52, 0.45);
 

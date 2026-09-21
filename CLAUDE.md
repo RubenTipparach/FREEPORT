@@ -4377,16 +4377,35 @@ out in shares of the window and not scaled by its height the way
 swarm-demo's deck is, so on a very wide window the dials stand further
 from the strip than the page draws them.
 
-Measured so far, in the tests: the chart's round trip is under a
-micron at a thousand kilometres over 117 directions across the window;
-a zoom of three notches leaves the ground under the cursor 0.46 px off
-with one recentre and under 0.01 px with two; the scale bar's first
-ladder put a 250 px bar in a 160 px box at two metres a pixel; and the
-frame counter reads 60 frames over a second as 60 fps and 16.67 ms.
-The pictures of the HUD at the wheel and the map over it are the next
-commit's, because a panel builder that carried `BorderColor` twice was
-a panic at spawn and not a compile error, and the first render found
-it.
+Measured, in the tests: the chart's round trip is under a micron at a
+thousand kilometres over 117 directions across the window; a zoom of
+three notches leaves the ground under the cursor 0.46 px off with one
+recentre and under 0.01 px with two; the scale bar's first ladder put a
+250 px bar in a 160 px box at two metres a pixel; and the frame counter
+reads 60 frames over a second as 60 fps and 16.67 ms. The first render
+found what no test could, a panel builder that carried `BorderColor`
+twice, which is a panic at spawn and not a compile error.
+
+**Measured, in the pictures, on lavapipe at `--levels 5 --drive 20`.**
+The HUD at the wheel: 1,652 chunks and 171,196 triangles settled in
+177.5 s at 38.4 ms a chunk on two workers, the car stolen in the port
+and its goal marked 51.63 km off; the lubber line stands at pixel 639
+of 1280, the strip reads SW and W either side of it with the goal's
+tick and "51.6 km" at 845 to 921, and the fuel arc sweeps clockwise
+from the bottom left of its ring to the top for a tank at 52%, the
+same 41 km the status line prints beside it, so the dial, its figure
+and the harness's own line are one number three times. The map over
+it, at 48 m a pixel across 62 km: the four roads out of the port with
+the car's own drawn brighter, the port ringed and labelled, the pumps
+on the roads, the leg to the marked goal running off the frame, the
+route panel reading one leg of 52 km against a tank that holds 41 and
+saying short, and a 5.0 km scale bar of 103 px. And the DIM under the map is measured
+rather than the page's number: the page composites in sRGB, where its
+0.82 leaves the drive at 18% of its brightness, and Bevy composites in
+linear light, where 0.82 left the street under the map at 45% in sRGB
+(17% in linear, which is the alpha doing exactly what it says in the
+wrong space); at 0.97 it is 23% in sRGB, which is the page's own dim to
+the eye.
 
 ## The hour is a MENU now, and it writes the one offset there is
 
