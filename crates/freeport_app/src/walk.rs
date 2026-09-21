@@ -11,7 +11,7 @@ use crate::{Args, Controls, Eye, Fly, Ground, Status};
 use bevy::prelude::*;
 use freeport_core::field::{Density, CONCRETE};
 use freeport_core::pos::WorldPos;
-use freeport_core::walker::{Bounds, Input, Walker};
+use freeport_core::walker::{Bounds, Input, Walker, EYE};
 
 /// The walker, present while on foot.
 #[derive(Resource)]
@@ -156,7 +156,21 @@ pub fn toggle_walk(
             let local = fly.at - here.ground.1;
             let field = here.underfoot(local, 8.0);
             let heading = fly.forward().as_dvec3();
-            let mut walker = Walker::enter(&field, &here.ground.0.bounds, local, heading);
+            // Let GO where the camera is, the feet an eye's height under
+            // it, so the swap is a fall to the ground and never a snap to
+            // it: the eye does not move on the frame F is pressed.
+            let mut walker = Walker::enter_at(
+                &field,
+                &here.ground.0.bounds,
+                local,
+                heading,
+                local.length() - EYE,
+            );
+            info!(
+                "on foot {:.1} m over the ground{}",
+                walker.h,
+                if walker.on_ground { "" } else { ", falling" }
+            );
             let right = (fly.rotation * Vec3::X).as_dvec3();
             walker.fwd = (heading - walker.dir * heading.dot(walker.dir))
                 .try_normalize()

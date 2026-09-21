@@ -1122,7 +1122,11 @@ architectural materials retain the normal crease rule.
   BUILT (`TOWN_RADIUS` 537 m, ten times the ground a 170 m town covers,
   which is the square root of ten on the radius), and the walker on a
   street of the port facing the middle of town. F
-  swaps to the fly camera from wherever the walker is and back. Flight uses
+  swaps to the fly camera from wherever the walker is and back, and
+  back is a FALL: the walker is let go with its feet an eye's height
+  under the camera (`Walker::enter_at`) and comes down under the same
+  gravity a jump does, which is the owner's ask, and never snapped to
+  the ground under it. Flight uses
   quaternion orientation: Q/E rolls, Space/Ctrl moves along camera up/down,
   the mouse turns without a pitch limit, either Shift boosts, the wheel
   adjusts speed and R levels to the local horizon. Flight settings live in
