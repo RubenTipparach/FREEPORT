@@ -14,7 +14,11 @@ fn town() -> Town {
         seed: 7,
         sites: vec![].into(),
     };
-    crate::town::plan(&planet, 996.0, 60.0, 4, 7)
+    // Two hundred and fifty metres for the biggest, because the fixture
+    // ball's level ground stands three times the size law's reach from
+    // its own sea and the towns it grows are all at the law's floor: at
+    // sixty the port came out as one block and turned nobody out.
+    crate::town::plan(&planet, 996.0, 250.0, 4, 7)
         .into_iter()
         .next()
         .expect("the test planet grew no town")
@@ -541,8 +545,10 @@ fn a_route_out_of_a_town_runs_on_the_towns_own_paving() {
     let streets = Streets::of(&town);
     let far = DVec2::new(town.radius * crate::town::OUTLINE, 0.0);
     let route = streets.route(DVec2::ZERO, far);
+    // Three crossings and not more: a block is four lots a side now, so
+    // the fixture's own port is about four blocks across.
     assert!(
-        route.len() > 3,
+        route.len() >= 3,
         "a route across a town is {} crossings",
         route.len()
     );
@@ -572,9 +578,11 @@ fn a_route_out_of_a_town_runs_on_the_towns_own_paving() {
     }
     // It ACTUALLY gets out: the last crossing is further from the middle
     // than the first, by most of the town.
+    // The last crossing stands most of the radius out, which on a grid
+    // of forty metre blocks is what "out" can mean on a town this size.
     let (from, to) = (route[0].length(), route[route.len() - 1].length());
     assert!(
-        to > from + town.radius * 0.5,
+        to > from && to >= town.radius * 0.8,
         "a route out of a town ends {to:.1} m from its middle having started {from:.1}"
     );
     println!(

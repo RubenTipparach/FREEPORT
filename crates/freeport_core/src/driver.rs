@@ -23,6 +23,7 @@
 
 use crate::field::Density;
 use crate::figure::{CAR_HIGH, CAR_LONG, CAR_WIDE};
+use crate::fuel::Tank;
 use crate::walker::{self, Bounds, Shape};
 use glam::{DVec2, DVec3};
 
@@ -208,6 +209,10 @@ pub struct Driver {
     /// is the same question the walker and the collider already ask the
     /// field, and an app that derived its own would be a second answer.
     pub lean: DVec3,
+    /// What is in the TANK, burned off the ground the car makes: a car
+    /// that runs dry rolls to a stop and the throttle does nothing until
+    /// somebody fills it (`fuel`).
+    pub tank: Tank,
 }
 
 /// The car's own OUTLINE in its tangent frame, right and forward in
@@ -252,6 +257,7 @@ impl Driver {
             foot: walker::ground(field, bounds, dir, None),
             gone: 0.0,
             lean: dir,
+            tank: Tank::full(),
         }
     }
 
@@ -316,11 +322,26 @@ impl Driver {
     /// move and the fall.
     pub fn update(&mut self, field: &dyn Density, bounds: &Bounds, input: &Drive, dt: f64) {
         let dt = dt.min(0.05);
+        // A dry tank is a dead engine: the throttle does nothing either
+        // way, and the brake and the wheel still work, because a car
+        // that has run out of fuel is still a car rolling.
+        let input = Drive {
+            throttle: if self.tank.empty() {
+                0.0
+            } else {
+                input.throttle
+            },
+            ..*input
+        };
         self.free(field, bounds);
-        self.pedals(input, dt);
+        self.pedals(&input, dt);
         self.turn(self.yaw_rate(input.steer) * dt);
         self.fwd = (self.fwd - self.dir * self.fwd.dot(self.dir)).normalize_or(DVec3::X);
+        let before = self.gone;
         self.roll(field, bounds, dt);
+        // Burned off the ground the wheels actually MADE, so a car wedged
+        // against a wall burns nothing however hard the throttle is held.
+        self.tank.burn(self.gone - before);
         self.fall(field, bounds, dt);
         self.settle(field, bounds, dt);
     }

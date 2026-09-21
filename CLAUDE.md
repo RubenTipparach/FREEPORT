@@ -2112,6 +2112,246 @@ area of any of them. A chunk near the port is 17 ms on lavapipe against
 12 before, which is what a site that cuts costs: `surface` can no longer
 return a level without asking the relief what was under it.
 
+## A city is BLOCKS of four by four lots, and a settlement has a TIER
+
+`docs/mockups/city-blocks.html` is the record and `town/plot.rs` is it
+ported, once the owner approved the page. A block was ONE building on
+a `BLOCK` of 10 m with a street on every side of it, which put 27% of
+a town's ground under buildings against the 40 to 55% the six real
+plans on that page carry; a block is `SIDE` (four) lots of `LOT`
+(10 m) a side now, 40 m across, and `PITCH` is that and the street.
+Nothing else about the grid moved: `streets_of` lays its runs on the
+same lines, the traffic reads the same lines, and `PITCH` is still
+one number said three ways.
+
+**What stands on a block is decided twice, and the second time is
+lot by lot.** The block's zone is the demand field at its middle, as
+it always was; then:
+
+- **Downtown and whatever faces the SQUARE fills its block with LARGE
+  buildings of two by two lots**, each a corner on two streets, 20 m
+  square and built PARAMETRICALLY (`model::building` at the lot's own
+  footprint), because Blender is not in this container and a bake is
+  one size. `Library::model` reaches for a bake only for a lot of one
+  `LOT`, and `Kind::baked` says which kinds have one.
+- **Everywhere else the PERIMETER builds and the interior is a
+  COURTYARD**, twelve lots round a two by two of back land, because a
+  lot with no frontage is a lot nobody can get to. A suburb is the same
+  ring at `SUBURB_FILL` of its lots.
+- **A lot's DOOR faces the street it fronts.** `Lot::yaw` turns the
+  lot's frame so a house on the north side of a block opens north, and
+  `Frame::turned` is the one place a frame is turned. A building drawn
+  with its door on its own south wall would otherwise open onto the
+  courtyard on three sides of every block.
+- **And the GRAIN thins the ring lot by lot** (`shape::bite` at the
+  lot's own place), so a town's edge is ragged at the scale of the
+  thing that is laid. `grain_octaves` is keyed to the LOT now and not
+  the block: keyed to a 48.5 m block a 537 m city fell from six octaves
+  to four and its outline measured 1.034 against the oval's 0.987,
+  which is a picture nobody could tell from the oval.
+
+**The market SQUARE is one piece of paving with no street through
+it.** `square_of` is the mockup's own ladder (none under 120 m, one
+block under 300, two under 620, three past that); its cells carry
+`fronts::SQUARE` and nothing else, `streets_of` lays no run between
+two of them, and `square_piece` emits the whole of it as a `Piece`
+with `arm::SQUARE`: a raised slab at kerb height, a stone plinth in
+the middle and a lamp in from each corner. The blocks sharing an EDGE
+with it build big, which is the mockup's civic and commercial
+frontage. `road::crossing` skips it, because a slip arriving in the
+middle of a square is a highway arriving in the middle of a square.
+
+**And a settlement is one of THREE, which is the owner's own list.**
+`Tier::of` reads the settlement's SIZE, which is how near the sea it
+stands (the next section), so the three are one law:
+
+| tier | from | what it is |
+| --- | --- | --- |
+| `City` | 380 m | towers and offices downtown, houses and shops of one to three storeys on the streets, suburbs, a square of two blocks |
+| `Town` | 180 m | a downtown of one and two storey SHOPS round a square of one block, houses everywhere else |
+| `Village` | | houses and nothing else: one storey, no square, no big building |
+
+The thresholds are the mockup's own size table, read against the real
+plans. `Kind::Shop` is the one kind this needed: one to three storeys
+under a flat roof in brick, concrete, stone or vinyl, on one lot or on
+four, and never baked.
+
+**Three things moved with the block, each measured rather than
+guessed:**
+
+- **The APRON is half a block and a street** (28.5 m, from 12), which
+  is how far the far kerb of the outermost street can stand past the
+  middle of the outermost block. At twelve the first street laid past a
+  town's edge stood on bare relief 8 cm over the level, which the kerb
+  test found as a walker standing 0.080 m up on a carriageway.
+- **Every built block fronts all four sides**, which is the mockup's
+  rule. A suburb block fronted one side once, because a block was ONE
+  house then and a lone house in a ring of tarmac was a moat; a ring of
+  a dozen houses is a block, and fronting one side left three of its
+  sides with houses on them and no street.
+- **The fixtures grew.** The test ball's level ground stands three
+  times the size law's reach from its own sea, so every town it grows
+  is at the law's floor, a third of `biggest`, and at sixty metres the
+  port came out as one block with nothing on it: 250 m where the tests
+  need a town with structure, 300 where they need one with an outline.
+
+**What is MISSING, named rather than hidden.** The mockup's ARMS, a
+town running out along the highways that arrive at it, are not built:
+they want a `Site` that carries its road bearings and an atlas re-bake,
+and the highway already merges at the edge (`road::slip`), which was
+the half of that page the owner corrected. Nor are its street RANKS
+(avenues wider than streets) or its ribbon of shops along an arterial.
+A courtyard is bare ground, and a square is a slab with a plinth on it.
+
+## A city is BIG because it is NEAR THE SEA, which is a distance and not a height
+
+`town::coastal` read a town's HEIGHT over the sea as a stand in for its
+distance from it, on the reasoning that the continent term is a shelf
+and low ground is the coast. Measured on the atlas it was not: with
+`town::CUT` capping how deep a site may cut, the flattest big sites
+were inland basins, not one of 521 settlements had open water within
+three kilometres, and the port's own nearest sea was 15.7 km off. The
+owner's ask is big cities ALONG THE COAST, which is the thing itself.
+
+`town/shore.rs` is the thing itself: an equirect mask of the bare
+body's water, 1024 by 512, and a Dijkstra out of every wet texel over
+its eight neighbours with the true ground step at every latitude, so
+`Shore::distance` is metres to the nearest water anywhere on the body
+for an index. Half a million analytic samples and under a second,
+against a march per bearing per step at twenty thousand candidates.
+
+**`COAST` is a share of the RADIUS, and the share was measured.** It
+is where a town is halfway down to the smallest, and the bake prints
+what it is set against: the body's LAND stands a median 31 km from its
+sea, so three hundredths (30 km) puts half the interior nearer the
+halfway point than the median and half further, which is what spreads
+the sizes. At a tenth the bake came back with **199 settlements and 97
+roads against 521**, because nearly every site was asked to be a city
+and a city needs a plain; at three hundredths it is **832 settlements
+(160 cities and 672 villages) and 365 roads over 60,651 km joining 153
+of the 160**, and the port stands **6 km** from the sea.
+
+The fixtures moved with it, because the test ball's level ground is a
+tenth of its radius from its own water: every fixture town is at the
+law's floor, and `biggest` is what sets their size now.
+
+## A car BURNS FUEL, a tank is ten dollars, and a jerrycan walks back
+
+`fuel.rs` in the core is the owner's numbers and nothing else: a
+thousand dollars to start (`START_CASH`), eighty kilometres on a tank
+(`RANGE`), ten dollars a fill (`TANK_PRICE`). A `Tank` is a SHARE of a
+full one and never litres, because nothing here has a litre in it:
+what a car has is a distance.
+
+**A car burns the ground it MAKES**, `Driver::gone`, which is the arc
+its wheels actually swept and never its speed integrated: a car wedged
+against a wall with the throttle held burns nothing, and one coasting
+down a mountain burns every metre. A dry tank is a dead engine: the
+throttle does nothing either way, and the wheel and the brake still
+work, because a car that has run out of fuel is still a car rolling.
+`a_car_burns_the_ground_it_makes_and_a_dry_one_will_not_pull_away`
+holds the burn to the distance within two per cent.
+
+**A car taken off the street has whatever was in it**, `Tank::part`,
+three to nine tenths off the agent's own hash, because nobody parks
+full and a car stolen dry is a walk.
+
+**G is gas**, one key for the three things a player does with it: at
+the wheel, stopped (`STOPPED`, 1 m/s) within `PUMP_REACH` (14 m) of a
+forecourt's middle, it fills the car; on foot within a stride and a
+half of that, it buys a JERRYCAN; on foot beside a car the player
+owns, with a can in hand, it pours the can in. The purse and the can
+are the app's (`fuel.rs` there, `Wallet` and `Jerrycan`), because
+they are the player's; the prices and the burn are the core's. The
+dash reads the tank, its range, the purse and the distance to the
+next pump, and a walker's line reads the purse and whether a can is in
+hand.
+
+**What is MISSING, named rather than hidden.** Money buys fuel and
+nothing else yet, nothing is saved, and the traffic on the rails burns
+nothing, because a car on rails is a function and a function has no
+tank.
+
+## A GAS STATION is a fact about the ROAD, and it streams with it
+
+`road/station.rs` is where one stands and what one is built of.
+`station::plan` walks a road's own line and drops a station on the
+first piece that will take one once it has run `EVERY` (35 km) since
+the last, the first `FIRST` (8 km) out of the town the road leaves,
+alternating sides. A piece takes one when tarmac is laid at both ends,
+the corridor is cut (so a slip over a town's own plateau never carries
+one), no lamps stand on it (so it is in the country), it is longer
+than the forecourt, and it is nearly LEVEL: half a per cent, because a
+forecourt is one flat slab at the piece's own middle height and over
+its 28 m the ground drifts by 7 cm at that grade, which the slab's own
+2 cm over the tarmac and the tarmac's 15 cm lift keep it clear of.
+Thirty five kilometres is under half a tank, and a car that left town
+on a stolen car's own three tenths (24 km) reaches the first one.
+
+**The forecourt is parametric**, which is this project's default for
+new geometry: a slab 11 m deep and 28 m long on the verge the corridor
+already levels (the shoulder is 3.45 m off the centreline, so the slab
+ends at 14.45 inside the corridor's 16), two pump islands with two
+pumps each under a canopy on four pillars, a kiosk that is a
+`Kind::Shop` turned to face the pumps, and a lit sign at the road's
+edge. The pumps, the islands, the pillars and the kiosk's walls are
+`solid`, so a car is stopped by a pump the way it is stopped by a wall
+and a walker walks up to one; the canopy and the sign are trim.
+`Model::place` sets one model down in another, turned about the up,
+with its triangles, its boxes and its lamps carried together: it is how
+the kiosk goes on the forecourt and the forecourt on the stretch.
+
+**It STREAMS with the stretch.** `Course` carries the road's stations
+and which piece the course starts at, `ribbon::stretch` sets each
+forecourt down at the middle of its own piece turned to the road, and
+`roads::lay` puts the model's boxes into the `Verge` beside its lamps,
+where `Fabric::underfoot` reads them with the towns' walls: one list a
+body is stopped by, and nothing that has to know a pump from a wall.
+`Network` keeps every forecourt's middle so the dash can say how far
+the next pump is and G can ask whether one is within reach, and the
+log says where the first one out of the port is so a picture can be
+aimed at it.
+
+**What is MISSING, named rather than hidden.** No station stands in a
+town, where a car would want one most; the corridor is not widened for
+a forecourt, which is why the slab is sized to fit the verge; and a
+station on a road that is all hills has nowhere to stand, which the
+test holds by building one.
+
+## A SLIP'S RAMP dragged it under the ground, and the census miscounted its last piece
+
+Two numbers off the first picture of the port as blocks, and each was
+measured on the PRE-CHANGE atlas too before it was called a defect of
+this change: neither was. Both are in the harness's own `report`, which
+is the whole reason it prints what it prints.
+
+**The slip was 0.12 m UNDER the drawn ground at piece 5 of 15, where the
+town's plateau weighs 0.93**, and on the older atlas 0.20 m at piece 16
+of 32 at 0.99. `road::slip` is anchored at the highway's own height,
+which is `ribbon::LIFT` over its corridor, and its first point wants
+`LIFT + SLIP_CLEAR`: the step is half a metre DOWN, and `grade` ramped
+that over the whole slip, so a point a third of the way along was still
+being pulled 0.33 m down against a lift that, most of the way into the
+plateau, is 0.09. The ramp has a FLOOR now, the street's own five
+centimetres over the ground the point stands on, which is the least any
+tarmac here stands over what it is laid on. Both ends are exactly where
+they were: the mouth's own point is the highway's and the crossing's is
+the street's.
+
+**And the grade census counted the TAIL's join piece as the highway's.**
+A piece with either end in a slip is the slip's; the census read `k <
+slip.0` at the head, which catches the join piece there, and `k >= len -
+slip.1` at the tail, which does not, so the one piece from the highway's
+last point to the slip's first at every road's far end was reported as
+highway: 28 pieces at up to 26.2% on this atlas and 20 at up to 49.7% on
+the last, on a body whose highways `road::smooth` holds to seven. It is
+`k + 1 >= len - slip.1` now, which is the same rule at both ends.
+
+Measured after both, on the same report: **nought of 734,808 pieces on
+the highways themselves are over the seven per cent, and the port's slip
+stands over its ground everywhere by its own lift, -0.05 m at the
+worst**, at the crossing end where the plateau weighs 1.00.
+
 ## A building is built of a TRADE, and a town is not one grey
 
 Every house and every office wore `CONCRETE`, so a suburb and a downtown
@@ -4189,7 +4429,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 187, the core, about 34 s
+cargo test -p freeport_core                       # 194, the core, about 40 s
 cargo test -p freeport_app                        # 49, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
@@ -4201,7 +4441,7 @@ python3 tools/make_asphalt_texture.py --check     # the asphalt set matches its 
 python3 tools/make_building_textures.py --check   # and the six a building is built of
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
-./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, H the time menu, T the torch, Tab wires, Esc frees the mouse
+./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, G gas, H the time menu, T the torch, Tab wires, Esc frees the mouse
 ./run.sh --test                                   # the core suite and the shape check, then the build and the window; run.bat is the Windows twin, --shot out.png takes a picture with no display
 # Every headless run below is under xvfb-run with
 # VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json, and `--octaves` is
@@ -4318,6 +4558,9 @@ from the repository root, and published:
 - road mound: https://claude.ai/artifact/FMimcpVizLa3yttJYdBPtd
 - city blocks: https://claude.ai/artifact/CamvaxSusg8UXXRYb3UUfW
 
+`docs/mockups/README.md` is the index of them, each file beside its link
+and what it decided, so a page can be found again from the checkout.
+
 They are the record of a decision rather than a picture of the game: the
 marched page still builds its buildings out of brushes in a field, which
 is what the game did and does not now, and the hex page is the world that
@@ -4337,7 +4580,7 @@ settle times lie.
 
 Numbers in the commit message. What is measured so far:
 
-- `freeport_core`: 187 tests in about 34 s, and `freeport_app` 49 in 3. A 6 m sphere on a 32^3 lattice
+- `freeport_core`: 194 tests in about 40 s, and `freeport_app` 49 in 3. A 6 m sphere on a 32^3 lattice
   at half a metre marches to 5,288 triangles, a closed shell within 3% of
   the sphere's area, and dual contours to one at one level and across four.
 - The planet is 1,000,000 m of radius, two thousand kilometres across,
@@ -4727,6 +4970,18 @@ Numbers in the commit message. What is measured so far:
   0 is 224 buildings, 1,821 pieces of street, 51,539 collision boxes and
   448 lamps, and the eight within the 200 km reach are built one a
   frame. Town 160, the 9 km village, is 31 buildings and 5,739 boxes.
+- **The port as BLOCKS, on the re-baked body**: town 0 is **1,676
+  buildings, 7,621 pieces of street, 168,209 collision boxes and 3,705
+  lamps**, against 224, 1,821, 51,539 and 448 as one building a block,
+  and the picture from 1,200 m up is 2,541 chunks and 293,135 triangles
+  settled in 467 s at 50.7 ms a chunk on two workers, with the render's
+  other two cores on the suites. The body is **832 settlements read in
+  2,967 ms, 365 roads cut into 708,185 corridor pieces carrying 1,757
+  gas stations on 11,664 stretches**, turning out 73,702 on foot, 18,650
+  driving and 6,022 cars on the roads. Laid in the core, a 537 m city is
+  1,935 lots of which 72 are two by two, 24.9% over one storey and 3.5%
+  over three; a 250 m town is 478 lots (16 big), 19.2% over one storey
+  and none over two; a 150 m village is 142 lots, all one storey.
 - **A car steering toward a place**, on the test ball: 199.3 m closed to
   10.2 m in thirty seconds, with the wheel full over past a quarter turn
   off the nose and nought dead ahead.

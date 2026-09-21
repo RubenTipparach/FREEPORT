@@ -38,6 +38,7 @@ mod distant;
 mod drive;
 mod flight_bench;
 mod fly;
+mod fuel;
 mod lamps;
 mod lod_debug;
 mod meshing;
@@ -250,6 +251,8 @@ fn main() {
     .init_resource::<lamps::TorchOn>()
     .init_resource::<clock::TimeMenu>()
     .init_resource::<drive::Goal>()
+    .init_resource::<fuel::Wallet>()
+    .init_resource::<fuel::Jerrycan>()
     .init_resource::<flight_bench::Benchmark>()
     .add_systems(
         Startup,
@@ -282,8 +285,12 @@ fn tick(app: &mut App) {
                     grab_mouse,
                     lod_debug::controls,
                     toggle_walk,
-                    board,
-                    walk,
+                    // Paired, because Bevy takes twenty systems in one
+                    // tuple and this one is at it: a key that fills a
+                    // car runs right after the key that boards one, and
+                    // the purse is printed right after the walker's line.
+                    (board, fuel::refuel).chain(),
+                    (walk, fuel::show_purse).chain(),
                     aim_drive,
                     drive_car,
                     fly,
@@ -520,9 +527,10 @@ fn say_roads(commands: &mut Commands, world: &World) {
     );
     roads::report(world);
     info!(
-        "{} roads are {} stretches of tarmac; the ones within {:.0} km of the eye are laid{}",
+        "{} roads are {} stretches of tarmac with {} gas stations on them; the ones within {:.0} km of the eye are laid{}",
         world.roads.len(),
         network.len(),
+        network.pumps(),
         roads::REACH / 1000.0,
         match lit {
             Some((open, dark, run)) => format!(
@@ -784,7 +792,7 @@ fn show_status(
     let mode = if walker.is_some() { "fly" } else { "walk" };
     if let Ok(mut text) = text.single_mut() {
         text.0 = format!(
-            "{}\n{}   |   {}   |   F {mode}, H time, T torch, Tab wire, L LOD, Esc mouse",
+            "{}\n{}   |   {}   |   F {mode}, G gas, H time, T torch, Tab wire, L LOD, Esc mouse",
             status.walker,
             what,
             clock::reading(&weather)

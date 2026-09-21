@@ -7,7 +7,7 @@
 //! its skyline cannot disagree, because there is nothing for them to
 //! disagree about.
 
-use super::PITCH;
+use super::LOT;
 use crate::field::{fbm3_rough, noise3};
 use glam::{DVec2, DVec3};
 
@@ -104,14 +104,21 @@ pub(crate) const GRAIN_LUMP: f64 = 0.9;
 /// nineteen lots in fourteen hundred and by nothing a picture shows.
 pub(crate) const GRAIN_PERSIST: f64 = 0.80;
 
-/// The FINEST octave is one block and no finer, which is why the count
+/// The FINEST octave is one LOT and no finer, which is why the count
 /// is read off the town's own size rather than written down: past the
-/// block grid an octave is noise the plan cannot express, and a hamlet
-/// of four blocks has ONE scale and should have one lump. It is this
+/// lot grid an octave is noise the plan cannot express, and a hamlet
+/// of four lots has ONE scale and should have one lump. It is this
 /// file's own "every term is capped by the planet's octave count" rule
 /// arriving at a city.
+///
+/// The LOT and not the block, because a block is four lots a side now
+/// and the plan still decides lot by lot on a block's rim
+/// (`plot::fill` thins the ring by this same bite): keyed to the block
+/// a 537 m town fell from six octaves to four and its outline measured
+/// 1.034 against the oval's 0.987, which is a picture nobody could
+/// tell from the oval.
 pub(crate) fn grain_octaves(radius: f64) -> u32 {
-    let span = (radius * GRAIN_LUMP / PITCH).max(1.0);
+    let span = (radius * GRAIN_LUMP / LOT).max(1.0);
     (1.0 + span.log2()).round().clamp(1.0, 8.0) as u32
 }
 

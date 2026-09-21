@@ -159,6 +159,8 @@ mod tests {
             open: &open,
             graded: &open,
             lit: &open,
+            pumps: &[],
+            first: 0,
         };
         let metres = (points - 1) as f64 * PIECE;
         let cars = plan(3, points, metres, 7);
@@ -230,6 +232,8 @@ mod tests {
             open: &open,
             graded: &open,
             lit: &open,
+            pumps: &[],
+            first: 0,
         };
         let car = Commuter {
             at: 0.0,
@@ -246,6 +250,8 @@ mod tests {
             open: &open[..1],
             graded: &open[..1],
             lit: &open[..1],
+            pumps: &[],
+            first: 0,
         };
         assert!(spot(short, 1_000_000.0, &car, 0.0).is_none());
     }

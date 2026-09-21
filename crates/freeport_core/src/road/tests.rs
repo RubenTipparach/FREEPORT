@@ -210,8 +210,8 @@ fn villages_stand_along_the_roads() {
         // 0.32 floor, and the village is the bigger. It passed for as
         // long as no road happened to reach a beach. What the cut
         // actually promises is this.
-        let over = planet.radius + v.h - sea;
-        let city = crate::town::size_of(biggest, over, &planet, v.index, 5);
+        let shore = crate::town::Shore::of(&planet, sea);
+        let city = crate::town::size_of(biggest, shore.distance(v.dir), &planet, v.index, 5);
         assert!(
             v.radius <= city * crate::town::WAYSIDE + 1e-9,
             "a village is {:.1} m across against {:.1} for a city on its own ground",
@@ -377,6 +377,8 @@ fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
             open: o,
             graded: o,
             lit: t,
+            pumps: &[],
+            first: 0,
         };
         let m = ribbon::stretch(&frame, course, planet.radius, &|dir| {
             levelled.surface(dir).0
@@ -453,6 +455,8 @@ fn lit_run(radius: f64, points: usize) -> (crate::model::Model, Vec<DVec3>) {
         // would put terrain triangles in every count below.
         graded: &[],
         lit: &on,
+        pumps: &[],
+        first: 0,
     };
     let model = ribbon::stretch(&frame, course, radius, &|_| 0.0);
     let local = line
@@ -750,6 +754,8 @@ fn the_mound_is_the_ground_the_field_levels() {
         open: o,
         graded: o,
         lit: t,
+        pumps: &[],
+        first: 0,
     };
     let m = ribbon::stretch(&frame, course, planet.radius, &|dir| {
         levelled.surface(dir).0

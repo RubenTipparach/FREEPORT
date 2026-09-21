@@ -517,6 +517,7 @@ pub fn waysides(
     let shape = planet.shape();
     let (low, high) = crate::town::window(planet);
     let mut taken: Vec<(DVec3, f64)> = towns.iter().map(|t| (t.dir, t.radius)).collect();
+    let shore = crate::town::Shore::of(planet, sea);
     let mut placed = Vec::new();
     for road in roads {
         // The line as BUILT and not the one that was routed: a curve
@@ -542,8 +543,8 @@ pub fn waysides(
                 continue;
             }
             let index = towns.len() + placed.len();
-            let radius =
-                crate::town::size_of(biggest, over, planet, index, seed) * crate::town::WAYSIDE;
+            let radius = crate::town::size_of(biggest, shore.distance(dir), planet, index, seed)
+                * crate::town::WAYSIDE;
             if taken
                 .iter()
                 .any(|(d, r)| d.dot(dir) > ((r + radius + crate::town::BETWEEN) / big_r).cos())
@@ -575,6 +576,10 @@ mod reach;
 pub use reach::*;
 
 pub mod ribbon;
+
+/// Gas stations along the road: where they stand and what they are
+/// built of.
+pub mod station;
 
 #[cfg(test)]
 mod tests;

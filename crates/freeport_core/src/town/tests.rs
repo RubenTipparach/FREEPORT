@@ -25,19 +25,20 @@ pub(super) fn drawn(town: &Town) -> String {
     out
 }
 
-/// The plan of a town at the harness's own scale, drawn, at five heights
-/// over the sea. Ignored: a picture to look at rather than a rule.
+/// The plan of a town at the harness's own scale, drawn, at five
+/// distances from the sea. Ignored: a picture to look at rather than a
+/// rule.
 #[test]
 #[ignore]
 fn draw_a_town_at_every_height() {
-    for (index, over) in [0usize, 1, 2, 3, 4]
+    for (index, shore) in [0usize, 1, 2, 3, 4]
         .into_iter()
-        .zip([4.0, 90.0, 300.0, 900.0, 2200.0])
+        .zip([0.0, 10.0, 40.0, 100.0, 300.0])
     {
-        let radius = size_of(170.0, over, &planet(), index, 7);
+        let radius = size_of(170.0, shore, &planet(), index, 7);
         let town = lay(DVec3::Y, 0.0, radius, DVec2::new(1.0, 0.0), index, 7);
         println!(
-            "{over:.0} m over the sea: {radius:.0} m across, {} lots, {} pieces of street",
+            "{shore:.0} m from the sea: {radius:.0} m across, {} lots, {} pieces of street",
             town.lots.len(),
             town.pieces.len()
         );
@@ -53,7 +54,12 @@ fn draw_a_town_at_every_height() {
 fn towns_differ_in_size_and_are_not_discs() {
     let planet = planet();
     let sea = 996.0;
-    let biggest = 40.0;
+    // Three hundred metres, because the fixture ball's level ground
+    // stands a hundred metres or more from its own sea, which is three
+    // times the size law's reach: the towns it grows are all at the
+    // law's floor, a third of this, and a port under fifty metres is
+    // one block of four by four with nothing to be ragged with.
+    let biggest = 300.0;
     let towns = plan(&planet, sea, biggest, 6, 7);
     assert!(towns.len() > 3, "{} towns", towns.len());
     // Zipf: the port is the biggest and they descend.
@@ -69,18 +75,31 @@ fn towns_differ_in_size_and_are_not_discs() {
     );
     // What makes towns differ is the SIZE LAW, so the law is what this
     // asks: `coastal` falls from one at the shore to `SMALLEST` inland
-    // over the body's own habitable window. Reading the spread off
+    // over `COAST` of the body's own radius. Reading the spread off
     // whichever handful of sites a thousand metre fixture happens to
     // accept is a pin on a coincidence, and it failed the day the site
     // test legitimately got stricter: the six that qualified then all
     // stood within a few metres of one another, so their sizes were all
     // one number and the law was untouched.
-    let (low, high) = super::window(&planet);
+    let far = planet.radius * 0.5;
     let (shore, inland) = (
-        size_of(biggest, low, &planet, 0, 7),
-        size_of(biggest, high, &planet, 0, 7),
+        size_of(biggest, 0.0, &planet, 0, 7),
+        size_of(biggest, far, &planet, 0, 7),
     );
-    println!("a town on the shore is {shore:.0} m and one at {high:.0} m up is {inland:.0}");
+    println!("a town on the shore is {shore:.0} m and one {far:.0} m inland is {inland:.0}");
+    // And the towns the body actually got are sized that way: the
+    // biggest stands nearer the water than the smallest does.
+    let sea_at = Shore::of(&planet, sea);
+    let (first, last) = (&towns[0], &towns[towns.len() - 1]);
+    println!(
+        "the port is {:.0} m from the sea and the smallest town {:.0}",
+        sea_at.distance(first.dir),
+        sea_at.distance(last.dir)
+    );
+    assert!(
+        sea_at.distance(first.dir) <= sea_at.distance(last.dir),
+        "the biggest town stands further from the sea than the smallest"
+    );
     assert!(
         shore > inland * 1.4,
         "a shore town is {shore:.0} m and an inland one {inland:.0}: one size"
@@ -128,7 +147,10 @@ fn a_town_has_towers_in_the_middle_and_suburbs_outside() {
     // and twenty metres across and holds no whole block at all: a
     // hamlet has no towers in it, which is right and is not what this
     // test is about.
-    let towns = plan(&planet, 996.0, 150.0, 3, 7);
+    // A CITY, laid rather than planned: the fixture ball has no plain
+    // for one and this test is about the plan, not the site.
+    let _ = planet;
+    let towns = [lay(DVec3::Y, 0.0, 537.0, DVec2::new(1.0, 0.0), 0, 7)];
     let t = &towns[0];
     println!("the port, a block a character, # over four storeys, + two or three, . one:");
     print!("{}", drawn(t));
@@ -203,7 +225,7 @@ fn planet() -> Planet {
 fn towns_stand_on_level_land_over_the_sea_and_apart() {
     let planet = planet();
     let sea = 996.0;
-    let towns = plan(&planet, sea, 60.0, 4, 7);
+    let towns = plan(&planet, sea, 250.0, 4, 7);
     assert_eq!(towns.len(), 4, "four sites on a small planet");
     for (i, t) in towns.iter().enumerate() {
         assert_eq!(t.index, i);
@@ -234,10 +256,19 @@ fn towns_stand_on_level_land_over_the_sea_and_apart() {
         // has a downtown is its SIZE, and
         // `a_town_is_a_quarter_towers_and_three_quarters_houses` is
         // where that is held.
-        assert!(
-            t.lots.iter().any(|l| l.storeys >= 2),
-            "nothing over one storey anywhere in the middle"
-        );
+        // A VILLAGE is one storey everywhere, which is what the fixture
+        // ball's towns are; anything bigger has a downtown.
+        if Tier::of(t.radius) == Tier::Village {
+            assert!(
+                t.lots.iter().all(|l| l.storeys == 1),
+                "a village with something over one storey in it"
+            );
+        } else {
+            assert!(
+                t.lots.iter().any(|l| l.storeys >= 2),
+                "nothing over one storey anywhere in the middle"
+            );
+        }
         assert!(
             t.lots.iter().any(|l| l.storeys == 1),
             "something low at the edge"
@@ -290,7 +321,7 @@ fn towns_stand_on_level_land_over_the_sea_and_apart() {
 fn a_levelled_site_flattens_the_ground_to_the_towns_height() {
     let mut planet = planet();
     let sea = 996.0;
-    let towns = plan(&planet, sea, 40.0, 2, 7);
+    let towns = plan(&planet, sea, 250.0, 2, 7);
     let t = &towns[0];
     let before = ground_at(&planet, t.dir, 950.0, 1050.0);
     planet.sites.push(site_of(t));
@@ -301,9 +332,13 @@ fn a_levelled_site_flattens_the_ground_to_the_towns_height() {
         mid - planet.radius,
         t.h
     );
+    // The level is the LOWEST the survey found, so it stands under the
+    // middle's own ground by at most the fall the site was allowed.
+    let fall = (t.radius * OUTLINE * (LEVEL / 1.05)).min(CUT) + 0.01;
     assert!(
-        (before - mid).abs() < 5.0,
-        "the level is near the ground that was there"
+        (before - mid).abs() <= fall,
+        "the level is {:.2} m from the ground that was there, past the {fall:.2} the site may fall",
+        before - mid
     );
     // Right across the town the ground is at the level; well outside it
     // the ground is its own.
@@ -314,7 +349,11 @@ fn a_levelled_site_flattens_the_ground_to_the_towns_height() {
         "the edge at {}",
         edge - planet.radius
     );
-    let far = (t.dir + t.east * (t.radius * 4.0 / planet.radius)).normalize();
+    // Past the outline, the apron AND the skirt the blend ramps over,
+    // which is where the site stops saying anything at all.
+    let site = site_of(t);
+    let out = site.r + crate::field::site_skirt(&site) + 10.0;
+    let far = (t.dir + t.east * (out / planet.radius)).normalize();
     let mut bare = planet.clone();
     bare.sites.clear();
     assert!(
@@ -397,7 +436,7 @@ fn on_paving(town: &Town, x: f64, z: f64) -> bool {
 #[test]
 fn every_house_is_on_one_connected_road_network() {
     let planet = planet();
-    let towns = plan(&planet, 996.0, 60.0, 3, 7);
+    let towns = plan(&planet, 996.0, 250.0, 3, 7);
     assert!(!towns.is_empty());
     for town in &towns {
         // Flood the paving from the middle of town, on a grid half a
@@ -591,7 +630,10 @@ fn the_outline_never_moves_faster_than_the_bound() {
 #[test]
 fn a_towns_plateau_follows_its_outline_and_not_a_disc() {
     let planet = planet();
-    let towns = plan(&planet, 996.0, 60.0, 3, 7);
+    // Towns of eighty metres or so, because the apron is a block and a
+    // street wide now and on a thirty metre hamlet it is the whole of
+    // the plateau.
+    let towns = plan(&planet, 996.0, 250.0, 3, 7);
     let t = &towns[0];
     let mut here = planet.clone();
     here.sites = vec![site_of(t)].into();
@@ -679,25 +721,25 @@ fn into_street(town: &Town, lot: &Lot, half: DVec2) -> f64 {
 
 /// A wall is one oriented box that is DRAWN and COLLIDED, so a wall
 /// standing on a pavement is a wall a body walks into in the middle of
-/// the road. A block is `BLOCK` across and the street's own inner kerb is
-/// exactly `BLOCK / 2` from its middle, so what a building may cover is
-/// its own block and nothing past it.
+/// the road. A lot is `LOT` across, the street's own inner kerb is
+/// exactly `BLOCK / 2` from its block's middle, and a building on a lot
+/// of two by two reaches the kerb and no further, so what a building
+/// may cover is its own lot and nothing past it. Measured on a city, a
+/// town and the fixture's own villages, because the three tiers lay
+/// three different rings.
 #[test]
 fn a_building_stands_on_its_own_block_and_never_in_the_street() {
     let planet = planet();
-    let towns = plan(&planet, 996.0, 60.0, 4, 7);
+    let mut towns = plan(&planet, 996.0, 250.0, 4, 7);
     assert!(!towns.is_empty());
+    for (k, radius) in [537.0, 250.0].into_iter().enumerate() {
+        towns.push(lay(DVec3::Y, 0.0, radius, DVec2::new(1.0, 0.0), 100 + k, 7));
+    }
     for town in &towns {
         let (mut worst, mut where_) = (0.0f64, None);
         let mut over = 0usize;
         for lot in &town.lots {
-            let m = crate::model::building(
-                lot.kind,
-                super::BLOCK,
-                super::BLOCK,
-                lot.storeys,
-                town.seed ^ lot.id,
-            );
+            let m = crate::model::building(lot.kind, lot.w, lot.w, lot.storeys, town.seed ^ lot.id);
             let into = into_street(town, lot, footprint(&m));
             if into > 0.01 {
                 over += 1;
@@ -721,44 +763,87 @@ fn a_building_stands_on_its_own_block_and_never_in_the_street() {
     }
 }
 
-/// What a town is MADE of, which is the owner's own ask: about a
-/// quarter of its buildings tall and three quarters small houses.
-///
-/// By the COUNT of buildings and never by the area a zone covers, which
-/// are different numbers because a suburb leaves `SUBURB_FILL` of its
-/// blocks empty and downtown leaves 0.15. At BOTH ends of the size law,
-/// because a town's zones are shares of its own demand and a mix that
-/// held only for the biggest city on the body would be a rule about one
-/// town.
+/// What a settlement is MADE of, by its TIER, which is the owner's own
+/// three: a city with a downtown of towers and streets of two and three
+/// storey buildings, a town whose downtown is one and two storey shops,
+/// and a village of nothing but one storey houses. By the COUNT of
+/// buildings and never by the area a zone covers, which are different
+/// numbers because a suburb leaves lots empty and a downtown block
+/// carries four buildings where a street block carries twelve.
 #[test]
-fn a_town_is_a_quarter_towers_and_three_quarters_houses() {
-    for radius in [170.0, 537.0] {
+fn a_city_has_towers_a_town_has_shops_and_a_village_has_houses() {
+    for (radius, tier) in [
+        (537.0, Tier::City),
+        (250.0, Tier::Town),
+        (150.0, Tier::Village),
+    ] {
+        assert_eq!(Tier::of(radius), tier);
         let town = lay(DVec3::Y, 0.0, radius, DVec2::new(1.0, 0.0), 0, 7);
         let mut by: [usize; 10] = [0; 10];
         for lot in &town.lots {
             by[(lot.storeys as usize).min(9)] += 1;
         }
         let all = town.lots.len().max(1);
-        let tall: usize = by[2..].iter().sum();
+        let over_one: usize = by[2..].iter().sum();
+        let over_three: usize = by[4..].iter().sum();
+        let big = town.lots.iter().filter(|l| l.w > LOT).count();
         println!(
-            "a {radius:.0} m town: {} lots, {} pieces, storeys {by:?}, {:.1}% over one storey",
+            "a {radius:.0} m {}: {} lots of which {big} are two by two, {} pieces, storeys {by:?}, {:.1}% over one storey and {:.1}% over three",
+            tier.name(),
             town.lots.len(),
             town.pieces.len(),
-            100.0 * tall as f64 / all as f64
+            100.0 * over_one as f64 / all as f64,
+            100.0 * over_three as f64 / all as f64,
         );
-        let share = tall as f64 / all as f64;
-        assert!(
-            (0.20..=0.30).contains(&share),
-            "a {radius:.0} m town is {:.1}% tall buildings, against the quarter asked for",
-            share * 100.0
-        );
-        // And a two storey house still EXISTS, which is what says the
-        // skyline is read off the zone's own share rather than off the
-        // threshold that sets the mix: moving `TOWN_AT` up without that
-        // put the shallowest block of the town proper at three storeys.
-        assert!(
-            by[2] > 0,
-            "no two storey house anywhere in a {radius:.0} m town"
-        );
+        match tier {
+            Tier::City => {
+                // Towers downtown and a few storeys on the high street:
+                // a quarter to a half of the buildings stand over one
+                // storey and the towers are a minority of those.
+                let share = over_one as f64 / all as f64;
+                assert!(
+                    (0.2..=0.5).contains(&share),
+                    "a city is {:.1}% over one storey",
+                    share * 100.0
+                );
+                assert!(
+                    over_three > 0 && over_three < over_one,
+                    "no towers, or nothing but"
+                );
+                assert!(big > 0, "a city with no two by two building in it");
+                assert!(
+                    town.pieces.iter().any(|p| p.square()),
+                    "a city with no square"
+                );
+            }
+            Tier::Town => {
+                assert!(over_one > 0, "a town with no two storey shop in it");
+                assert_eq!(over_three, 0, "a town with a tower in it");
+                assert!(
+                    town.lots.iter().all(|l| l.storeys <= 2),
+                    "over two storeys in a town"
+                );
+                assert!(
+                    big > 0,
+                    "a town with no two by two building round its square"
+                );
+                assert!(
+                    town.pieces.iter().any(|p| p.square()),
+                    "a town with no square"
+                );
+            }
+            Tier::Village => {
+                assert_eq!(over_one, 0, "a village with something over one storey");
+                assert_eq!(big, 0, "a village with a two by two building in it");
+                assert!(
+                    !town.pieces.iter().any(|p| p.square()),
+                    "a village with a square"
+                );
+                assert!(town
+                    .lots
+                    .iter()
+                    .all(|l| matches!(l.kind, Kind::House | Kind::Bungalow | Kind::Hangar)));
+            }
+        }
     }
 }

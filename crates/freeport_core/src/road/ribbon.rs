@@ -44,6 +44,11 @@ pub struct Course<'a> {
     pub graded: &'a [bool],
     /// Which points are near enough a settlement to carry a lamp.
     pub lit: &'a [bool],
+    /// The GAS STATIONS on the ROAD, each by the piece of the whole road
+    /// it stands on (`road::station::plan`), and which of those pieces
+    /// this course starts at, so a stretch finds its own among them.
+    pub pumps: &'a [super::station::Station],
+    pub first: usize,
 }
 
 impl Course<'_> {
@@ -88,7 +93,7 @@ pub const LIFT: f64 = 0.15;
 /// road actually looks like and what a pavement's own slab already does
 /// in a town (sunk 15 cm, for the same reason: an underside lying
 /// exactly on the ground flecks along its whole length).
-const SHOULDER: f64 = 0.7;
+pub const SHOULDER: f64 = 0.7;
 pub const BURIED: f64 = -0.15;
 
 /// How wide the tarmac is either side of the centreline: one lane each
@@ -234,6 +239,27 @@ pub fn stretch(
             posts(&mut m, (a, u), (b, v), from, laid);
         }
         along += run_m;
+    }
+    // And the GAS STATIONS, each one a forecourt set down on the verge
+    // at the middle of its own piece, turned to the road.
+    for pump in course.pumps {
+        let Some(k) = pump.piece.checked_sub(course.first) else {
+            continue;
+        };
+        let Some((&(a, u), &(b, v))) = station.get(k).zip(station.get(k + 1)) else {
+            continue;
+        };
+        if !(open[k] && open[k + 1]) {
+            continue;
+        }
+        let across = (u + v).normalize_or(u) * pump.side;
+        let at = (a + b) * 0.5 + across * super::station::setback();
+        let seed = super::station::seed_of(pump.piece);
+        m.place(
+            &super::station::forecourt(seed),
+            at,
+            across.y.atan2(across.x),
+        );
     }
     m
 }

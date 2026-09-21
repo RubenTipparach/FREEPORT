@@ -692,21 +692,29 @@ fn towns_stand_inland_and_on_islands() {
         hs[hs.len() - 1]
     );
     // The PORT is the BIGGEST town on the body and it is COASTAL, which
-    // is the same fact twice: size is how near the sea a town stands, so
-    // the biggest is on the shore. It is not exactly the LOWEST, because
-    // every town's size carries its own jitter.
-    let port = planet.radius + towns[0].h - sea;
+    // is the same fact twice: size is how near the SEA a town stands, so
+    // the biggest is on the shore. Nearest by DISTANCE and not lowest,
+    // because a shore can stand high and a basin low and far inland.
+    let shore = crate::town::Shore::of(&planet, sea);
+    let mut off: Vec<f64> = towns.iter().map(|t| shore.distance(t.dir)).collect();
+    off.sort_by(f64::total_cmp);
+    let port = shore.distance(towns[0].dir);
     assert!(
         towns[1..].iter().all(|t| towns[0].radius >= t.radius),
         "the port is not the biggest town on the body"
     );
     println!(
-        "the port is {:.0} m across and {port:.0} m over the sea",
-        towns[0].radius
+        "the port is {:.0} m across, {:.0} m over the sea and {:.0} m from it; the towns stand {:.0} to {:.0} m from the sea, median {:.0}",
+        towns[0].radius,
+        planet.radius + towns[0].h - sea,
+        port,
+        off[0],
+        off[off.len() - 1],
+        off[off.len() / 2]
     );
     assert!(
-        port < at(0.25),
-        "the port stands {port:.0} m up, past a quarter of the towns on the body"
+        port <= off[off.len() / 4],
+        "the port stands {port:.0} m from the sea, past a quarter of the towns on the body"
     );
     // A quarter of them are a long way up, which is what says the height
     // ceiling is doing anything at all.
@@ -721,18 +729,18 @@ fn towns_stand_inland_and_on_islands() {
     // valley. The law is `town::coastal` and this is what it buys.
     let mut by_size: Vec<(f64, f64)> = towns
         .iter()
-        .map(|t| (t.radius, planet.radius + t.h - sea))
+        .map(|t| (t.radius, shore.distance(t.dir)))
         .collect();
     by_size.sort_by(|a, b| b.0.total_cmp(&a.0));
     let quarter = by_size.len() / 4;
     let mean = |v: &[(f64, f64)]| v.iter().map(|p| p.1).sum::<f64>() / v.len() as f64;
     let (big, small) = (mean(&by_size[..quarter]), mean(&by_size[3 * quarter..]));
     println!(
-        "the biggest quarter of the towns stand {big:.0} m over the sea and the smallest {small:.0}"
+        "the biggest quarter of the towns stand {big:.0} m from the sea and the smallest {small:.0}"
     );
     assert!(
         small > big * 3.0,
-        "the biggest towns are {big:.0} m up and the smallest {small:.0}: size says nothing about the coast"
+        "the biggest towns are {big:.0} m from the sea and the smallest {small:.0}: size says nothing about the coast"
     );
 
     // And the ISLANDS have cities on them. A continent is a piece worth a
