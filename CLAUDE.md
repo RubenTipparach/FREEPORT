@@ -4187,6 +4187,14 @@ done
 # reads the atlas's own segments off a file, because it is a measurement
 # and not a feature.
 cargo run --release -p freeport_core --example road_ground -- segments.txt
+# And how far the terrain a chunk at each CELL actually DRAWS stands over
+# the tarmac, which is the measurement that says the corridor cannot be
+# carried through the LOD by widening it. It contours the chunk the game
+# would contour and raycasts the road's own columns down it, with the
+# corridor in the field and without, and takes the corridor's own width
+# as an argument so the sweep can be re-run at any of them.
+cargo run --release -p freeport_core --example lod_over_road        # 16 m, the shipped width
+cargo run --release -p freeport_core --example lod_over_road -- 48  # and what widening buys
 # The charts themselves, written beside the assets as PNGs.
 FREEPORT_DUMP_CHARTS=1 ./target/release/freeport_app --fly --octaves 14 --levels 9 --frames 3 --shot n.png
 ```
@@ -4505,6 +4513,25 @@ Numbers in the commit message. What is measured so far:
   paving with the ground -0.05 m over its tarmac at the worst, against 16
   pieces over 42 m and the same three numbers before, which is what
   `road::SLIP_CLEAR` is for.
+- **WHAT A COARSE CELL DOES TO A ROAD, off the mesher the game draws
+  with** (`examples/lod_over_road`, twelve roads of twenty stations,
+  the chunk contoured at each level and the road's own columns raycast
+  down it). With the corridor in the field, as it ships: nought buried
+  at 2, 4 and 8 m cells, then **54.2% of the centreline buried at 16 m
+  (0.82 m at the worst), 39.3% at 32 m (4.27 m), 6.1% at 64 m and 0.4%
+  at 128 m**. The failure is a BAND and not a far field limit: it sits
+  where the cell is the size of the feature, which is the eye's own
+  1 km to 2 km, and that is where the owner's picture is dashed.
+  Widening the corridor moves the band out one level per doubling and
+  never removes it: at 32 m the 16 m cell clears (0.9%) and 32 and 64
+  fail (53.8%, 48.7%); at 48 m, 64 and 128 fail (58.3%, 22.2%). With
+  the corridor OUT of the field the same roads are **0.0% buried at
+  every cell out to 128 m** on `EMBANK` alone, standing a median 3.6 m
+  over the natural ground, and only 0.9% at 256 m, where 11 m of
+  tarmac is already under a pixel. A chunk is 13 to 16 ms with the
+  corridor against 8 without, on a body carrying NINETEEN
+  corridor sites; the harness planet carries 748,015 and the owner's
+  own HUD reads 50 ms a chunk.
 - **A FAST EYE's own rings**, at the car's `driver::TOP` of 44.4 m/s:
   standing, walking (5 m/s) and running (8.5) all keep the **0.50 m cell
   reaching 32 m** they always had, and driving drops the finest ring to

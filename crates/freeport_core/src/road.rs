@@ -644,6 +644,17 @@ const PROBES: usize = 3;
 /// piece. At 16 m it is 2,048 m, and the flat is two cells of level 5
 /// rather than under one, so a column lands on it whatever the phase.
 ///
+/// **AND THAT RULE IS OPTIMISTIC BY A LEVEL**, measured by
+/// `examples/lod_over_road`, which contours the chunk the game would
+/// contour and raycasts the road's own columns down it: at 16 m cells
+/// the road is already 54.2% buried. A column landing on the flat is not
+/// enough, because the cell owning the centreline straddles the flat's
+/// edge into the `field::ARC_SKIRT` (11 m) ramp, and a cell wider than
+/// that ramp solves its vertex up onto the hill. Widening this number
+/// MOVES the failing band out one level per doubling rather than curing
+/// it; only the corridor leaving the FIELD removes it. CLAUDE.md's
+/// "Measure, then decide" carries the sweep.
+///
 /// 32 m of graded ground for 11 m of tarmac is a verge either side and
 /// what a highway alignment actually occupies; the whole network is
 /// 0.016% of the body. Going further has a floor: holding the road's own
