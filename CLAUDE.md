@@ -3192,14 +3192,15 @@ toward the rammer's line.
 with nothing on the pedals, so it never brakes, never steers back onto
 the road and never rejoins the traffic; two knocked cars do not hit each
 other, only the player's car hands out knocks; and a car on the rails
-\1 And the scripted drive out of the port WEDGES at
+still does not know the player is there until it touches, because
+knowing would mean state. And the scripted drive out of the port WEDGES at
 80 m on this binary and on the one before it alike (81 m in 180 s at
 4 km/h against 83 m at 3, the same car, the same street), so the
 wedge is the blocks port's own way out and not the knock's: it is the
 routing defect the stolen car's own section names and it is measured
 here rather than left to be read as ramming's.
 
-\2, and its corridor is levelled like a town's
+## A road is ON THE GROUND now, and its corridor is levelled like a town's
 
 A road was DATA: a chain of directions the chart painted and nothing
 underfoot, so driving between two towns was driving cross country over a
@@ -4268,7 +4269,13 @@ is a thing a driver wants to know; and the page says what G DOES,
 which the owner asked: at the wheel, stopped at a pump, it fills the
 tank for $10, and on foot it buys a jerrycan at the kiosk or pours one
 into the car the player owns, which is `fuel.rs`'s own three verbs on
-one key, and the legend calls it FILL rather than gas.
+one key. And the THIRD reading took G off the legend altogether,
+because it is CONTEXTUAL: the HUD shows it as a prompt only while the
+car is stopped within `PUMP_REACH` of a forecourt, which is the game's
+own rule for the key, and the car on the page pulls in at the next
+pump once its gauge is amber so the prompt can be seen. H went with
+it, because the hour menu is a debug panel and not a driver's control,
+and the clock is already on the screen.
 
 **Nothing on it is a number the core does not already compute.** The
 speed is `Driver::speed`, the gauge is `Tank`, a SHARE of a full one,

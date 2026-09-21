@@ -170,6 +170,16 @@
     opacity: 0; transition: opacity 0.4s;
   }
   .toast.on { opacity: 1; }
+  /* the PROMPT: the game's own contextual key, up only while the car stands at a pump */
+  .prompt {
+    position: absolute; left: 50%; bottom: 14%; transform: translateX(-50%);
+    padding: 7px 14px; font-size: 15px; color: var(--hud);
+    border-color: var(--amber);
+    opacity: 0; transition: opacity 0.25s;
+  }
+  .prompt.on { opacity: 1; }
+  .prompt b { color: var(--amber); font-weight: 700; margin-right: 4px; }
+  .prompt .price { color: var(--hud-dim); margin-left: 8px; }
   /* the MAP */
   .map {
     position: absolute; inset: 0;
@@ -245,15 +255,18 @@
   numbers move: the car below is on the road out of the port, burning its tank at the game's
   own eighty kilometres a fill, and every readout is read off it. Press <b>M</b> (or the
   button) for the map, click to drop a marker, and the compass strip at the top turns to the
-  first one. <b>G</b> is the game's own fuel key: at the wheel, stopped at a pump, it fills the
-  tank for $10, and on foot it buys a jerrycan at the kiosk or pours one into the car you own;
-  here it fills when a pump is within reach and otherwise says how far the nearest one is.
-  The clock in the corner is the game's own hour, over the frame counter.</p>
+  first one. <b>G</b> is not on the legend: it is the game's contextual key, and the HUD shows it
+  as a PROMPT only while the car is stopped within reach of a pump (fill the tank, $10); on foot
+  the same key buys a jerrycan at the kiosk or pours one into the car you own. Once the gauge is
+  amber the car pulls in at the next pump it passes and waits, which is where the prompt can be
+  seen, and <b>S</b> brakes anywhere. The clock in the corner is the game's own hour, over the
+  frame counter; the hour MENU behind H is a debug panel and not a driver's control, so it is off
+  the legend too.</p>
 
   <div class="screen" id="screen" tabindex="0" aria-label="the driving screen">
     <canvas id="scene"></canvas>
     <div class="hud">
-      <div class="panel keys"><span><b>M</b> map</span><span><b>G</b> fill</span><span><b>E</b> out</span><span><b>H</b> time</span></div>
+      <div class="panel keys"><span><b>M</b> map</span><span><b>E</b> out</span></div>
       <div class="panel corner mono"><div class="clock" id="clock">10:03</div><div class="fps" id="fps"><b>60</b> fps <span id="ms">16.7 ms</span></div></div>
       <div class="panel compass"><canvas id="compass"></canvas><div class="lubber"></div><div class="goal mono" id="goal"></div></div>
       <div class="panel dials">
@@ -289,6 +302,7 @@
         <div class="row"><span class="label">next pump</span><span class="pump mono" id="pump">8.0 km</span></div>
       </div>
       <div class="panel toast mono" id="toast"></div>
+      <div class="panel prompt mono" id="prompt"><b>G</b> fill the tank <span class="price">$10</span></div>
     </div>
     <div class="map" id="map">
       <canvas id="chart"></canvas>
@@ -310,7 +324,7 @@
   </div>
   <div class="bar">
     <button type="button" id="btn-map" aria-pressed="false">Map (M)</button>
-    <button type="button" id="btn-gas">Gas (G)</button>
+    <button type="button" id="btn-gas" disabled>Fill (G, at a pump)</button>
     <button type="button" id="btn-pause" aria-pressed="false">Pause the drive</button>
     <span id="status">on the road out of the port</span>
   </div>
@@ -325,6 +339,7 @@
         <tr><td>low fuel</td><td class="num">under 25% amber, under 10% red</td><td>the pump distance beside it is the nearest forecourt along the road, so a driver can tell "amber and 6 km" from "amber and 40 km", which is the decision the gauge is for</td></tr>
         <tr><td>wallet</td><td class="num">$ with thousands</td><td>a fill is $10; the purse moves when G is pressed at a pump and nowhere else, and the toast says what was paid</td></tr>
         <tr><td>clock</td><td class="num">HH:MM</td><td>the game's own hour, which is <code>day::oclock</code> over wherever the car is: a day is four hours long, so a driver wants to know how far off dusk is</td></tr>
+        <tr><td>fill prompt</td><td class="num">G, $10</td><td>a prompt and never a legend entry: it is up only while the car is stopped within <code>PUMP_REACH</code> of a forecourt, which is the game's own rule for the key, and it is the one control on the HUD that comes and goes</td></tr>
         <tr><td>frame counter</td><td class="num">fps and ms</td><td>the corner, off a real clock and never the engine's delta, and both figures, because 16.7 ms is a number that can be held against a budget and 60 fps is not</td></tr>
         <tr><td>compass strip</td><td class="num">bearing, marker, km</td><td>the car's heading under the lubber line; the first marker is a tick on the strip with its distance, so the route is driven without opening the map</td></tr>
       </table>
@@ -387,6 +402,9 @@
 
   var TOP = 44.4;          // driver::TOP, m/s
   var RANGE = 80000;       // fuel::RANGE, metres a tank
+  var PUMP_REACH = 14;     // fuel::PUMP_REACH, metres from a forecourt's middle the car may fill from
+  var STOPPED = 1.0;       // fuel::STOPPED, metres a second under which a car is standing
+  var LOW = 0.25;          // the gauge's amber, under which the car pulls in at the next pump
   var PRICE = 10;          // fuel::TANK_PRICE
   var CASH0 = 1000;        // fuel::START_CASH
   var SPEEDUP = 6;         // the drive runs six times real time, so a region this size is minutes
@@ -409,8 +427,11 @@
 
   // ---------- the car: the drive, on the road out of the port ----------
   var car = { road: 0, d: 0, speed: 0, tank: 0.62, cash: CASH0, x: 0, y: 0, h: 0, gone: 0 };
-  var paused = false;
+  var paused = false, braking = false;
   var lastFill = -1e9;
+  // Standing within reach of a pump: the one state the G prompt is up in, which is the
+  // game's own rule for the key.
+  function atPump() { var np = nextPump(); return !!np && np.d <= PUMP_REACH && car.speed < STOPPED; }
   function stepCar(dt) {
     var road = ROADS[car.road];
     var len = roadLength(road);
@@ -431,8 +452,15 @@
     var end = len - car.d;
     if (end < 600) brake = Math.min(brake, Math.max(0.15, end / 600));
     var want = TOP * brake;
-    if (car.tank <= 0) want = 0;
     var ACCEL = 5.5, BRAKE = 12.0;
+    // Once the gauge is amber the car pulls in at the next pump ahead on its own road and
+    // stands there until the tank is filled, which is where the prompt can be seen.
+    var np = nextPump();
+    if (car.tank < LOW && np && np.p.road === car.road && np.p.d + PUMP_REACH >= car.d) {
+      var ahead = np.p.d - car.d;
+      if (ahead < 400) want = Math.min(want, Math.sqrt(2 * BRAKE * Math.max(0, ahead - 6)));
+    }
+    if (car.tank <= 0 || braking) want = 0;
     if (car.speed < want) car.speed = Math.min(want, car.speed + ACCEL * dt);
     else car.speed = Math.max(want, car.speed - BRAKE * dt);
     var made = car.speed * dt;
@@ -462,8 +490,7 @@
     return best;
   }
   function fill() {
-    var np = nextPump();
-    if (!np || np.d > 14) { toast('no pump within reach: the nearest is ' + (np.d / 1000).toFixed(1) + ' km'); return; }
+    if (!atPump()) return; // away from a pump G does nothing: the prompt IS the key
     if (car.cash < PRICE) { toast('the wallet is empty'); return; }
     car.cash -= PRICE; car.tank = 1; lastFill = perf();
     toast('filled the tank: $' + PRICE);
@@ -471,7 +498,7 @@
 
   // ---------- the HUD ----------
   var $ = function (id) { return document.getElementById(id); };
-  var els = { speed: $('speed'), arc: $('speed-arc'), needle: $('needle'), fuel: $('fuel-arc'), range: $('range'), cash: $('cash'), pump: $('pump'), clock: $('clock'), goal: $('goal'), fps: $('fps'), status: $('status'), toast: $('toast') };
+  var els = { speed: $('speed'), arc: $('speed-arc'), needle: $('needle'), fuel: $('fuel-arc'), range: $('range'), cash: $('cash'), pump: $('pump'), clock: $('clock'), prompt: $('prompt'), goal: $('goal'), fps: $('fps'), status: $('status'), toast: $('toast') };
   var ARC = 216.8; // three quarters of a 46 px circle
   var START = Math.PI * 0.75, SWEEP = Math.PI * 1.5; // from the bottom left, clockwise, to the bottom right
   (function ticks() {
@@ -502,6 +529,9 @@
     els.fuel.setAttribute('class', 'gauge-fill' + (car.tank < 0.1 ? ' dry' : car.tank < 0.25 ? ' low' : ''));
     els.range.innerHTML = Math.round(car.tank * RANGE / 1000) + '<small>km</small>';
     els.cash.textContent = fmtCash(car.cash);
+    var here = atPump();
+    els.prompt.classList.toggle('on', here);
+    $('btn-gas').disabled = !here;
     var np = nextPump();
     els.pump.textContent = np ? (np.d / 1000).toFixed(1) + ' km' : 'none';
     els.pump.style.color = (np && np.d / 1000 > car.tank * RANGE / 1000) ? 'var(--alarm)' : '';
@@ -716,9 +746,11 @@
   function key(e) {
     if (e.key === 'm' || e.key === 'M') { openMap(!mapOn); e.preventDefault(); }
     else if (e.key === 'g' || e.key === 'G') { fill(); }
+    else if (e.key === 's' || e.key === 'S') { braking = true; }
     else if (e.key === 'Escape' && mapOn) { openMap(false); }
   }
   screen.addEventListener('keydown', key);
+  screen.addEventListener('keyup', function (e) { if (e.key === 's' || e.key === 'S') braking = false; });
   $('btn-map').addEventListener('click', function () { openMap(!mapOn); screen.focus(); });
   $('btn-gas').addEventListener('click', function () { fill(); screen.focus(); });
   $('btn-pause').addEventListener('click', function () { paused = !paused; this.setAttribute('aria-pressed', paused ? 'true' : 'false'); screen.focus(); });
@@ -745,6 +777,8 @@
     requestAnimationFrame(frame);
   }
   stepCar(0);
+  // A handle for the screenshot harness, the other mockups' own convention.
+  window.__mock = { car: car, nextPump: nextPump, atPump: atPump };
   requestAnimationFrame(frame);
 })();
 </script>
