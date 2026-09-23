@@ -149,15 +149,24 @@ fn leg(network: &Network, world: &World, from: DVec3, to: DVec3, radius: f64) ->
     }
 }
 
-/// Where along a leg a car is: the index of the point of it nearest the
-/// car and how far off that point the car stands, metres.
-pub fn progress(points: &[(DVec3, bool)], at: DVec3, radius: f64) -> Option<(usize, f64)> {
-    let near = (0..points.len()).min_by(|a, b| {
-        (points[*a].0 - at)
-            .length_squared()
-            .total_cmp(&(points[*b].0 - at).length_squared())
-    })?;
-    Some((near, points[near].0.angle_between(at) * radius))
+/// How far a car stands off a leg's TARMAC, metres, the segment it is
+/// nearest and the point on it: measured to the LINE the road is drawn
+/// on and never to its points, which stand a piece (85 m) apart on a
+/// highway, and only over steps that are tarmac. The nearest POINT of a
+/// leg is often the start of its first hop, which is where the car was
+/// when the route was planned: a car standing there is on no road at
+/// all, and taking it for one drove the hop straight at a building.
+pub fn off_tarmac(points: &[(DVec3, bool)], at: DVec3, radius: f64) -> Option<(usize, f64, DVec3)> {
+    (0..points.len().saturating_sub(1))
+        .filter(|k| points[k + 1].1)
+        .map(|k| {
+            let (a, b) = (points[k].0, points[k + 1].0);
+            let ab = b - a;
+            let t = ((at - a).dot(ab) / ab.length_squared().max(1e-30)).clamp(0.0, 1.0);
+            let foot = a + ab * t;
+            (k, (at - foot).length() * radius, foot.normalize())
+        })
+        .min_by(|x, y| x.1.total_cmp(&y.1))
 }
 
 /// How far along a route a car looks, and what it will cut.
@@ -262,9 +271,10 @@ mod tests {
     fn a_car_looks_ahead_along_the_tarmac_and_not_across_a_hop() {
         let points = leg(40, 20);
         let at = points[5].0;
-        let (near, off) = progress(&points, at, R).expect("the leg has points");
-        assert_eq!(near, 5);
+        let (seg, off, _) = off_tarmac(&points, at, R).expect("the leg has tarmac");
+        assert_eq!(seg, 4);
         assert!(off < 1e-6);
+        let near = seg + 1;
         let look = |ahead: f64, short: f64| Look {
             ahead,
             short,
@@ -293,6 +303,35 @@ mod tests {
         // lands on.
         assert_eq!(tarmac_after(&points, 19), 20);
         assert_eq!(points[21].1, true);
+    }
+
+    /// Off the tarmac is measured to the road's LINE, between its points,
+    /// and over tarmac only: a car halfway between two points a hundred
+    /// metres apart is on the road, and a car thirty metres into a hop is
+    /// thirty metres from the tarmac it left and never on the hop.
+    #[test]
+    fn off_the_tarmac_is_measured_to_the_line_and_never_to_a_hop() {
+        let points = leg(40, 20);
+        // Halfway between points 5 and 6, on the line: on the tarmac, to
+        // the chord's own sagitta (a hundred metres of arc stands 1.25 mm
+        // off its chord at a thousand kilometres).
+        let mid = (points[5].0 + points[6].0).normalize();
+        let (seg, off, _) = off_tarmac(&points, mid, R).expect("the leg has tarmac");
+        assert_eq!(seg, 5);
+        assert!(off < 0.01, "{off}");
+        // Ten metres north of it: ten metres off.
+        let beside = (mid + DVec3::Y * 10.0 / R).normalize();
+        let (_, off, _) = off_tarmac(&points, beside, R).expect("the leg has tarmac");
+        assert!((off - 10.0).abs() < 0.01, "{off}");
+        // The step into point 20 is the hop: thirty metres along it the
+        // car is thirty metres past the tarmac's end at point 19.
+        let lon = (19.0 * 100.0 + 30.0) / R;
+        let into = DVec3::new(lon.cos(), 0.0, lon.sin());
+        let (seg, off, foot) = off_tarmac(&points, into, R).expect("the leg has tarmac");
+        println!("thirty metres into the hop: {off:.2} m off segment {seg}");
+        assert_eq!(seg, 18);
+        assert!((off - 30.0).abs() < 0.01, "{off}");
+        assert!(foot.angle_between(points[19].0) * R < 1e-3);
     }
 
     /// Round a BEND the car looks only as far as the straight line to

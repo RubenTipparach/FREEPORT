@@ -4,7 +4,7 @@
 //! tarmac stops.
 
 use super::{Driver, Streets, Thefts, SUB_STEPS};
-use crate::route::{ahead_on, progress, tarmac_after, Look, Planned};
+use crate::route::{ahead_on, off_tarmac, tarmac_after, Look, Planned};
 use crate::{Args, Controls};
 use bevy::ecs::system::SystemParam;
 use bevy::math::DVec3;
@@ -110,6 +110,9 @@ pub struct Auto {
     /// says only how far it has come cannot tell a car following a road
     /// into a hill from a car turning circles on its own bearing.
     why: (&'static str, f64),
+    /// How far off the route's tarmac the car stands, metres, which is
+    /// what says whether it is ON the route or finding its way onto it.
+    off: f64,
 }
 
 impl Auto {
@@ -137,7 +140,10 @@ impl Auto {
                 ""
             },
         );
-        info!("  steering for {} {:.0} m off", self.why.0, self.why.1);
+        info!(
+            "  steering for {} {:.0} m off, {:.1} m off the route's tarmac",
+            self.why.0, self.why.1, self.off
+        );
     }
 
     /// Where a scripted drive STEERS FOR: along the ROUTE the map
@@ -180,22 +186,18 @@ impl Auto {
     ) -> Option<(&'static str, DVec3)> {
         let leg = script.route.first().filter(|l| l.roads)?;
         let (radius, points) = (world.planet.radius, &leg.points);
-        let (near, off) = progress(points, car.dir, radius)?;
-        // OFF the route inside a town, the way ONTO it is the town's own
-        // streets, to where its tarmac starts. The route's first step is
+        let (seg, off, foot) = off_tarmac(points, car.dir, radius)?;
+        self.off = off;
+        // OFF the tarmac inside a town, the way ONTO it is the town's own
+        // streets, to the nearest point of it. The route's first step is
         // a hop from where it was planned onto the road beside it, and
         // driven straight that is straight across whatever stands between:
         // the drive out of the port held its throttle against a building
         // eighteen metres from the slip for six minutes. Out in the
-        // country there is no town, and the hop is driven as it was.
+        // country there is no town, and the tarmac is pursued from where
+        // the car stands.
         if off > ONTO {
-            let onto = if points[near].1 {
-                near
-            } else {
-                tarmac_after(points, near)
-            };
-            if let Some(p) = self.through_town(world, car.dir * car.foot, points[onto].0 * car.foot)
-            {
+            if let Some(p) = self.through_town(world, car.dir * car.foot, foot * car.foot) {
                 return Some(("the streets onto the route", p));
             }
         }
@@ -204,6 +206,12 @@ impl Auto {
             short: SHORT_HOP,
             lane: freeport_core::road::ribbon::HALF,
         };
+        // Along from the tarmac the car is ON, and never from the nearest
+        // point of the leg, which may be the hop's own start: from
+        // whichever END of that segment the car is nearer, so a car in the
+        // last half of the tarmac before a hop takes the hop.
+        let d = |k: usize| points[k].0.angle_between(car.dir);
+        let near = if d(seg + 1) < d(seg) { seg + 1 } else { seg };
         let (k, hop) = ahead_on(points, car.dir, near, &look, radius);
         if k > near {
             return Some(("the route", points[k].0));
