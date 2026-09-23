@@ -55,12 +55,14 @@ use std::time::Instant;
 ///
 /// The GLASS is not the page's 0.58, for the reason the map's page once
 /// was not its 0.82: a browser composites in sRGB and Bevy in linear
-/// light, and the same alpha over a daylit sky leaves three times the
-/// light through. Measured off the side by side with the page, the
-/// panels at 0.58 came out a pale grey over the sky where the page's are
-/// a dark smoked glass; 0.82 is the page's own darkness over a sky at
-/// sRGB 0.9 (0.80 over mid grey, 0.72 over a dark street).
-pub const GLASS: Color = Color::srgba_u8(12, 14, 17, 210);
+/// light, and the same alpha over a daylit sky leaves several times the
+/// light through. And the page is DARK because its world is: measured
+/// off the side by side, its glass reads (32, 42, 57) over a night blue
+/// scene, and this one read (103, 115, 115) at 0.82 over a noon sky of
+/// (215, 249, 249), a pale grey panel where the page has smoked glass.
+/// 0.94 is the page's own darkness over the brightest sky this world
+/// has, and over a dark street it is the page exactly.
+pub const GLASS: Color = Color::srgba_u8(12, 14, 17, 240);
 pub const EDGE: Color = Color::srgba_u8(233, 230, 216, 41);
 /// A dial's own face under its arc, the page's `rgba(12,14,17,0.35)`
 /// raised the same way, its rim, and the track the arc fills.

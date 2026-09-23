@@ -4477,8 +4477,13 @@ the atlas bake's own rule for a thing that is arithmetic and a file.
 with the page, element by element, found every panel a pale grey over
 the sky where the page's are dark smoked glass: its 0.58 composited in
 sRGB is 0.82 composited in linear light over a daylit sky, 0.80 over
-mid grey and 0.72 over a dark street, so the glass is 0.82 and every
-panel on both screens reads it. The same comparison found three things
+mid grey and 0.72 over a dark street. And 0.82 was still grey, because
+the page is dark because its WORLD is: measured off the second side by
+side, the page's glass reads (32, 42, 57) over a night blue scene and
+this one (103, 115, 115) over a noon sky of (215, 249, 249). The glass
+is 0.94, the page's own darkness over the brightest sky this world has
+and the page exactly over a dark street, and every panel on both
+screens reads it. The same comparison found three things
 the page has and the build did not: the speed dial's nine ticks, every
 other one longer, and the fuel dial's one at half a tank; each dial's
 own dark face under its arc; and the speed arc in the readout's cream
