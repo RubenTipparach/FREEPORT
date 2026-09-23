@@ -668,6 +668,7 @@ pub fn drive_highway(
     mut commands: Commands,
     here: Here,
     crowds: Res<Crowds>,
+    thefts: Res<crate::drive::Thefts>,
     mut out: Query<(Entity, &Commuting, &mut Transform)>,
 ) {
     let (eye, frame, ground, time, planets) = (
@@ -689,7 +690,12 @@ pub fn drive_highway(
     let now = time.elapsed_secs_f64();
     let centre = ground.1;
     let here_at = eye.0 .0 - centre;
+    // A car KNOCKED off the rails is off them for good, which is the
+    // stolen car's own rule: the rails would put it back wherever the
+    // clock says it should have got to.
+    let knocked = thefts.knocked_roads();
     let mut near = crowds.road_cars_near(&ground.0, here_at, ROAD_REACH, now);
+    near.retain(|c| !knocked.contains(&c.0));
     near.sort_by(|a, b| {
         a.2.distance(here_at)
             .total_cmp(&b.2.distance(here_at))

@@ -27,10 +27,18 @@ pub fn corridor(
     towns: &crate::field::Sites,
 ) -> Vec<crate::town::Site> {
     let line = centreline(road, radius);
-    if run.len() != line.len() {
+    let open = open(&line, radius, towns);
+    corridor_of(&line, run, &open)
+}
+
+/// The corridor under a road already LAID: an arc for every piece of
+/// `line` with tarmac at both ends, at the heights of `run`. It is what
+/// `corridor` cuts once it has laid the line itself, and what the
+/// harness cuts after `trunk::merge` has moved a line onto another's.
+pub fn corridor_of(line: &[DVec3], run: &[f64], open: &[bool]) -> Vec<crate::town::Site> {
+    if run.len() != line.len() || open.len() != line.len() {
         return Vec::new();
     }
-    let open = open(&line, radius, towns);
     line.windows(2)
         .zip(run.windows(2))
         .zip(open.windows(2))

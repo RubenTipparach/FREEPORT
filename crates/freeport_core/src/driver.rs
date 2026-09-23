@@ -90,6 +90,15 @@ const GRAVITY: f64 = 9.81;
 /// that made a hand of ground over a step from reading as a cliff and
 /// taking the whole of the speed off in one go.
 const HILL: f64 = 2.0;
+/// What a tyre sliding SIDEWAYS takes off a shove, metres a second a
+/// second: six tenths of a gravity, which is a tyre's grip on dry tarmac
+/// and is why a car shoved off its line slides a car's length and not a
+/// street's.
+const SKID: f64 = 6.0;
+/// What the tyres take off a SPIN, radians a second a second: a car
+/// struck on a quarter swings through most of a right angle and stops
+/// turning, rather than pirouetting down the road.
+const SPIN_DRAG: f64 = 3.0;
 /// How far past its own powered top speed gravity may carry a car
 /// downhill, as a multiple of it. A car does coast past what its engine
 /// can hold on a long descent, and it does not do so without limit.
@@ -213,6 +222,13 @@ pub struct Driver {
     /// that runs dry rolls to a stop and the throttle does nothing until
     /// somebody fills it (`fuel`).
     pub tank: Tank,
+    /// Velocity ACROSS the car from being hit (`ram`), in the tangent
+    /// plane, metres a second: a car shoved off its line slides on its
+    /// tyres until they take it back. Along the car it is `speed`.
+    pub shove: DVec3,
+    /// Turning from being hit off centre, radians a second, anticlockwise
+    /// from above, worn off by the tyres.
+    pub spin: f64,
 }
 
 /// The car's own OUTLINE in its tangent frame, right and forward in
@@ -258,7 +274,27 @@ impl Driver {
             gone: 0.0,
             lean: dir,
             tank: Tank::full(),
+            shove: DVec3::ZERO,
+            spin: 0.0,
         }
+    }
+
+    /// The car's velocity in the tangent plane, metres a second: along
+    /// itself and across itself together.
+    pub fn velocity(&self) -> DVec3 {
+        self.fwd * self.speed + self.shove
+    }
+
+    /// HIT: take a change of velocity `dv` (tangent, metres a second)
+    /// and a `spin` (radians a second). Along the car it is speed, which
+    /// the pedals and the drag then own; across it is a shove the tyres
+    /// take back.
+    pub fn knock(&mut self, dv: DVec3, spin: f64) {
+        let dv = dv - self.dir * dv.dot(self.dir);
+        let along = dv.dot(self.fwd);
+        self.speed += along;
+        self.shove += dv - self.fwd * along;
+        self.spin += spin;
     }
 
     /// Turn the car about the local up.
@@ -342,8 +378,50 @@ impl Driver {
         // Burned off the ground the wheels actually MADE, so a car wedged
         // against a wall burns nothing however hard the throttle is held.
         self.tank.burn(self.gone - before);
+        self.skid(field, bounds, dt);
         self.fall(field, bounds, dt);
         self.settle(field, bounds, dt);
+    }
+
+    /// The SLIDE and the SPIN a hit left, worn off by the tyres. The
+    /// slide is sub stepped like the roll and pushed out of walls like
+    /// it, because a car shoved sideways into a building is the same car
+    /// that was driven into one; what a wall takes off a slide is all of
+    /// it, since a tyre has no crumple across the car.
+    fn skid(&mut self, field: &dyn Density, bounds: &Bounds, dt: f64) {
+        if self.spin != 0.0 {
+            self.turn(self.spin * dt);
+            let worn = SPIN_DRAG * dt;
+            self.spin -= self.spin.clamp(-worn, worn);
+        }
+        let rate = self.shove.length();
+        if rate <= 0.0 {
+            return;
+        }
+        let ring = outline();
+        let shape = Shape {
+            ring: &ring,
+            heights: &HEIGHTS,
+        };
+        let asked = rate * dt;
+        let steps = (asked / Self::STEP)
+            .ceil()
+            .clamp(1.0, Self::MOST_STEPS as f64) as usize;
+        let step = self.shove * (dt / steps as f64 / bounds.radius);
+        for _ in 0..steps {
+            let to = (self.dir + step).normalize();
+            let got = walker::resolve_body(field, bounds, to, self.foot, self.fwd, shape);
+            if walker::swept(field, bounds, (self.dir, got), self.foot, self.fwd, shape) {
+                self.shove = DVec3::ZERO;
+                break;
+            }
+            self.gone += (got - self.dir).length() * bounds.radius;
+            self.dir = got;
+        }
+        self.fwd = (self.fwd - self.dir * self.fwd.dot(self.dir)).normalize_or(DVec3::X);
+        let worn = SKID * dt;
+        let left = (rate - worn).max(0.0);
+        self.shove = (self.shove - self.dir * self.shove.dot(self.dir)) * (left / rate);
     }
 
     /// Push the car OUT of whatever it is already standing in, wherever
@@ -568,5 +646,7 @@ impl Driver {
     }
 }
 
+#[cfg(test)]
+mod knock_tests;
 #[cfg(test)]
 mod tests;

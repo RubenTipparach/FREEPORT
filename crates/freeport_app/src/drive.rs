@@ -60,12 +60,38 @@ const AIM: f64 = 1.4;
 /// How many town radii a SCRIPTED theft reaches, which is the whole town.
 const SCRIPT_REACH: f64 = 200.0;
 
-/// One car that has been stolen: which agent it was, where it is, and
-/// whether anybody is in it.
+/// Which car on the RAILS a car off them was: a town's agent, or a
+/// road's commuter. It is what the traffic skips for good.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Rails {
+    /// Which of `Crowds::towns` and which of that town's agents.
+    Town(usize, usize),
+    /// Which road of the world and which of its commuters.
+    Road(usize, usize),
+}
+
+impl Rails {
+    /// The two numbers that name it, whichever kind it is.
+    pub fn index(self) -> (usize, usize) {
+        match self {
+            Rails::Town(a, b) | Rails::Road(a, b) => (a, b),
+        }
+    }
+}
+
+/// How long after a hit two cars pass through each other's boxes,
+/// seconds, so the car that was shoved away is not also a wall to the
+/// one that shoved it: the knock has already taken the speed off, and a
+/// wall on top of it took `CRASH` of what was left, which is a rammer
+/// that stops dead against the car it just sent on its way.
+pub const CLEAR: f64 = 0.25;
+
+/// One car that is OFF the rails: taken by the player or knocked off
+/// them (`ram`), where it is, and whether anybody is in it.
 pub struct Theft {
-    /// Which of `Crowds::towns` and which of that town's agents. Off the
-    /// rails from here on, so the traffic never draws it again.
-    pub who: (usize, usize),
+    /// Which car it was on the rails. Off them from here on, so the
+    /// traffic never draws it again.
+    pub who: Rails,
     /// Which tint it was, so the car you stole is the car you drive.
     pub tint: usize,
     /// Where it is, driven or parked. ONE pose whether you are in it or
@@ -78,6 +104,9 @@ pub struct Theft {
     /// into a parked car resumes behind it instead of whipping round
     /// from wherever the last one was pointing.
     pub swing: DVec3,
+    /// When it was last hit, or hit something, seconds on the clock:
+    /// for `CLEAR`.
+    pub hit: f64,
 }
 
 impl Theft {
@@ -118,11 +147,30 @@ pub struct Thefts {
 }
 
 impl Thefts {
-    /// Which agents are off the rails, sorted, for the traffic to skip.
+    /// Which of the towns' agents are off the rails, sorted, for the
+    /// traffic to skip.
     pub fn stolen(&self) -> Vec<(usize, usize)> {
-        let mut out: Vec<(usize, usize)> = self.cars.iter().map(|t| t.who).collect();
+        let mut out: Vec<(usize, usize)> = self
+            .cars
+            .iter()
+            .filter_map(|t| match t.who {
+                Rails::Town(a, b) => Some((a, b)),
+                Rails::Road(..) => None,
+            })
+            .collect();
         out.sort_unstable();
         out
+    }
+
+    /// And which of the roads' commuters, for the highway to skip.
+    pub fn knocked_roads(&self) -> Vec<(usize, usize)> {
+        self.cars
+            .iter()
+            .filter_map(|t| match t.who {
+                Rails::Road(a, b) => Some((a, b)),
+                Rails::Town(..) => None,
+            })
+            .collect()
     }
 
     /// The car being driven, if any.
@@ -220,10 +268,11 @@ pub fn board(
             car.tank = Tank::part(hash3(who.0 as i64, who.1 as i64, 0x7A, 0x9A5));
             let swing = car.fwd;
             thefts.cars.push(Theft {
-                who,
+                who: Rails::Town(who.0, who.1),
                 tint,
                 car,
                 swing,
+                hit: f64::NEG_INFINITY,
             });
             thefts.at_wheel = Some(thefts.cars.len() - 1);
             commands.remove_resource::<OnFoot>();
@@ -580,7 +629,7 @@ impl Auto {
 /// metres. Its own outline reaches 2.05 m and another car is 4.1 m long,
 /// so anything past this cannot be met inside one frame at any speed a
 /// car goes; and the list is the few a built town has out anyway.
-const CAR_REACH: f64 = 30.0;
+pub(crate) const CAR_REACH: f64 = 30.0;
 
 /// Every OTHER car near the one being driven, as the box each is: the
 /// traffic still on the rails, and any the player has parked.
@@ -612,16 +661,25 @@ fn around(
             // And the ones out on the ROADS, which is where a car at
             // 160 km/h actually meets another one.
             let road = crowds.road_cars_near(here.world(), at, CAR_REACH, now);
-            for (_, _, place, fwd) in town.into_iter().chain(road) {
+            // Not the GHOST of a car that is off the rails: the rails
+            // still say where a stolen or a knocked car would have got
+            // to, and that was an invisible wall driving down the road.
+            let (stolen, knocked) = (thefts.stolen(), thefts.knocked_roads());
+            let town = town
+                .into_iter()
+                .filter(|c| stolen.binary_search(&c.0).is_err());
+            let road = road.into_iter().filter(|c| !knocked.contains(&c.0));
+            for (_, _, place, fwd) in town.chain(road) {
                 out.push(driver::car_box(place, fwd, place.normalize_or(DVec3::Y)));
             }
         }
     }
     // And the ones the player has already taken and left standing: a car
     // you got out of is a car that is still there, so it is still
-    // something to drive into.
+    // something to drive into. Not one hit inside `CLEAR`, which is on
+    // its way.
     for (i, theft) in thefts.cars.iter().enumerate() {
-        if i == driving {
+        if i == driving || now - theft.hit < CLEAR {
             continue;
         }
         let car = &theft.car;
@@ -674,12 +732,16 @@ const AHEAD: f64 = 400.0;
 #[derive(Resource, Default)]
 pub struct Goal(pub Option<DVec3>, pub String);
 
-/// Pick that goal, once, when a scripted drive begins.
+/// Pick that goal, once, when a scripted drive begins, and MARK it on
+/// the map, which is what a player does before setting off and what a
+/// headless run has no pointer to do: the compass strip's tick and the
+/// map's first leg are then in the picture.
 pub fn aim_drive(
     args: Res<Args>,
     here: crate::world::Surface,
     thefts: Res<Thefts>,
     mut goal: ResMut<Goal>,
+    mut markers: ResMut<crate::map::Markers>,
 ) {
     if args.drive == 0 || goal.0.is_some() {
         return;
@@ -701,6 +763,9 @@ pub fn aim_drive(
     }
     let Some((gone, k)) = best else { return };
     *goal = Goal(Some(here.world().towns[k].dir), format!("town {k}"));
+    if markers.0.is_empty() {
+        markers.0.push(here.world().towns[k].dir);
+    }
     info!(
         "driving for town {k}, {:.2} km off over the ground",
         gone / 1000.0

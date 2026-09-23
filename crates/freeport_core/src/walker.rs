@@ -367,16 +367,43 @@ impl Walker {
     /// A walker set down at `dir` facing `heading`, on the ground there.
     pub fn enter(field: &dyn Density, bounds: &Bounds, dir: DVec3, heading: DVec3) -> Walker {
         let dir = dir.normalize();
-        let fwd = (heading - dir * heading.dot(dir)).normalize_or(DVec3::X);
         let foot = ground(field, bounds, dir, None);
+        Self::placed(dir, heading, foot, 0.0)
+    }
+
+    /// A walker let GO at `dir` with its feet at `radius`, facing
+    /// `heading`: in the air if that stands over the ground there, falling
+    /// from the first frame under the same gravity a jump comes down on,
+    /// and on the ground if it does not. It is what F off the fly camera
+    /// does, so leaving the air is a fall to the ground and never a snap
+    /// to it.
+    pub fn enter_at(
+        field: &dyn Density,
+        bounds: &Bounds,
+        dir: DVec3,
+        heading: DVec3,
+        radius: f64,
+    ) -> Walker {
+        let dir = dir.normalize();
+        let g = ground(field, bounds, dir, None);
+        // Within the bisection's own slack of the ground is ON it: a tie
+        // on a threshold is a coin toss, and the coin is the last halving.
+        let h = radius - g;
+        let h = if h < EPS { 0.0 } else { h };
+        Self::placed(dir, heading, g + h, h)
+    }
+
+    /// A walker at rest with its feet at `foot`, `h` of that over the ground.
+    fn placed(dir: DVec3, heading: DVec3, foot: f64, h: f64) -> Walker {
+        let fwd = (heading - dir * heading.dot(dir)).normalize_or(DVec3::X);
         Walker {
             dir,
             fwd,
             pitch: -0.05,
-            h: 0.0,
+            h,
             vy: 0.0,
             vel: [0.0, 0.0],
-            on_ground: true,
+            on_ground: h <= 0.0,
             foot,
         }
     }
@@ -624,6 +651,41 @@ mod tests {
             120,
         );
         assert!(walked(&w) > 14.0, "ran {} m", walked(&w));
+    }
+
+    /// A walker let go in the air falls and lands, in the time gravity
+    /// takes, and one let go at the ground is standing on it.
+    #[test]
+    fn a_walker_let_go_in_the_air_falls_to_the_ground() {
+        let ball = Sphere { radius: R };
+        let b = bounds();
+        let drop = 30.0;
+        let mut w = Walker::enter_at(&ball, &b, DVec3::Y, DVec3::X, R + drop);
+        assert!(
+            !w.on_ground && (w.h - drop).abs() < 0.02,
+            "let go {} m up",
+            w.h
+        );
+        let mut landed_at = None;
+        for i in 0..240 {
+            w.update(&ball, &b, &Input::default(), 1.0 / 60.0);
+            if w.on_ground && landed_at.is_none() {
+                landed_at = Some(i);
+            }
+        }
+        let landed = landed_at.expect("the walker came down");
+        // sqrt(2 h / g) is 2.47 s, which is frame 148.
+        println!(
+            "let go {drop} m up, landed at frame {landed}, feet at {:.3}",
+            w.foot - R
+        );
+        assert!((140..=160).contains(&landed), "landed at frame {landed}");
+        assert!(w.on_ground && (w.foot - R).abs() < 0.02);
+        let w = Walker::enter_at(&ball, &b, DVec3::Y, DVec3::X, R);
+        assert!(
+            w.on_ground && w.h == 0.0,
+            "let go at the ground is standing on it"
+        );
     }
 
     #[test]

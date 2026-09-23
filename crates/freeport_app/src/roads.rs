@@ -111,6 +111,20 @@ impl Network {
             .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
+    /// Every gas station's forecourt middle, in the planet's frame, which
+    /// is what the map draws a pump at.
+    pub fn pump_sites(&self) -> &[DVec3] {
+        &self.pumps
+    }
+
+    /// The road a direction stands on, if it stands within `OFF_ROAD` of
+    /// any: what the map brightens under the car.
+    pub fn nearest_road(&self, world: &World, at: DVec3, radius: f64) -> Option<usize> {
+        let (r, near) = self.nearest(world, at)?;
+        let route = world.routes.get(r)?;
+        (route.line[near].angle_between(at) * radius <= OFF_ROAD).then_some(r)
+    }
+
     /// Where on a ROAD to steer for: `look` metres along the tarmac from
     /// the point nearest the car, in whichever direction gets nearer
     /// `goal`.
@@ -582,9 +596,9 @@ pub fn report(world: &World) {
         share * 100.0,
         freeport_core::road::STEEPEST * 100.0,
     );
-    let (mouths, slipped, worst) = dead_ends(world);
+    let (mouths, slipped, worst, joins) = dead_ends(world);
     bevy::log::info!(
-        "{slipped} slips carry a road's two ENDS into a town, and {mouths} mouths of tarmac are left bare where a road passes THROUGH a settlement; the worst stands {worst:.0} m from any paving"
+        "{slipped} slips carry a road's two ENDS into a town, {joins} mouths are a road joining or leaving another's TRUNK, and {mouths} mouths of tarmac are left bare where a road passes THROUGH a settlement; the worst stands {worst:.0} m from any paving"
     );
     if let Some(s) = slip_of(world) {
         bevy::log::info!(
@@ -674,12 +688,18 @@ pub fn worst_grade(world: &World) -> (f64, f64, usize, f64, f64) {
 /// side and starts again past it on the other, which is two dead ends
 /// that no picture of road 0 would ever show.
 ///
+/// A road joining or leaving another's TRUNK stops laying tarmac too,
+/// because the owner's is there, and that is a JOIN and not a dead end:
+/// counted among the mouths, 350 roads' trunks put the worst bare mouth
+/// 98 km from any paving, which was a fork in open country and not a
+/// town anybody had left a road short of.
+///
 /// It returns how many BARE mouths there are, how many route ends a slip
-/// carries in, and the worst distance from a bare mouth to the nearest
-/// paving any town laid, metres.
-pub fn dead_ends(world: &World) -> (usize, usize, f64) {
+/// carries in, the worst distance from a bare mouth to the nearest
+/// paving any town laid, metres, and how many mouths are joins.
+pub fn dead_ends(world: &World) -> (usize, usize, f64, usize) {
     let radius = world.planet.radius;
-    let (mut mouths, mut slipped, mut worst) = (0usize, 0usize, 0.0f64);
+    let (mut mouths, mut slipped, mut worst, mut joins) = (0usize, 0usize, 0.0f64, 0usize);
     for (r, route) in world.routes.iter().enumerate() {
         let ends = (route.slip.0, route.line.len() - route.slip.1);
         for k in 0..route.line.len().saturating_sub(1) {
@@ -687,6 +707,10 @@ pub fn dead_ends(world: &World) -> (usize, usize, f64) {
             // ribbon lays a piece on is `open[k] && open[k + 1]`.
             let (a, b) = (route.open[k], route.open[k + 1]);
             if a == b {
+                continue;
+            }
+            if route.trunk[k] || route.trunk[k + 1] {
+                joins += 1;
                 continue;
             }
             let at = route.line[if a { k + 1 } else { k }];
@@ -702,7 +726,7 @@ pub fn dead_ends(world: &World) -> (usize, usize, f64) {
         slipped += usize::from(ends.0 > 0) + usize::from(ends.1 < route.line.len());
         let _ = r;
     }
-    (mouths, slipped, worst)
+    (mouths, slipped, worst, joins)
 }
 
 /// How far a direction stands from the nearest paving ANY town laid,

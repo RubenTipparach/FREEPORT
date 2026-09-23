@@ -1122,7 +1122,11 @@ architectural materials retain the normal crease rule.
   BUILT (`TOWN_RADIUS` 537 m, ten times the ground a 170 m town covers,
   which is the square root of ten on the radius), and the walker on a
   street of the port facing the middle of town. F
-  swaps to the fly camera from wherever the walker is and back. Flight uses
+  swaps to the fly camera from wherever the walker is and back, and
+  back is a FALL: the walker is let go with its feet an eye's height
+  under the camera (`Walker::enter_at`) and comes down under the same
+  gravity a jump does, which is the owner's ask, and never snapped to
+  the ground under it. Flight uses
   quaternion orientation: Q/E rolls, Space/Ctrl moves along camera up/down,
   the mouse turns without a pitch limit, either Shift boosts, the wheel
   adjusts speed and R levels to the local horizon. Flight settings live in
@@ -2352,6 +2356,115 @@ the highways themselves are over the seven per cent, and the port's slip
 stands over its ground everywhere by its own lift, -0.05 m at the
 worst**, at the crossing end where the plateau weighs 1.00.
 
+## Two highways on ONE TRUNK are one road, and the trunk carries the higher profile
+
+The owner's picture was two highways overlapping out of the port
+without merging into one geometry, and the second was the consequence:
+"I get stuck instantly as I drive down the road". Both are one fact
+about the router. Every road on a body comes off ONE Dijkstra tree
+(`road::route`), so the roads leaving a town run on the same chain of
+waypoints until their routes split, and each was then laid on its
+own: its own tarmac, its own corridor, its own mound and its own
+profile, three and four deep on the trunk out of a city. Measured on
+the atlas: **727 of 730 road ends stand on a trunk shared with another
+road, 1,573 pairs of roads share waypoints, the deepest share is 23
+waypoints (230 km), and all four of the port's own roads share their
+first two**.
+
+**The profiles DIFFER, and that is the wall.** `road::smooth` envelopes
+each road over its own whole length, so two roads surveyed over the
+same ground on the trunk carry two profiles there, metres apart
+wherever one of them had a hill of its own to climb toward. The field
+takes the nearest arc's level, and two arcs a metre apart at two
+heights is ground that steps between them: a car driving the trunk met
+a wall in the road.
+
+**The merge is at LOAD, in `road/trunk.rs`, and the atlas is untouched.**
+The file keeps each road's own line and profile; `trunk::merge` decides
+who owns what once the centrelines are laid, and `world::lay_routes`
+runs it before a single corridor is cut. The lowest indexed road owns
+a trunk. Every later road standing within `SHARE` (4 m, a lane and a
+half: where two carriageways overlap) of an earlier one for at least
+`LEAST` (three) stations is SNAPPED onto the owner's line there and
+CLOSED: no tarmac, no corridor, no mound and no lamps, because the
+owner's are there, and no slip of its own at an end that is on a
+trunk, which `Route::shared` says. A road forks off through the
+owner's corridor and its tarmac is held `FORK_LIFT` (3 cm, a surfacing
+overlay) over the trunk's where the two overlap, so the two sheets do
+not fight for the depth test. `docs/civil-engineering.md` carries the
+table.
+
+**The trunk's profile is the HIGHEST of the roads on it, and that is
+the envelope's own rule arriving at a junction.** The first cut pinned
+a sharer DOWN to the owner's profile. A road only ever rises, so the
+sharer then had to climb back to its own baked profile past the fork,
+and its profile was raised precisely to hold the grade toward its own
+high ground: the whole climb landed on the one piece past the fork,
+and the steepest fork on the body came out at **103%**. So the owner is
+raised to the sharer wherever the sharer stands higher, eased along its
+own length at `STEEPEST` by the very envelope `smooth` bakes with
+(`trunk::envelope`, one function with two callers now), and the sharer
+is pinned to it. A raise on one road is a demand on every road it
+shares a trunk with, so `merge` carries the profiles round until
+nothing moves by a millimetre.
+
+**And the raise walks the pins HIGHEST ROAD FIRST, or it never
+settles.** An owner's point can itself be a pin on a road below it.
+Raised in road order, a demand road C put on road B's pinned point was
+reset by B's own pin to A before B's pin could carry it down to A,
+C's own envelope raised it again the next pass, and the three chased
+each other to the cap: **64 passes and four shared pieces left at up
+to 47.5%**. Every owner has a lower index than its sharer, so walking
+the pins downward carries a demand the whole way down its chain in one
+pass, and `a_demand_on_a_pinned_point_is_carried_down_to_the_road_that_owns_it`
+holds it with a road that forks off a road that forks off the owner.
+
+**What a JOIN is not, is a dead end.** The harness's census counted
+every place a road's tarmac stops as a mouth left bare, and a road
+joining a trunk stops laying tarmac: 2,027 mouths with the worst 98 km
+from any paving, which was a fork in open country and not a town
+anybody had left a road short of. `Route::trunk` marks the points that
+stand on another road's trunk or fork off it, and the census reports
+the joins on their own.
+
+**What is MISSING, named rather than hidden.** A road that climbs off a
+trunk lifts the trunk with it through the fork, which is embankment on
+the lower road through the junction and is what a real merge is built
+on; it is not a ramp beside the trunk, and there is no widening, no
+give way and no fan of tarmac where the two carriageways part, so the
+fork's own tarmac is two sheets a lip apart and the mound is the
+owner's. A CROSSING, two roads meeting at an angle for fewer than three
+stations, is left exactly as it was, which is the junction the roads
+section already names as missing.
+
+**And a point is pinned ONCE.** A run's fork zone was extended while
+the point was inside any owner's corridor, so it ran straight through
+the next run on the same road and pinned that run's interior a second
+time with the fork's lip: a point pinned once at the trunk's height and
+once a lip over it asked its owner for the lip every pass, and the
+profiles rose three centimetres a pass to the cap. A fork zone stops at
+the neighbouring run now. And a raise is spread over the owner's
+segment by the interpolation's own weights, because raised at both ends
+by the whole difference a pin standing at a station lifted the next
+station too and the next pin lifted it again: the fixture's ten point
+fork came out **two metres over what any road on it stood at**, and
+`a_road_that_leaves_a_trunk_and_comes_back_is_pinned_once_at_every_point`
+holds both.
+
+Measured on the harness body, one binary either side: **350 of the 365
+roads stand on another road's trunk for 78,182 points, the longest
+trunk is 226.7 km, the profiles settle in 8 passes, and the steepest
+piece touching a shared point climbs at 7.0%**, which is the grade and
+nothing over it; **nought of 718,864 pieces on the highways themselves
+are over the seven per cent**, against four at up to 47.5% and one at
+103% on the way here. The body cuts **633,198 corridor pieces against
+708,185**, lays **10,377 stretches of tarmac against 11,664** and
+carries **1,621 gas stations against 1,757**, which is the trunks no
+longer cut, laid and furnished three and four times over. The census
+reads **581 joins and 1,446 bare mouths through settlements with the
+worst 124 m from any paving**, against 2,027 mouths and 97,890 m with
+the joins counted among them.
+
 ## A building is built of a TRADE, and a town is not one grey
 
 Every house and every office wore `CONCRETE`, so a suburb and a downtown
@@ -3009,11 +3122,87 @@ car from a wall and there is no second resolution path.
 **What is MISSING, named rather than hidden.** A car on the rails does
 not know the player is there. It is a closed form function of its town
 or its road and the clock, and knowing would mean state, which is the
-one thing rails do not have: so the player is stopped by the traffic and
-the traffic drives on through the player. Nothing is saved, so a car is
+one thing rails do not have: so the traffic never gives way, and what
+happens when the two MEET is the section on ramming below. Nothing is saved, so a car is
 stolen afresh every run. And the sea does not stop it: the bounds it
 drives against carry no water, so a car driven off a beach keeps going
 down the sea bed.
+
+## A car that is HIT leaves the rails, and both cars take the knock
+
+The owner's ask: "when I ram other cars only I get affected by physics,
+both cars should be affected, I should be able to ram others off the
+road." A car on the rails is a closed form function of its town or its
+road and the clock, and it cannot be moved, because moving it would be
+state; so the moment a car is hit it comes OFF the rails for good,
+exactly as a stolen one does, and from then on it is a `Driver` with
+nobody at the wheel: it takes the shove, slides on its tyres, turns if
+it was struck off centre, rolls to a stop wherever that puts it, is a
+box to the player's car, is drawn by `show_cars` like a parked car, and
+is boarded with E like one. `Theft::who` is a `Rails` now, a town's
+agent or a road's commuter, because a road car can be hit where it
+could never be stolen, and the highway skips a knocked one the way the
+streets skip a stolen one.
+
+**What the two exchange is the core's, `ram.rs`**, because it is a rule
+two clients have to agree on: equal masses and a restitution, which is a
+car to car collision to first order. The closing speed along the
+contact's normal is shared out, each car's own changes by
+`(1 + RESTITUTION) / 2` of it, so momentum is kept exactly and
+`RESTITUTION` (0.3, the middle of the 0.2 to 0.5 crash tests put a car
+at, because a car is crumple and not a billiard ball) of the closing
+speed comes back as separation. The normal is the least penetrated of
+the two cars' own axes, which is the FACE the hit is on, and the
+contact is where the two edges driven together OVERLAP along that face:
+a nose square on a tail meets it at the middle of the bumper and turns
+nothing, and a nose on a flank behind the other car's middle meets it
+there and turns it by that lever over a rectangle's own moment of
+inertia. The first cut asked whose face the axis was and found no lever
+at all, because a nose on a flank is on both cars' axes at once.
+`SPIN_SHARE` (0.35) is how much of the rigid body's turn a car takes,
+since tyres resist a spin the way they resist a slide; at one a rear
+quarter hit at 30 km/h turned a car twice round.
+
+**A knock is two things on a `Driver`, and the pedals own neither.**
+Along the car it is `speed`, which the throttle, the brake and the drag
+already own; across it is `shove`, a velocity in the tangent plane the
+tyres take back at `SKID` (6 m/s^2, six tenths of a gravity, a tyre's
+grip on dry tarmac), sub stepped and pushed out of walls exactly as the
+roll is; and `spin` is worn off at `SPIN_DRAG` (3 rad/s^2). A car
+struck at 10 m/s across slides 7.87 m and stops, and a spin of a radian
+a second turns it ten degrees.
+
+**The harness asks every car near the wheel, before the car is driven.**
+`ram::ram_cars` reads the rails a tick apart for each car's velocity,
+because a rail is a place and not a velocity, which is what makes the
+other half of the ask true: a rails car that drives into the player
+shoves the player and comes off the rails for it. The knock comes off
+the speed the car ARRIVED at and not off what the wall it then meets
+leaves of it, and for `CLEAR` (a quarter of a second) after a hit the
+two pass through each other's boxes, because a car sent on its way at
+`(1 + e) / 2` of the closing speed is faster than the one that sent it
+and a wall on top of the knock took `CRASH` of what was left: a rammer
+that stopped dead against the car it had just shoved. And the rails no
+longer put a GHOST box where a car off them would have got to, which
+was an invisible wall driving down the road behind every stolen car.
+
+Measured, on the core's own ball: a car rammed square from behind at
+16 m/s takes **10.40 m/s** and the rammer goes on at **5.60**, which
+sums to the 16 it arrived with; a car struck on its rear quarter across
+its path at 10 m/s is shoved at 6.5 m/s and turned at **1.69 rad/s**
+toward the rammer's line.
+
+**What is MISSING, named rather than hidden.** A knocked car rolls on
+with nothing on the pedals, so it never brakes, never steers back onto
+the road and never rejoins the traffic; two knocked cars do not hit each
+other, only the player's car hands out knocks; and a car on the rails
+still does not know the player is there until it touches, because
+knowing would mean state. And the scripted drive out of the port WEDGES at
+80 m on this binary and on the one before it alike (81 m in 180 s at
+4 km/h against 83 m at 3, the same car, the same street), so the
+wedge is the blocks port's own way out and not the knock's: it is the
+routing defect the stolen car's own section names and it is measured
+here rather than left to be read as ramming's.
 
 ## A road is ON THE GROUND now, and its corridor is levelled like a town's
 
@@ -4062,6 +4251,162 @@ change when you fly to another planet. And nothing else knows what time
 it is yet: the traffic runs at the same rate at midnight as at noon, and
 a shop is not shut.
 
+## The driver's HUD and the MAP are BUILT, from the page the owner approved
+
+The owner's ask: a proper gauge for the fuel, a speedometer, the money
+in the wallet, a frame counter in the corner, and a map to know where
+you are driving with markers you can put down by hand for a route, A*
+being a feature after it. A screen goes through this file's own mockup
+rule (rendered, published, approved, then built), and
+`docs/mockups/driving-hud.html` is the page, read by the owner six
+times over: the tank's PERCENTAGE went, because the gauge is that
+number and a figure beside a dial saying the same thing is the dial
+not trusted; the game's own HOUR stands in the corner over the frame
+counter, because a day here is four hours long and how far off dusk is
+is a thing a driver wants to know; G is CONTEXTUAL, a prompt only
+while the car is stopped within `PUMP_REACH` of a forecourt, which is
+`fuel.rs`'s own rule for the key and never a line in a legend; H, the
+hour menu, is a debug panel and not a driver's control; and then the
+legend went altogether, M and E with it, because it is easy enough to
+figure out, so the wallet is the top left corner at the size of a
+readout, the next pump the bottom left, and the two dials ROUND at the
+bottom right. `hud.rs` is that page in Bevy and `map.rs` the map
+behind M.
+
+**Nothing on it is a number the core does not already compute.** The
+speed is `Driver::speed`, the gauge is `Tank`, a SHARE of a full one,
+so the figure under it is `Tank::reach`, RANGE at eighty kilometres a
+fill, which is what a driver actually wants; the wallet is `Wallet`
+and moves on G at a pump and nowhere else; the next pump is
+`Network::nearest_pump`, in the colour of the ALARM once it is further
+than the tank reaches, because "amber and 6 km" and "amber and 40 km"
+are different decisions and the gauge is for that decision; the clock
+is `clock::reading`, the same line the status bar carries; and the
+frame counter is a `std::time::Instant` and never Bevy's `Time`, which
+is this file's own rule, and prints the milliseconds beside the rate,
+because 16.7 ms is a number that can be held against a budget.
+
+**A dial is an ARC and a needle, and both are UI nodes.** The arc is
+a `BorderGradient` of one conic gradient on a round node's border,
+starting at `ARC_FROM` (bottom left, 225 degrees round from the top)
+and sweeping `ARC_SWEEP` (three quarters of a turn) with a hard stop
+where the fill ends and nothing past it, over a second ring carrying
+the track; a needle is a bar hung off a node of no size at the dial's
+middle, turned by `UiTransform::from_rotation` through the same two
+constants, so the arc and the needle read one number twice and cannot
+disagree. The compass strip is twenty four ticks and eight letters
+slid `width / 120` a degree under a lubber line, the first marker's
+tick and its distance on it, so a route is driven without opening the
+map; `hud::bearing` is the heading clockwise from north in the place's
+own frame (`town::frame_at`) and `hud::toward` a marker's bearing and
+its distance along the ground, and both are tested on the sphere and
+never on a plane.
+
+**The status line moves.** At the wheel the HUD has the bottom
+corners, so the harness's own line stands under the compass strip,
+centred, and on foot and in the air it is the line along the bottom
+it always was. It is `status.rs` now, because `main.rs` went over
+this file's own nine hundred lines the moment the HUD was wired in.
+
+**The map is a MODE and not a screen**, which is swarm-demo's sensors
+manager rule: M dims the drive rather than leaving it, the car goes on
+being driven under it, Esc or M brings the road back, and the mouse is
+given back while it is open, because a map a player clicks on is a map
+the cursor has to be free for. `map.rs` is the mode and `map/draw.rs`
+what is drawn:
+
+- **An OVERLAY camera**, a `Camera2d` at order one that clears nothing
+  and draws over the world, on `RenderLayers` 2, because 1 is the LOD
+  wireframe's, with `MapGizmos` as a gizmo group of its own on that
+  layer, `Text2d` labels, sprites for the pumps, a mesh for the sea and
+  UI nodes aimed at it for the panels. The 3D camera says
+  `IsDefaultUiCamera` outright, because two cameras on one window with
+  no word on which draws the UI is a warning and a guess.
+- **The projection is GNOMONIC**, `Chart`: the sphere seen from over
+  the map's own middle, east across and north up, exact both ways, so a
+  click is turned back into a direction on the sphere without a search
+  (`the_chart_goes_to_a_pixel_and_back` holds the round trip under a
+  micron at a thousand kilometres). A zoom holds the ground under the
+  cursor still by recentring, and ONE recentre is exact on a plane and
+  not on the sphere, because the chart's frame turns with its centre:
+  three notches left the ground 0.46 px off the cursor, and a second
+  step closes it to under a hundredth, which
+  `a_zoom_holds_the_ground_under_the_cursor` measures.
+- **What it draws is the road the car drives**, `World::routes` off the
+  atlas and never the chart's picture of them, so a road on the map is
+  a road under the wheels. Each route keeps its middle and its spread
+  so a road nowhere near the view costs one test, a line is walked at a
+  stride of about a point a pixel and a half, and the car's OWN road
+  (`Network::nearest_road`, within `OFF_ROAD`) is drawn last and
+  brighter. A settlement is two rings at its tier's size, the port
+  ringed again in the route's colour; the sea is the cells of a 96 by
+  54 grid over the window whose middle is under the water, sampled off
+  `Planet::surface` once per view and never per frame.
+- **A marker is a PLACE and never a road.** A click sets one, a press
+  that moves `CLICK` (4 px) is a drag and not a click, a right click
+  takes the last one back, `MOST` is twelve, and the legs from the car
+  through them are summed along the GROUND (the angle times the
+  radius, this file's own rule) against the tank in the route panel,
+  which says "short" when the tank does not reach. The total is the
+  crow's distance and understates a drive round a bay, and a route
+  that follows the roads between markers is A* over the road graph,
+  whose input this is.
+- **The scale bar is a round number that fits**, `scale_of` on a
+  ladder from 100 m to 50 km inside 160 px. The first ladder started
+  at 500 m, and at the two metres a pixel a town is looked at that is
+  a 250 px bar in a 160 px box, which the test found before a picture
+  did.
+
+**A scripted drive MARKS its goal**, in `aim_drive`, which is what a
+player does before setting off and what a headless run has no pointer
+to do: the compass strip's tick and the map's first leg are then in
+the picture. `--map` opens the map once the car is at the wheel, which
+is M pressed by a run that has no key to press.
+
+**What it decided against is a minimap.** A small always-on map in a
+corner was drawn and taken out: at the scale a car covers ground it is
+either a blur of the road under the car or too coarse to place a pump
+on, and the compass strip carries the one thing a driver needs from it.
+
+**What is MISSING, named rather than hidden.** No route follows the
+roads, which is the A* the owner named as the feature after this; the
+G prompt is tested and not photographed, because the scripted drive
+never stops at a pump; the sea on the map is a grid of 96 by 54 cells
+and reads as one when the map is zoomed to a town; and the HUD is laid
+out in shares of the window and not scaled by its height the way
+swarm-demo's deck is, so on a very wide window the dials stand further
+from the strip than the page draws them.
+
+Measured, in the tests: the chart's round trip is under a micron at a
+thousand kilometres over 117 directions across the window; a zoom of
+three notches leaves the ground under the cursor 0.46 px off with one
+recentre and under 0.01 px with two; the scale bar's first ladder put a
+250 px bar in a 160 px box at two metres a pixel; and the frame counter
+reads 60 frames over a second as 60 fps and 16.67 ms. The first render
+found what no test could, a panel builder that carried `BorderColor`
+twice, which is a panic at spawn and not a compile error.
+
+**Measured, in the pictures, on lavapipe at `--levels 5 --drive 20`.**
+The HUD at the wheel: 1,652 chunks and 171,196 triangles settled in
+177.5 s at 38.4 ms a chunk on two workers, the car stolen in the port
+and its goal marked 51.63 km off; the lubber line stands at pixel 639
+of 1280, the strip reads SW and W either side of it with the goal's
+tick and "51.6 km" at 845 to 921, and the fuel arc sweeps clockwise
+from the bottom left of its ring to the top for a tank at 52%, the
+same 41 km the status line prints beside it, so the dial, its figure
+and the harness's own line are one number three times. The map over
+it, at 48 m a pixel across 62 km: the four roads out of the port with
+the car's own drawn brighter, the port ringed and labelled, the pumps
+on the roads, the leg to the marked goal running off the frame, the
+route panel reading one leg of 52 km against a tank that holds 41 and
+saying short, and a 5.0 km scale bar of 103 px. And the DIM under the map is measured
+rather than the page's number: the page composites in sRGB, where its
+0.82 leaves the drive at 18% of its brightness, and Bevy composites in
+linear light, where 0.82 left the street under the map at 45% in sRGB
+(17% in linear, which is the alpha doing exactly what it says in the
+wrong space); at 0.97 it is 23% in sRGB, which is the page's own dim to
+the eye.
+
 ## The hour is a MENU now, and it writes the one offset there is
 
 `clock.rs` is a drawn panel the player opens with **H**: the hour, four
@@ -4430,7 +4775,7 @@ time it was broken.
 
 ```sh
 cargo test -p freeport_core                       # 194, the core, about 40 s
-cargo test -p freeport_app                        # 49, the harness. It was NOT in this list and
+cargo test -p freeport_app                        # 57, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
@@ -4441,7 +4786,7 @@ python3 tools/make_asphalt_texture.py --check     # the asphalt set matches its 
 python3 tools/make_building_textures.py --check   # and the six a building is built of
 python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, against the scene's own floor
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
-./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, G gas, H the time menu, T the torch, Tab wires, Esc frees the mouse
+./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, E steals a car, M the map, G gas, H the time menu, T the torch, Tab wires, Esc frees the mouse
 ./run.sh --test                                   # the core suite and the shape check, then the build and the window; run.bat is the Windows twin, --shot out.png takes a picture with no display
 # Every headless run below is under xvfb-run with
 # VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json, and `--octaves` is
@@ -4464,6 +4809,12 @@ cargo build --release -p freeport_app             # the harness (needs libwaylan
 # the town going past. `--drive` is E and then W held, since a headless
 # run can press neither.
 ./target/release/freeport_app --octaves 14 --levels 9 --drive 300 --frames 320 --shot stolen.png
+# The DRIVER'S HUD at the wheel, and the MAP over it. A scripted drive
+# marks its goal, so the compass strip carries the tick and the map the
+# first leg; `--map` opens the map once the car is at the wheel, which
+# is M pressed by a run that has no key to press.
+./target/release/freeport_app --levels 5 --drive 20 --frames 40 --shot hud.png
+./target/release/freeport_app --levels 5 --drive 20 --map --frames 40 --shot map.png
 # And DRIVE TO THE NEXT TOWN. `--drive N` is N SECONDS aimed at the
 # nearest settlement that is not the one it stands in, a second a
 # rendered frame. The OCTAVES are left alone, because the atlas is
@@ -4557,6 +4908,7 @@ from the repository root, and published:
 - hex terrain: https://claude.ai/code/artifact/87905fd8-d47b-4f2e-8cc3-8c226251a799
 - road mound: https://claude.ai/artifact/FMimcpVizLa3yttJYdBPtd
 - city blocks: https://claude.ai/artifact/CamvaxSusg8UXXRYb3UUfW
+- driving HUD and map: https://claude.ai/artifact/2i1EWdyyK5pkHbxB1KH16P
 
 `docs/mockups/README.md` is the index of them, each file beside its link
 and what it decided, so a page can be found again from the checkout.
@@ -4970,6 +5322,28 @@ Numbers in the commit message. What is measured so far:
   0 is 224 buildings, 1,821 pieces of street, 51,539 collision boxes and
   448 lamps, and the eight within the 200 km reach are built one a
   frame. Town 160, the 9 km village, is 31 buildings and 5,739 boxes.
+- **RAMMING, on the core's own ball**: a car rammed square from behind
+  at 16 m/s takes 10.40 m/s and the rammer keeps 5.60, momentum to a
+  part in a hundred thousand (the two stand 4 m apart on a 2 km ball,
+  so the normal is two milliradians off the struck car's tangent
+  plane); a rear quarter hit across at 10 m/s shoves the struck car at
+  6.5 m/s and turns it at 1.69 rad/s; a car shoved sideways at 10 m/s
+  slides 7.87 m and stops, and a spin of a radian a second turns it ten
+  degrees before the tyres take it.
+- **Two highways on ONE TRUNK**, on the harness body: 727 of 730 road
+  ends stand on a trunk shared with another road, 1,573 pairs share
+  waypoints and the deepest share is 23 waypoints (230 km). Merged at
+  load, **350 of 365 roads stand on another's trunk for 78,182 points,
+  the longest trunk is 226.7 km, the profiles settle in 8 passes and
+  the steepest shared piece climbs at 7.0%**, with nought of 718,864
+  highway pieces over the grade: the first cut pinned a sharer down and
+  put its whole climb back on one piece at 103%, the second raised
+  owners in road order and chased itself to the cap at 64 passes with
+  four pieces at 47.5%, and the third pinned a point twice and rose a
+  lip a pass for ever. The body cuts 633,198 corridor pieces against
+  708,185 and lays 10,377 stretches against 11,664; the census reads
+  581 joins and 1,446 bare mouths at worst 124 m from paving, against
+  2,027 mouths at 97,890 m with the joins counted as dead ends.
 - **The port as BLOCKS, on the re-baked body**: town 0 is **1,676
   buildings, 7,621 pieces of street, 168,209 collision boxes and 3,705
   lamps**, against 224, 1,821, 51,539 and 448 as one building a block,

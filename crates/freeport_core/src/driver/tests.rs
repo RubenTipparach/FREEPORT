@@ -5,9 +5,9 @@ use crate::field::{Block, Built, Sphere, CONCRETE};
 /// flat: this is the walker suite's own radius and for the same reason,
 /// which is that on a small ball a block three metres out stands higher
 /// than the ground curving away under it.
-const R: f64 = 2000.0;
+pub(super) const R: f64 = 2000.0;
 
-fn bounds() -> Bounds {
+pub(super) fn bounds() -> Bounds {
     Bounds {
         radius: R,
         floor: R - 50.0,
@@ -17,7 +17,7 @@ fn bounds() -> Bounds {
 }
 
 /// The ball, with whatever boxes are handed in standing on it.
-fn world(blocks: &[Block]) -> Built<'_> {
+pub(super) fn world(blocks: &[Block]) -> Built<'_> {
     Built {
         ground: Box::leak(Box::new(Sphere { radius: R })),
         blocks: blocks.iter().collect(),
@@ -25,13 +25,19 @@ fn world(blocks: &[Block]) -> Built<'_> {
 }
 
 /// A car set down at the north pole pointing along x.
-fn car(field: &dyn Density, b: &Bounds) -> Driver {
+pub(super) fn car(field: &dyn Density, b: &Bounds) -> Driver {
     Driver::board(field, b, DVec3::Y, DVec3::X)
 }
 
 /// Drive for `secs` with the pedals held, a sixtieth at a time, and say
 /// how far along the ground it got.
-fn drive(d: &mut Driver, field: &dyn Density, b: &Bounds, input: Drive, secs: f64) -> f64 {
+pub(super) fn drive(
+    d: &mut Driver,
+    field: &dyn Density,
+    b: &Bounds,
+    input: Drive,
+    secs: f64,
+) -> f64 {
     let from = d.dir;
     for _ in 0..(secs * 60.0) as usize {
         d.update(field, b, &input, 1.0 / 60.0);
