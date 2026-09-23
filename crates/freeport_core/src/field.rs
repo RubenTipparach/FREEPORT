@@ -300,11 +300,14 @@ impl Planet {
     /// and seven metres off the last one's, so the nearest is the one
     /// whose ramp it is, and the profile is continuous by construction.
     pub fn levelling(&self, dir: DVec3) -> (f64, f64, f64) {
-        let (mut bias, mut keep, mut fill) = (0.0f64, 1.0f64, 0.0f64);
-        // The site that covers this point OUTRIGHT, and how far its own
-        // axis is: several can cover one point, so which one's level is
-        // the ground here has to be decided rather than taken from
-        // whichever the index happened to reach first.
+        // Two composites and not one: what the TOWNS make of the ground,
+        // and what the ROADS lay over that. See `Layer`.
+        let (mut cut, mut built) = (Layer::BARE, Layer::BARE);
+        let mut fill = 0.0f64;
+        // The site that covers this point OUTRIGHT, how far its own axis
+        // is, and whether it is a road's: several can cover one point, so
+        // which one's level is the ground here has to be decided rather
+        // than taken from whichever the index happened to reach first.
         let (mut covered, mut nearest) = (None, f64::MAX);
         for site in self.sites_near(dir, 0.0) {
             let w = self.site_weight(site, dir);
@@ -320,16 +323,26 @@ impl Planet {
             if w >= 1.0 {
                 let away = (dir - at).length_squared();
                 if away < nearest {
-                    (nearest, covered) = (away, Some(level));
+                    (nearest, covered) = (away, Some((level, site.fills)));
                 }
                 continue;
             }
-            bias += (level - bias) * w;
-            keep *= 1.0 - w;
+            if site.fills {
+                built.over(level, w);
+            } else {
+                cut.over(level, w);
+            }
         }
         match covered {
-            Some(level) => (level, 0.0, fill),
-            None => (bias, keep, fill),
+            // A road's own flat is the road's, whatever else reaches it.
+            Some((level, true)) => (level, 0.0, fill),
+            // A town's plateau with a road's skirt laid OVER it.
+            Some((level, false)) => (level * built.keep + built.bias, 0.0, fill),
+            None => (
+                cut.bias * built.keep + built.bias,
+                cut.keep * built.keep,
+                fill,
+            ),
         }
     }
 
@@ -380,6 +393,46 @@ impl Planet {
     /// The terms this planet's relief is made of.
     pub fn shape(&self) -> crate::biome::Shape {
         crate::biome::Shape::of(self)
+    }
+}
+
+/// One composite of sites over the ground: the level the sites stand
+/// for, already weighted, and how much of whatever is UNDER them is
+/// left showing. Laying a site of level `L` and weight `w` over it is
+/// `bias = bias + (L - bias) w` and `keep = keep (1 - w)`, which is the
+/// order the index reaches them in.
+///
+/// **A road's skirt is laid OVER a town's ground and never under it**,
+/// which is why `levelling` keeps two of these. With one composite in
+/// the index's own order a town reached AFTER a road pulled the road's
+/// skirt toward the town's level, so at the edge of the corridor's flat,
+/// where the road's weight comes to one and the road's own level takes
+/// over outright, the ground stepped by the town's share of the
+/// difference; and where a town covered the ground outright the road's
+/// skirt was thrown away altogether and the ground stepped by all of
+/// it. Measured round the scripted car wedged out of the port, 7.8 m
+/// over the town's plateau: a four metre wall within one metre, where
+/// the corridor's flat met the town's apron, which is a road a car
+/// cannot get onto. Towns first and roads over them is continuous at
+/// every edge either kind of site has, because a road's weight going to
+/// one takes its own level exactly whatever lies under it.
+#[derive(Clone, Copy)]
+struct Layer {
+    bias: f64,
+    keep: f64,
+}
+
+impl Layer {
+    /// Nothing laid: all of what is under it shows.
+    const BARE: Layer = Layer {
+        bias: 0.0,
+        keep: 1.0,
+    };
+
+    /// Lay a site of level `level` and weight `w` over what is here.
+    fn over(&mut self, level: f64, w: f64) {
+        self.bias += (level - self.bias) * w;
+        self.keep *= 1.0 - w;
     }
 }
 
