@@ -131,6 +131,9 @@ pub struct Auto {
     /// The fastest the route's own bends ahead let the car go, metres a
     /// second, and nothing where it is not on the route.
     limit: Option<f64>,
+    /// Whether the car has reached the route's tarmac, and not strayed
+    /// `STRAYED` off it since. See `along`.
+    joined: bool,
 }
 
 impl Auto {
@@ -207,6 +210,19 @@ impl Auto {
         let (radius, points) = (world.planet.radius, &leg.points);
         let (seg, off, foot) = off_tarmac(points, car.dir, radius)?;
         self.off = off;
+        // JOINED is a latch. The streets are the way ONTO the route from
+        // inside a town, and never the way back to it once the car is on
+        // it: a car a few metres wide of its line at speed, still inside
+        // the port's reach, was handed to the streets, which took it back
+        // into town, down the slip and off the far end again, round the
+        // junction at 160 km/h for twenty seconds until it wedged against
+        // a building. Joined, it pursues the tarmac until it has truly
+        // left it.
+        if off <= ONTO {
+            self.joined = true;
+        } else if off > STRAYED {
+            self.joined = false;
+        }
         // OFF the tarmac inside a town, the way ONTO it is the town's own
         // streets, to the nearest point of it. The route's first step is
         // a hop from where it was planned onto the road beside it, and
@@ -215,7 +231,7 @@ impl Auto {
         // eighteen metres from the slip for six minutes. Out in the
         // country there is no town, and the tarmac is pursued from where
         // the car stands.
-        if off > ONTO {
+        if !self.joined {
             if let Some(p) = self.through_town(world, car.dir * car.foot, foot * car.foot) {
                 return Some(("the streets onto the route", p));
             }
@@ -445,6 +461,13 @@ const SHORT_HOP: f64 = 50.0;
 /// highway's own carriageway and shoulder either side of the centreline,
 /// which a car in its lane is well inside.
 const ONTO: f64 = road::ribbon::HALF + road::ribbon::SHOULDER;
+
+/// How far off the route's tarmac a car that has JOINED it has to stray
+/// before the streets are asked for the way back, metres: a block and a
+/// street, the width of a town's own grid, so a car that has run wide
+/// of a bend pursues the tarmac and one that has left it for a street
+/// takes the streets.
+const STRAYED: f64 = 60.0;
 
 /// How far off the nearest crossing a car has to stand, in pitches of
 /// the town's grid, to be ARRIVING at a town rather than on its paving:
