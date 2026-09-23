@@ -130,7 +130,8 @@ fn cell(dir: DVec3, radius: f64) -> u64 {
 
 /// The nearest point of the great circle chord from `a` to `b` to `p`,
 /// as the share along the chord and the point itself on the sphere.
-fn project(p: DVec3, a: DVec3, b: DVec3) -> (f64, DVec3) {
+/// `path` snaps a place onto the network with it too.
+pub(super) fn project(p: DVec3, a: DVec3, b: DVec3) -> (f64, DVec3) {
     let ab = b - a;
     let t = ((p - a).dot(ab) / ab.length_squared().max(1e-30)).clamp(0.0, 1.0);
     (t, (a + ab * t).normalize_or(a))

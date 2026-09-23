@@ -49,6 +49,7 @@ mod planets;
 mod ram;
 mod render_probe;
 mod roads;
+mod route;
 mod sky;
 mod status;
 mod stream;
@@ -261,6 +262,7 @@ fn main() {
     .init_resource::<flight_bench::Benchmark>()
     .init_resource::<map::MapView>()
     .init_resource::<map::Markers>()
+    .init_resource::<route::Plan>()
     .init_gizmo_group::<map::MapGizmos>()
     .add_systems(
         Startup,
@@ -350,6 +352,7 @@ fn tick(app: &mut App) {
                     (
                         map::toggle_map,
                         map::work_map,
+                        route::plan_route,
                         map::sea_layer,
                         map::draw_map,
                         map::show_route,
@@ -548,8 +551,9 @@ fn say_roads(commands: &mut Commands, world: &World) {
         steep * 100.0
     );
     roads::report(world);
+    let (nodes, steps) = network.graph().size();
     info!(
-        "{} roads are {} stretches of tarmac with {} gas stations on them; the ones within {:.0} km of the eye are laid{}",
+        "{} roads are {} stretches of tarmac with {} gas stations on them, and a graph of {nodes} waypoints and {steps} steps to route over; the ones within {:.0} km of the eye are laid{}",
         world.roads.len(),
         network.len(),
         network.pumps(),

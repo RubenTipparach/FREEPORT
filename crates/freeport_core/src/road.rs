@@ -571,12 +571,12 @@ mod align;
 pub use align::*;
 
 pub mod commute;
-
+pub mod path;
 mod reach;
+pub use reach::*;
 
 /// Shared trunks: where two roads run on one line, one owns it.
 pub mod trunk;
-pub use reach::*;
 
 pub mod ribbon;
 

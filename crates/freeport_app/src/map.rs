@@ -206,7 +206,7 @@ pub struct Whereabouts<'w> {
 impl Whereabouts<'_> {
     /// Where the eye is, as a direction: the car's, the walker's or the
     /// fly camera's own.
-    fn here(&self) -> DVec3 {
+    pub(crate) fn here(&self) -> DVec3 {
         if let Some(theft) = self.thefts.driving() {
             theft.car.dir
         } else if let Some(w) = self.walker.as_deref() {
@@ -217,7 +217,7 @@ impl Whereabouts<'_> {
     }
 
     /// The body's radius, metres.
-    fn radius(&self) -> f64 {
+    pub(crate) fn radius(&self) -> f64 {
         self.ground.0.planet.radius
     }
 }
@@ -241,6 +241,7 @@ pub struct Layers<'w, 's> {
 pub fn toggle_map(
     args: Res<Args>,
     keys: Res<ButtonInput<KeyCode>>,
+    markers: Res<Markers>,
     at: Whereabouts,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut view: ResMut<MapView>,
@@ -256,10 +257,17 @@ pub fn toggle_map(
         None
     };
     let Some(open) = want else { return };
+    let scripted = args.map && !view.fired;
     view.open = open;
     view.fired |= open;
     if open {
         view.centre = at.here();
+        // `--map` is M and then a DRAG, which a run with no pointer
+        // cannot make: it opens halfway to the first marker, so the
+        // route there is in the picture and not off the edge of it.
+        if let Some(first) = markers.0.first().filter(|_| scripted) {
+            view.centre = (view.centre + *first).normalize_or(view.centre);
+        }
         let width = windows.single().map_or(1280.0, |w| w.width());
         view.scale = REGION / width.max(1.0) as f64;
         view.press = None;
@@ -382,7 +390,7 @@ fn zoom(view: &mut MapView, radius: f64, size: Vec2, at: Vec2, notches: f64) {
 /// kilometres long.
 pub fn show_route(
     view: Res<MapView>,
-    markers: Res<Markers>,
+    route: crate::route::Planned,
     at: Whereabouts,
     mut says: Query<(&mut Text, &Says)>,
     mut bar: Query<&mut Node, With<ScaleBar>>,
@@ -390,14 +398,8 @@ pub fn show_route(
     if !view.open {
         return;
     }
-    let radius = at.radius();
-    let mut from = at.here();
-    let mut legs = Vec::new();
-    for m in &markers.0 {
-        legs.push(from.angle_between(*m) * radius);
-        from = *m;
-    }
-    let total: f64 = legs.iter().sum();
+    let legs = legs_of(&route, at.here(), at.radius());
+    let total: f64 = legs.iter().map(|l| l.0).sum();
     let holds = at.thefts.driving().map(|t| t.car.tank.reach());
     let (bar_m, bar_px) = scale_of(view.scale);
     for (mut line, what) in &mut says {
@@ -406,7 +408,14 @@ pub fn show_route(
             Says::Legs => legs
                 .iter()
                 .enumerate()
-                .map(|(i, d)| format!("{}   {}", i + 1, km(*d)))
+                .map(|(i, (d, roads))| {
+                    format!(
+                        "{}   {}{}",
+                        i + 1,
+                        km(*d),
+                        if *roads { "" } else { ", no road" }
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n"),
             Says::Total => km(total),
@@ -423,6 +432,27 @@ pub fn show_route(
     for mut node in &mut bar {
         node.width = Val::Px(bar_px);
     }
+}
+
+/// Each leg's length and whether it follows the roads: ALONG them as
+/// planned, and as the crow flies for a leg the plan has not caught up
+/// with, which is a marker set this frame and is not yet known to have
+/// no road, so it is not said to.
+fn legs_of(route: &crate::route::Planned, here: DVec3, radius: f64) -> Vec<(f64, bool)> {
+    if let Some(legs) = route.legs() {
+        return legs.iter().map(|l| (l.metres, l.roads)).collect();
+    }
+    let mut from = here;
+    route
+        .markers
+        .0
+        .iter()
+        .map(|m| {
+            let d = from.angle_between(*m) * radius;
+            from = *m;
+            (d, true)
+        })
+        .collect()
 }
 
 /// A distance in kilometres, to a tenth under ten and whole past.

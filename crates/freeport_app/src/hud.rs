@@ -34,7 +34,7 @@
 use crate::clock;
 use crate::drive::Thefts;
 use crate::fuel::Wallet;
-use crate::map::{MapView, Markers};
+use crate::map::MapView;
 use crate::roads::Network;
 use crate::sky::Weather;
 use crate::world::Ground;
@@ -666,7 +666,7 @@ type GoalTicks<'w, 's> =
 /// first marker's tick and distance on it.
 pub fn turn_compass(
     thefts: Res<Thefts>,
-    markers: Res<Markers>,
+    route: crate::route::Planned,
     ground: Res<Ground>,
     strip: Query<&ComputedNode, With<Compass>>,
     mut marks: Query<(&mut Node, &mut Visibility, &Bearing)>,
@@ -697,10 +697,13 @@ pub fn turn_compass(
             None => *seen = Visibility::Hidden,
         }
     }
-    let first = markers
-        .0
-        .first()
-        .map(|&m| toward(theft.car.dir, m, ground.0.planet.radius));
+    // The tick is where the marker IS and the figure how far it is to
+    // DRIVE there, along the roads the map planned: the bearing is what
+    // says which way, and the distance is what the tank is held against.
+    let first = route.markers.0.first().map(|&m| {
+        let (deg, crow) = toward(theft.car.dir, m, ground.0.planet.radius);
+        (deg, route.first().map_or(crow, |l| l.metres))
+    });
     for (mut node, mut seen) in &mut goal {
         match first.and_then(|(deg, _)| place(deg, 2.0)) {
             Some(x) => {

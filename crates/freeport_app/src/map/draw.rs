@@ -4,12 +4,13 @@
 //! that decides what it shows is `map.rs`, which this is a child of.
 
 use super::{
-    Chart, Clear, Dim, MapGizmos, MapUi, MapView, Markers, Overlay, Panel, Says, ScaleBar,
-    SeaLayer, Whereabouts, MOST,
+    Chart, Clear, Dim, MapGizmos, MapUi, MapView, Overlay, Panel, Says, ScaleBar, SeaLayer,
+    Whereabouts, MOST,
 };
 use crate::drive::Thefts;
 use crate::hud::{self, AMBER, DIM, EDGE, GLASS, HUD, ROUTE};
 use crate::roads::Network;
+use crate::route::Planned;
 use crate::world::{Ground, World};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
@@ -33,6 +34,10 @@ const LAYER: usize = 2;
 const SEA_GRID: (usize, usize) = (96, 54);
 /// How wide a road's line is drawn, pixels.
 const LINE: f32 = 2.0;
+/// A hop's dashes and the gaps between them, pixels: the page's own
+/// `setLineDash([6, 5])`.
+const DASH: f32 = 6.0;
+const DASH_GAP: f32 = 5.0;
 /// The page's own colours for what only the map has. The dimmer's alpha
 /// is not the page's 0.82: a browser composites in sRGB, where 0.82
 /// leaves the drive at 18% of its brightness, and Bevy composites in
@@ -453,7 +458,7 @@ fn mark_of(radius: f64) -> f32 {
 /// the pumps, the legs and the markers, and the car.
 pub fn draw_map(
     view: Res<MapView>,
-    markers: Res<Markers>,
+    route: Planned,
     network: Res<Network>,
     at: Whereabouts,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -483,7 +488,7 @@ pub fn draw_map(
     );
     draw_towns(&mut gizmos, &chart, world, half, &mut placed);
     place_pumps(&chart, network.pump_sites(), half, &mut placed);
-    draw_route(&mut gizmos, &chart, here, &markers, &mut placed);
+    draw_route(&mut gizmos, &chart, here, &route, half, &mut placed);
     draw_car(&mut gizmos, &chart, here, &at.thefts);
 }
 
@@ -558,19 +563,32 @@ fn place_pumps(chart: &Chart, pumps: &[DVec3], half: Vec2, placed: &mut Placed) 
     }
 }
 
-/// The legs from here through the markers, and a ring and a number on
-/// each marker.
+/// The route: every leg the plan has, along the roads it takes, and
+/// the markers numbered in the order they were set. A leg the plan has
+/// not caught up with yet (a marker set this frame) is drawn straight,
+/// which is what every leg was before there was a way to find.
 fn draw_route(
     gizmos: &mut Gizmos<MapGizmos>,
     chart: &Chart,
     here: DVec3,
-    markers: &Markers,
+    route: &Planned,
+    half: Vec2,
     placed: &mut Placed,
 ) {
-    let mut legs: Vec<Vec2> = chart.to_px(here).into_iter().collect();
-    legs.extend(markers.0.iter().filter_map(|m| chart.to_px(*m)));
-    if legs.len() > 1 {
-        gizmos.linestrip_2d(legs.iter().copied(), ROUTE);
+    let markers = &*route.markers;
+    match route.legs() {
+        Some(legs) => {
+            for leg in legs {
+                draw_leg(gizmos, chart, &leg.points, half);
+            }
+        }
+        None => {
+            let mut from = here;
+            for m in &markers.0 {
+                dashed(gizmos, chart, from, *m, half);
+                from = *m;
+            }
+        }
     }
     for (mut tf, mut seen, number) in &mut placed.numbers {
         match markers.0.get(number.0).and_then(|m| chart.to_px(*m)) {
@@ -583,6 +601,77 @@ fn draw_route(
             None => *seen = Visibility::Hidden,
         }
     }
+}
+
+/// One leg: SOLID in the route's colour wherever it is on tarmac, over
+/// the road it follows, and DASHED across a hop, which is the page's own
+/// mark for a line that follows no road: onto the road from wherever
+/// the car is, across a town between two roads, and off it to a marker.
+fn draw_leg(gizmos: &mut Gizmos<MapGizmos>, chart: &Chart, points: &[(DVec3, bool)], half: Vec2) {
+    let mut k = 0;
+    while k + 1 < points.len() {
+        if !points[k + 1].1 {
+            dashed(gizmos, chart, points[k].0, points[k + 1].0, half);
+            k += 1;
+            continue;
+        }
+        let mut j = k + 1;
+        while j + 1 < points.len() && points[j + 1].1 {
+            j += 1;
+        }
+        let run: Vec<DVec3> = points[k..=j].iter().map(|p| p.0).collect();
+        road(gizmos, chart, &run, half, ROUTE);
+        k = j;
+    }
+}
+
+/// A dashed line between two places on the chart, cut to the window so
+/// a leg across a sea costs its visible dashes and no more.
+fn dashed(gizmos: &mut Gizmos<MapGizmos>, chart: &Chart, a: DVec3, b: DVec3, half: Vec2) {
+    let (Some(p), Some(q)) = (chart.to_px(a), chart.to_px(b)) else {
+        return;
+    };
+    let Some((p, q)) = clip(p, q, half + Vec2::splat(4.0)) else {
+        return;
+    };
+    let long = p.distance(q);
+    if long <= 0.0 {
+        return;
+    }
+    let along = (q - p) / long;
+    let mut t = 0.0;
+    while t < long {
+        let end = (t + DASH).min(long);
+        gizmos.line_2d(p + along * t, p + along * end, ROUTE);
+        t += DASH + DASH_GAP;
+    }
+}
+
+/// A segment cut to a box about the middle of the window, or nothing
+/// when none of it is inside: Liang and Barsky's clip.
+fn clip(p: Vec2, q: Vec2, half: Vec2) -> Option<(Vec2, Vec2)> {
+    let d = q - p;
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (dp, lo, hi) in [
+        (d.x, p.x + half.x, half.x - p.x),
+        (d.y, p.y + half.y, half.y - p.y),
+    ] {
+        for (num, den) in [(lo, -dp), (hi, dp)] {
+            if den == 0.0 {
+                if num < 0.0 {
+                    return None;
+                }
+            } else {
+                let r = num / den;
+                if den < 0.0 {
+                    t0 = t0.max(r);
+                } else {
+                    t1 = t1.min(r);
+                }
+            }
+        }
+    }
+    (t0 <= t1).then(|| (p + d * t0, p + d * t1))
 }
 
 /// The car as an arrow along its own heading in a ring, or the eye as a

@@ -25,7 +25,7 @@ use bevy::prelude::*;
 use freeport_core::field::TERRAIN;
 use freeport_core::model::Model;
 use freeport_core::pos::WorldPos;
-use freeport_core::road::ribbon;
+use freeport_core::road::{path, ribbon};
 
 /// How far from the eye a stretch of road is BUILT, metres. A stretch is
 /// 5.5 km of tarmac, so this is the one in front, the one behind and a
@@ -58,6 +58,9 @@ pub struct Network {
     /// Every GAS STATION on the body: the middle of its forecourt in the
     /// planet's frame, which is what a car pulls up beside.
     pumps: Vec<DVec3>,
+    /// The roads as a GRAPH over the atlas's own waypoints, which is
+    /// what a route over them is found on (`road::path`).
+    graph: path::Graph,
 }
 
 impl Network {
@@ -88,7 +91,17 @@ impl Network {
                 stretches.push((r, k, route.line[(at.start + at.end) / 2]));
             }
         }
-        Network { stretches, pumps }
+        let graph = path::Graph::of(&world.roads, radius);
+        Network {
+            stretches,
+            pumps,
+            graph,
+        }
+    }
+
+    /// The roads as a graph, which a route is found on.
+    pub fn graph(&self) -> &path::Graph {
+        &self.graph
     }
 
     /// How many stretches there are, for the log.

@@ -3016,14 +3016,15 @@ in 30 s wedged against a building, then 230 m and stuck at a corner, then
 steady 58 km/h**, which is the car flat out on a country road for ten
 minutes with nothing to back off from.
 
-**What is MISSING is the NETWORK.** The car follows ONE road, the one it
-joined, from the town's own streets: there is no route across the roads
-that join at a town, so a settlement that is not on the road it reached
-is a settlement it drives past rather than to. The scripted drive's goal
-is the nearest settlement whatever road it is on, so `--drive` measures
-the country driving honestly and the distance to its goal does not close.
-A route over the road graph is the same breadth first walk one level up
-and is named here rather than hidden.
+**What WAS missing is the NETWORK, and the route closes it.** The car
+followed ONE road, the one it joined, from the town's own streets: there
+was no route across the roads that join at a town, so a settlement that
+was not on the road it reached was a settlement it drove past rather
+than to, and the distance to its goal never closed. It drives the ROUTE
+the map plans now, which is A* over the road graph one level up from the
+town's own breadth first walk, and the section on the route below is the
+whole of it; `Network::follow` is what it falls back to when no road
+joins the car to its goal.
 
 **And a car with no ROUTE cannot get out of a town, which is measured
 rather than guessed.** The scripted drive aimed straight at the next
@@ -4347,10 +4348,10 @@ what is drawn:
   takes the last one back, `MOST` is twelve, and the legs from the car
   through them are summed along the GROUND (the angle times the
   radius, this file's own rule) against the tank in the route panel,
-  which says "short" when the tank does not reach. The total is the
-  crow's distance and understates a drive round a bay, and a route
-  that follows the roads between markers is A* over the road graph,
-  whose input this is.
+  which says "short" when the tank does not reach. The legs are the
+  way over the ROADS between them now, which is the section on the
+  route below; the crow's distance, which understates a drive round a
+  bay, is what a leg falls back to where no road joins its two ends.
 - **The scale bar is a round number that fits**, `scale_of` on a
   ladder from 100 m to 50 km inside 160 px. The first ladder started
   at 500 m, and at the two metres a pixel a town is looked at that is
@@ -4361,16 +4362,18 @@ what is drawn:
 player does before setting off and what a headless run has no pointer
 to do: the compass strip's tick and the map's first leg are then in
 the picture. `--map` opens the map once the car is at the wheel, which
-is M pressed by a run that has no key to press.
+is M pressed by a run that has no key to press, and HALFWAY to the first
+marker, which is M and then a drag: the next town is fifty kilometres
+off and the map is sixty two across, so a map opened on the car had the
+route running off the edge of the picture.
 
 **What it decided against is a minimap.** A small always-on map in a
 corner was drawn and taken out: at the scale a car covers ground it is
 either a blur of the road under the car or too coarse to place a pump
 on, and the compass strip carries the one thing a driver needs from it.
 
-**What is MISSING, named rather than hidden.** No route follows the
-roads, which is the A* the owner named as the feature after this; the
-G prompt is tested and not photographed, because the scripted drive
+**What is MISSING, named rather than hidden.** The G prompt is tested
+and not photographed, because the scripted drive
 never stops at a pump; the sea on the map is a grid of 96 by 54 cells
 and reads as one when the map is zoomed to a town; and the HUD is laid
 out in shares of the window and not scaled by its height the way
@@ -4406,6 +4409,101 @@ linear light, where 0.82 left the street under the map at 45% in sRGB
 (17% in linear, which is the alpha doing exactly what it says in the
 wrong space); at 0.97 it is 23% in sRGB, which is the page's own dim to
 the eye.
+
+## A route FOLLOWS the roads, and A* finds it on the atlas's own waypoints
+
+The owner named it as the feature after the map: markers put down by
+hand, and the way between them found along the roads. `road/path.rs` in
+the core is the finding and `route.rs` in the app is when to ask.
+
+**The graph is the ATLAS's, and that is what makes it exact.** Every
+road on a body is a walk of ONE Dijkstra tree over one set of waypoints
+(`road::connect`), so two roads that share a stretch share the very
+waypoints it runs through, bit for bit, and every road ends at its two
+towns' own centres. A waypoint is a node, a step on any road is an edge,
+and a junction is simply a node with more than two edges: a fork where a
+trunk splits, or a town where roads meet. Nothing is matched by
+distance, so there is no tolerance anywhere to get wrong; a node is
+keyed on its direction to a billionth of the radius, which is a
+millimetre here. The harness body is **4,456 waypoints and 4,668
+steps**. The other graph there was to build is the refined lines the
+roads are DRAWN on, which is 700,000 points and junctions found by
+looking for points that stand near each other: a tolerance that is right
+on a trunk and wrong at a crossing, which is exactly what the merge's
+own `SHARE` and `LEAST` exist to tell apart.
+
+**A* on the straight run still to go**, which is ADMISSIBLE because no
+road between two places is shorter than the great circle between them,
+and CONSISTENT because a step and the run after it cannot be beaten by
+the run alone, so the first time the goal comes off the frontier it has
+come off by the shortest way. The frontier is ordered on `total_cmp` and
+then the node, so two runs pop the same node at every tie, which is the
+network's own search's rule. `a_star_finds_the_shortest_way_between_every_pair_of_towns`
+holds it against a search with NO heuristic over every pair of towns on
+a real routed planet: 144 pairs, 74 joined and agreeing to the
+millimetre, and the other 70 agreeing that there is no way at all.
+
+**A step three roads share is run on the road that OWNS it**, the lowest
+numbered, which is `trunk::merge`'s own rule for who carries a trunk's
+tarmac: every other road there is snapped onto the owner's line and
+CLOSED, so a route that ran a trunk on a sharer's line would run it on
+points with no tarmac under them.
+
+**A way is TRACED onto the lines the roads are drawn on**
+(`path::trace`), because a waypoint is ten kilometres from the next and
+a curve of 1,116 m cuts every corner by up to 250 m. Each leg runs from
+the point of its road nearest where the last one ended, which makes a
+fork ONE line, since a road forking off a trunk is snapped onto the
+trunk's own line until it leaves; the first starts nearest the car and
+the last ends nearest the marker, the places themselves and never the
+waypoints they were snapped to. A step that is not on tarmac is a HOP:
+onto the road from wherever the car is, across a town between the
+crossings two roads end at, or through a village the highway stops short
+of, which is every village a road passes (`road::open`).
+
+**The map draws a route SOLID along the tarmac and DASHED across a
+hop**, which is the approved page's own dashed line kept for exactly
+what it meant there: a line that follows no road. The route panel sums
+the legs ALONG the roads and says "no road" beside a leg with none,
+since a marker on an island is a straight line to it, which is all a leg
+ever was before. And the compass strip's figure is the DRIVE and not the
+crow: the tick is where the marker IS and the figure how far it is to
+drive there, because the bearing is what says which way and the
+distance is what the tank is held against.
+
+**The route is planned again as the car drives**, every `REPLAN`
+(100 m), because its first leg runs FROM the car. Out of the port to the
+next town it is **54.3 km along the roads against 51.6 km as the crow
+flies, planned in 0.84 ms**: the search is 4,456 nodes and the trace a
+walk of the few roads it takes, so re-planning every two seconds at the
+car's top speed costs nothing a frame can find.
+
+**And the scripted drive DRIVES it**, which is what closes the gap the
+stolen car's own section named. `Auto::along` pursues the route `AHEAD`
+(400 m) along its tarmac, drives straight across a hop no longer than
+`SHORT_HOP` (50 m, the step onto the road beside it and a fork inside
+one corridor), and takes a longer hop, which is a town or a village, on
+that town's own streets (`Streets::route`) to where the tarmac starts
+again. Two things `through_town` needed for that, and both are the
+highway's own geometry arriving at the car: a town REACHES as far as its
+own tarmac does, which is its levelling and the skirt round it plus a
+piece (`road::open`'s own reach), because a car at the end of the
+highway outside a village was outside the village's OUTLINE and so in
+no town at all; and a car ARRIVING from off the paving goes to the
+nearest crossing first rather than the one after it, which is across
+whatever stands between.
+
+**What is MISSING, named rather than hidden.** A route is shortest by
+DISTANCE and nothing else: a highway and a village street cost the same
+metre, a grade weighs nothing, and no pump is planned into a route the
+tank cannot hold (the panel says "short", which is the moment to plan
+one by hand). The way through a town is a hop on the map and a breadth
+first walk of its streets under a scripted car, and the two are not the
+same line. The map is still the page's own region at its widest, sixty
+two kilometres across, so a route to anywhere past the next town runs
+off the edge and is followed by dragging. And a crossing of two roads
+that share no waypoint is not a junction, which is the rule the network
+was built by: it has none.
 
 ## The hour is a MENU now, and it writes the one offset there is
 
@@ -4774,8 +4872,8 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 194, the core, about 40 s
-cargo test -p freeport_app                        # 57, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 213, the core, about 60 s
+cargo test -p freeport_app                        # 58, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
