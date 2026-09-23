@@ -4479,8 +4479,13 @@ walk of the few roads it takes, so re-planning every two seconds at the
 car's top speed costs nothing a frame can find.
 
 **And the scripted drive DRIVES it**, which is what closes the gap the
-stolen car's own section named. `Auto::along` pursues the route `AHEAD`
-(400 m) along its tarmac, drives straight across a hop no longer than
+stolen car's own section named. `Auto::along` pursues the route along
+its tarmac as far as `AHEAD` (400 m) and never further than the straight
+line to the point stays within half the carriageway of every point of
+the route it passes (`route::ahead_on`): a curve of 1,116 m holds that to
+about 157 m and a slip's fifteen metre turns to a few, where a flat
+400 m aimed the first run of this across the corner of the port and into
+the building standing on it. It drives straight across a hop no longer than
 `SHORT_HOP` (50 m, the step onto the road beside it and a fork inside
 one corridor), and takes a longer hop, which is a town or a village, on
 that town's own streets (`Streets::route`) to where the tarmac starts

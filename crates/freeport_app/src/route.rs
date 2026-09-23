@@ -160,32 +160,75 @@ pub fn progress(points: &[(DVec3, bool)], at: DVec3, radius: f64) -> Option<(usi
     Some((near, points[near].0.angle_between(at) * radius))
 }
 
-/// Where a car at point `near` of a leg steers for along it: `ahead`
-/// metres on, or the last point before the tarmac stops, whichever is
-/// first; and whether the step past that is a HOP, which is where the
-/// car has to find its own way through a town. A hop no longer than
-/// `short` metres is driven straight across like tarmac.
+/// How far along a route a car looks, and what it will cut.
+pub struct Look {
+    /// The furthest along the route it looks, metres.
+    pub ahead: f64,
+    /// The longest hop it drives straight across like tarmac, metres.
+    pub short: f64,
+    /// How far off the route the straight line to where it is looking
+    /// may stand, metres: half the carriageway, so the line it steers
+    /// along is on the tarmac.
+    pub lane: f64,
+}
+
+/// Where a car at `at`, nearest point `near` of a leg, steers for along
+/// it, and whether the step past that is a HOP, which is where the car
+/// has to find its own way through a town.
+///
+/// As far on as `ahead`, and never further than the straight line to it
+/// stays within `lane` of every point of the route it passes. That is
+/// what makes one look ahead right on a highway and on a slip alike: a
+/// curve of 1,116 m holds the chord to 157 m, and a slip's fifteen metre
+/// turns hold it to a few, where a flat 400 m aimed the car across the
+/// corner of a town and into the building standing on it.
 pub fn ahead_on(
     points: &[(DVec3, bool)],
+    at: DVec3,
     near: usize,
-    ahead: f64,
+    look: &Look,
     radius: f64,
-    short: f64,
 ) -> (usize, bool) {
     let mut gone = 0.0;
     let mut k = near;
     while k + 1 < points.len() {
         let step = points[k].0.angle_between(points[k + 1].0) * radius;
-        if !points[k + 1].1 && step > short {
+        if !points[k + 1].1 && step > look.short {
             return (k, true);
+        }
+        // The next point would take the line off the tarmac: this one,
+        // and never nothing, since a car off its line still steers back.
+        if k > near && !straight(points, at, near, k + 1, look.lane, radius) {
+            return (k, false);
         }
         gone += step;
         k += 1;
-        if gone >= ahead {
+        if gone >= look.ahead {
             break;
         }
     }
     (k, false)
+}
+
+/// Whether the straight line from `at` to point `to` of a leg stays
+/// within `lane` metres of every point of it between `near` and `to`.
+/// A chord of a few hundred metres on a body this size sags a few
+/// centimetres, so it is taken as straight.
+fn straight(
+    points: &[(DVec3, bool)],
+    at: DVec3,
+    near: usize,
+    to: usize,
+    lane: f64,
+    radius: f64,
+) -> bool {
+    let b = points[to].0;
+    let ab = b - at;
+    let long = ab.length_squared().max(1e-30);
+    points[near + 1..to].iter().all(|(p, _)| {
+        let t = ((*p - at).dot(ab) / long).clamp(0.0, 1.0);
+        (*p - (at + ab * t)).length() * radius <= lane
+    })
 }
 
 /// The first point at or after `from` where the tarmac starts again:
@@ -222,15 +265,75 @@ mod tests {
         let (near, off) = progress(&points, at, R).expect("the leg has points");
         assert_eq!(near, 5);
         assert!(off < 1e-6);
-        assert_eq!(ahead_on(&points, near, 350.0, R, 50.0), (9, false));
+        let look = |ahead: f64, short: f64| Look {
+            ahead,
+            short,
+            lane: 2.75,
+        };
+        assert_eq!(
+            ahead_on(&points, at, near, &look(350.0, 50.0), R),
+            (9, false)
+        );
         // Near the hop it stops at the last tarmac and says so.
-        assert_eq!(ahead_on(&points, 17, 400.0, R, 50.0), (19, true));
+        let at17 = points[17].0;
+        assert_eq!(
+            ahead_on(&points, at17, 17, &look(400.0, 50.0), R),
+            (19, true)
+        );
         // And a hop shorter than the car will drive across is tarmac.
-        assert_eq!(ahead_on(&points, 17, 350.0, R, 150.0), (21, false));
-        assert_eq!(ahead_on(&points, 0, 150.0, R, 150.0), (2, false));
+        assert_eq!(
+            ahead_on(&points, at17, 17, &look(350.0, 150.0), R),
+            (21, false)
+        );
+        assert_eq!(
+            ahead_on(&points, points[0].0, 0, &look(150.0, 150.0), R),
+            (2, false)
+        );
         // And across it, the tarmac starts again at the point the hop
         // lands on.
         assert_eq!(tarmac_after(&points, 19), 20);
         assert_eq!(points[21].1, true);
+    }
+
+    /// Round a BEND the car looks only as far as the straight line to
+    /// the point stays on the tarmac, and on the straight as far as it
+    /// is let: a quarter circle of 15 m, a slip's own turn, holds it to
+    /// a few metres where 400 m would cut the corner.
+    #[test]
+    fn a_car_looks_less_far_round_a_bend_than_down_a_straight() {
+        let turn = 15.0;
+        let east = |x: f64, y: f64| {
+            let (lon, lat) = (x / R, y / R);
+            (
+                DVec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin()),
+                true,
+            )
+        };
+        // Straight for 60 m, a quarter turn of 15 m in 1 m pieces, then
+        // straight north for 300 m.
+        let mut points: Vec<(DVec3, bool)> = (0..=60).map(|k| east(k as f64, 0.0)).collect();
+        for k in 1..=24 {
+            let a = k as f64 / 24.0 * std::f64::consts::FRAC_PI_2;
+            points.push(east(60.0 + turn * a.sin(), turn * (1.0 - a.cos())));
+        }
+        for k in 1..=300 {
+            points.push(east(75.0, 15.0 + k as f64));
+        }
+        let look = Look {
+            ahead: 400.0,
+            short: 50.0,
+            lane: 2.75,
+        };
+        let (far, _) = ahead_on(&points, points[0].0, 0, &look, R);
+        let (bend, _) = ahead_on(&points, points[55].0, 55, &look, R);
+        let reach = |k: usize, from: usize| points[k].0.angle_between(points[from].0) * R;
+        println!(
+            "on the straight it looks {:.0} m, at the bend {:.0} m",
+            reach(far, 0),
+            reach(bend, 55)
+        );
+        assert!(far <= 60 + 24, "the straight's look stops at the bend");
+        assert!(reach(far, 0) > 55.0, "and reaches most of the straight");
+        assert!(reach(bend, 55) < 20.0, "at the bend it looks a few metres");
     }
 }

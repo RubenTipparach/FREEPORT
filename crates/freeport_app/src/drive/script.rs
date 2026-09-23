@@ -4,7 +4,7 @@
 //! tarmac stops.
 
 use super::{Driver, Streets, Thefts, SUB_STEPS};
-use crate::route::{ahead_on, progress, tarmac_after, Planned};
+use crate::route::{ahead_on, progress, tarmac_after, Look, Planned};
 use crate::{Args, Controls};
 use bevy::ecs::system::SystemParam;
 use bevy::math::DVec3;
@@ -181,7 +181,12 @@ impl Auto {
         let leg = script.route.first().filter(|l| l.roads)?;
         let (radius, points) = (world.planet.radius, &leg.points);
         let (near, _) = progress(points, car.dir, radius)?;
-        let (k, hop) = ahead_on(points, near, AHEAD, radius, SHORT_HOP);
+        let look = Look {
+            ahead: AHEAD,
+            short: SHORT_HOP,
+            lane: freeport_core::road::ribbon::HALF,
+        };
+        let (k, hop) = ahead_on(points, car.dir, near, &look, radius);
         if k > near {
             return Some(("the route", points[k].0));
         }
