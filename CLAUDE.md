@@ -3198,12 +3198,11 @@ with nothing on the pedals, so it never brakes, never steers back onto
 the road and never rejoins the traffic; two knocked cars do not hit each
 other, only the player's car hands out knocks; and a car on the rails
 still does not know the player is there until it touches, because
-knowing would mean state. And the scripted drive out of the port WEDGES at
+knowing would mean state. The scripted drive out of the port WEDGED at
 80 m on this binary and on the one before it alike (81 m in 180 s at
 4 km/h against 83 m at 3, the same car, the same street), so the
-wedge is the blocks port's own way out and not the knock's: it is the
-routing defect the stolen car's own section names and it is measured
-here rather than left to be read as ramming's.
+wedge was the blocks port's own way out and not the knock's; it was
+the routing, and the section on the route below is how it was closed.
 
 ## A road is ON THE GROUND now, and its corridor is levelled like a town's
 
@@ -3616,6 +3615,26 @@ seven metres off the last one's, so the nearest is the one whose ramp it
 is, and `a_corridors_ground_ramps_through_a_station_without_a_landing`
 holds the profile to within a centimetre of the straight line the road
 was routed at, against 0.66 m before.
+
+**And a road's skirt is laid OVER a town's ground, never under it.** A
+road FILLS where a town CUTS, and `Planet::levelling` composited every
+partial site in the index's own order: where a town came after a road
+it pulled the road's skirt toward the town's level, so at the edge of
+the corridor's flat, where the road's own weight comes to one, the
+ground stepped by the town's share of the difference, and where the
+town covered the ground outright the road's skirt was dropped and the
+ground stepped by all of it. The scripted car out of the port found it
+as a wall it could not see: the slip's corridor stood 4.2 m over the
+sloping apron a metre ahead of the bonnet, and the car made three
+centimetres in thirty seconds against a step the car's own rule was
+right to refuse. It is two composites now (`field::Layer`), the towns'
+over the relief and the roads' over that, so a road's weight going to
+one takes its own level exactly whatever stands under it; towns alone
+and roads alone come out as they always did.
+`a_roads_skirt_ramps_down_onto_a_towns_ground_and_never_steps` walks a
+road 5 m up out of a town cut to -3 every five centimetres, in both
+orders the two can be listed in: **8.000 m in one step before, 0.055 m
+after**, which is the skirt's own smoothstep and nothing else.
 
 **The tarmac is the streets' own cross section at the country's scale.**
 `LANE` each way read off `town::street` rather than written again, a
@@ -4601,6 +4620,50 @@ carriageway and its shoulder, 3.45 m) off the route and inside a
 town's reach, the car walks the town's streets to where the route's
 tarmac starts.
 
+**Off the route is measured to the TARMAC's LINE, never to a point.**
+It was the distance to the route's nearest POINT, and the nearest point
+of a route planned from the car is its first hop's own start, which is
+where the car stood when it was planned: thirty metres down the slip
+the car was twenty eight from it, called itself off the route, and
+walked the streets back toward it. `route::off_tarmac` is the distance
+to the nearest SEGMENT whose step is tarmac and never over a hop, and
+the look ahead starts from whichever end of that segment the car is
+nearer. Halfway between two points a hundred metres apart it reads
+0.00125 m, which is the chord's own sagitta at a thousand kilometres.
+
+**A scripted car BRAKES for a bend, or it orbits the point it aims
+at.** Past the slip it held 160 km/h into the slip's fifteen metre
+turns, ran wide onto the grass and went round there for two minutes,
+because a point pursued faster than the lock can hold the arc to it is
+a point the car circles. `driver::bend_speed` is the steering taper the
+other way up, the fastest a bend of a given curvature can be held at:
+an 8 m bend at 5.68 m/s, the slip's 15 m at 17.86, and anything past
+about thirty metres, which is every highway curve, at the top speed.
+`route::bend_limit` reads the tarmac ahead within braking distance and
+gives the fastest the car may go and still slow for each bend in time
+(`sqrt(v^2 + 2 a d)` at the script's own 8 m/s^2), and `Auto::pace`
+takes the lower of that and the pursuit arc it is steering through,
+never under a walking pace, so slowing for a corner is not taken for
+being stuck.
+
+**And a car that has JOINED its route keeps to the tarmac.** The
+streets are the way ONTO the route from inside a town and never the
+way back to it: a car a few metres wide of its line at speed and still
+inside the port's reach was handed to the streets, which took it back
+into town, down the slip and off its far end again, three times round
+in twenty seconds. `Auto::joined` is a latch set the first time the car
+is within `ONTO` of the tarmac and cleared only once it has strayed
+`STRAYED` (60 m, a block and a street) off it, so a car that has run
+wide comes back to its line rather than into town.
+
+**Measured, the scripted drive out of the port: 9,380 m in 240 s, the
+last three minutes of it at 160 km/h**, with the goal closing from
+51.63 km to 44.97. The route was read against the car a second at a
+time and plotted: down the slip, onto the highway fifty seconds in, and
+on its tarmac line to the metre for all but one stretch, the V at 4.9 km
+where the route turns back on itself through a hop, which the car ran
+180 m past and came back from inside ten seconds.
+
 **What is MISSING, named rather than hidden.** A route is shortest by
 DISTANCE and nothing else: a highway and a village street cost the same
 metre, a grade weighs nothing, and no pump is planned into a route the
@@ -4980,8 +5043,8 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 218, the core, about 100 s
-cargo test -p freeport_app                        # 59, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 220, the core, about 100 s
+cargo test -p freeport_app                        # 61, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
@@ -5371,7 +5434,14 @@ Numbers in the commit message. What is measured so far:
   turning round at every bend; and 9,297 m in 600 s at a steady 58 km/h.
   The last is the car flat out on a country road for ten minutes, and
   its distance to the goal does not close, because it is following the
-  road it reached rather than routing over the network.
+  road it reached rather than routing over the network. On the ROUTE,
+  four more: wedged at 548 m reading itself 28 m off a route it was on,
+  because off was measured to a point; wedged at 838 m against a 4.2 m
+  step where a road's skirt met a town's ground; orbiting on the grass
+  at 1,215 m every thirty seconds, because it never braked for a bend;
+  and looping back into town off a line it had already joined. Then
+  **9,380 m in 240 s, the last three minutes at 160 km/h, the goal from
+  51.63 km to 44.97**.
 - **The JUNCTION where a highway meets a town**, on the port, in six
   measurements and six pictures: the slip spliced INSIDE the loop that
   builds the sites read the bare relief and drew as its own curved
