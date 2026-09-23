@@ -4,12 +4,12 @@
 //! tarmac stops.
 
 use super::{Driver, Streets, Thefts, SUB_STEPS};
-use crate::route::{ahead_on, off_tarmac, tarmac_after, Look, Planned};
+use crate::route::{ahead_on, bend_limit, off_tarmac, tarmac_after, Look, Planned};
 use crate::{Args, Controls};
 use bevy::ecs::system::SystemParam;
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use freeport_core::driver::Drive;
+use freeport_core::driver::{bend_speed, Drive, TOP};
 use freeport_core::town::{self, lot_frame};
 use freeport_core::{field, road};
 
@@ -70,6 +70,21 @@ const BACK_OFF: f64 = 2.5;
 /// is what the engine is asking for and not what the wheels are doing.
 /// A rule that reads the dial never fires.
 const CRAWL: f64 = 1.0;
+/// What a scripted car plans its braking on, metres a second a second:
+/// under the car's own brake, so it arrives at a bend slow rather than
+/// late.
+const BRAKING: f64 = 8.0;
+/// How far past its own braking distance it reads the route's bends,
+/// metres.
+const PREVIEW: f64 = 30.0;
+/// The slowest it slows to, metres a second: a walking pace round the
+/// tightest corner, and over `CRAWL`, so braking for a corner is never
+/// taken for being stuck.
+const CREEP: f64 = 2.0;
+/// How far over what a bend allows it lets the car run before it
+/// brakes, metres a second, so it is not on and off the pedals every
+/// sub step.
+const SLACK: f64 = 1.0;
 
 /// What a SCRIPTED drive is doing: how much of it is left to run, and
 /// what the car is doing about whatever it has driven into.
@@ -113,6 +128,9 @@ pub struct Auto {
     /// How far off the route's tarmac the car stands, metres, which is
     /// what says whether it is ON the route or finding its way onto it.
     off: f64,
+    /// The fastest the route's own bends ahead let the car go, metres a
+    /// second, and nothing where it is not on the route.
+    limit: Option<f64>,
 }
 
 impl Auto {
@@ -164,6 +182,7 @@ impl Auto {
     ) -> Option<DVec3> {
         let world = here.world();
         let (goal, radius) = (script.goal.0?, world.planet.radius);
+        self.limit = None;
         let (what, at) = match self.along(script, world, car) {
             Some(found) => found,
             None => self.alone(script, world, car, goal),
@@ -212,6 +231,8 @@ impl Auto {
         // last half of the tarmac before a hop takes the hop.
         let d = |k: usize| points[k].0.angle_between(car.dir);
         let near = if d(seg + 1) < d(seg) { seg + 1 } else { seg };
+        let reach = car.speed * car.speed / (2.0 * BRAKING) + PREVIEW;
+        self.limit = Some(bend_limit(points, near, car.dir, BRAKING, reach, radius));
         let (k, hop) = ahead_on(points, car.dir, near, &look, radius);
         if k > near {
             return Some(("the route", points[k].0));
@@ -352,10 +373,42 @@ impl Auto {
             self.wedged = 0.0;
             self.backing = BACK_OFF;
         }
+        let (throttle, brake) = self.pace(car, goal, radius);
         Drive {
-            throttle: 1.0,
+            throttle,
             steer: want,
-            brake: false,
+            brake,
+        }
+    }
+
+    /// The throttle or the BRAKE, whichever takes the car to the speed it
+    /// can hold the bend it is steering through at, and every bend of
+    /// the route ahead of it.
+    ///
+    /// The bend it is steering through is the pure pursuit arc to its own
+    /// aim, `2 sin(off) / reach`, which is a turn the car has to be able
+    /// to hold or it circles the point instead of reaching it. It held
+    /// 160 km/h into the port's slip, whose turns are fifteen metres,
+    /// ran wide onto the grass a hundred metres off its route and went
+    /// round and round there for two minutes at the same 51.40 km from
+    /// its goal. Never under `CREEP`, or a car braking for a corner reads
+    /// as a car wedged against a wall and backs off it.
+    fn pace(&self, car: &Driver, goal: Option<DVec3>, radius: f64) -> (f64, bool) {
+        let mut most = self.limit.unwrap_or(TOP);
+        if let Some(g) = goal {
+            let to = (g - car.dir * g.dot(car.dir)).normalize_or_zero();
+            let off = to.dot(-car.right()).atan2(to.dot(car.fwd)).abs();
+            let reach = (car.dir.angle_between(g) * radius).max(1.0);
+            let arc = 2.0 * off.min(std::f64::consts::FRAC_PI_2).sin() / reach;
+            most = most.min(bend_speed(arc));
+        }
+        let most = most.max(CREEP);
+        if car.speed > most + SLACK {
+            (0.0, true)
+        } else if car.speed < most {
+            (1.0, false)
+        } else {
+            (0.0, false)
         }
     }
 }

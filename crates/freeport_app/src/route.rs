@@ -169,6 +169,47 @@ pub fn off_tarmac(points: &[(DVec3, bool)], at: DVec3, radius: f64) -> Option<(u
         .min_by(|x, y| x.1.total_cmp(&y.1))
 }
 
+/// The fastest a car at `at`, on the tarmac from point `near` of a leg,
+/// may go and still slow for every bend ahead of it in time, metres a
+/// second: each bend is held at `driver::bend_speed` of its own
+/// curvature, a bend `d` metres on allows `sqrt(v^2 + 2 decel d)` now,
+/// and nothing further than `reach` metres can bind.
+///
+/// A bend is measured where the tarmac turns, over a step either side,
+/// and never across a HOP, whose line is the way the route was planned
+/// rather than a road anybody drives. A slip's three metre pieces
+/// turning a fifth of a radian each are a fifteen metre bend, which is
+/// the bend a car at the top speed ran wide of onto the grass.
+pub fn bend_limit(
+    points: &[(DVec3, bool)],
+    near: usize,
+    at: DVec3,
+    decel: f64,
+    reach: f64,
+    radius: f64,
+) -> f64 {
+    let mut limit = freeport_core::driver::TOP;
+    let Some(first) = points.get(near + 1) else {
+        return limit;
+    };
+    let mut gone = first.0.angle_between(at) * radius;
+    for k in near + 1..points.len().saturating_sub(1) {
+        if gone > reach {
+            break;
+        }
+        if points[k].1 && points[k + 1].1 {
+            let (u, v) = (points[k].0 - points[k - 1].0, points[k + 1].0 - points[k].0);
+            let run = (u.length() + v.length()) * 0.5 * radius;
+            if run > 0.0 {
+                let hold = freeport_core::driver::bend_speed(u.angle_between(v) / run);
+                limit = limit.min((hold * hold + 2.0 * decel * gone).sqrt());
+            }
+        }
+        gone += points[k].0.angle_between(points[k + 1].0) * radius;
+    }
+    limit
+}
+
 /// How far along a route a car looks, and what it will cut.
 pub struct Look {
     /// The furthest along the route it looks, metres.
@@ -332,6 +373,44 @@ mod tests {
         assert_eq!(seg, 18);
         assert!((off - 30.0).abs() < 0.01, "{off}");
         assert!(foot.angle_between(points[19].0) * R < 1e-3);
+    }
+
+    /// A straight is taken at the top speed, a fifteen metre bend at the
+    /// speed the car holds one, and the same bend a hundred metres off at
+    /// whatever braking at `decel` over those hundred metres leaves.
+    #[test]
+    fn a_car_slows_for_a_bend_in_time_and_not_for_a_straight() {
+        let top = freeport_core::driver::TOP;
+        let straight = leg(40, 20);
+        assert_eq!(bend_limit(&straight, 2, straight[2].0, 8.0, 500.0, R), top);
+        // A hundred and twenty metres straight, then points three metres
+        // apart turning a fifth of a radian each: a fifteen metre bend.
+        let mut points = vec![(DVec3::Z, true)];
+        let (mut at, mut heading) = (DVec3::Z, DVec3::X);
+        for k in 0..60 {
+            if k >= 40 {
+                heading = bevy::math::DQuat::from_axis_angle(at, 0.2) * heading;
+            }
+            at = (at + heading * (3.0 / R)).normalize();
+            heading = (heading - at * heading.dot(at)).normalize();
+            points.push((at, true));
+        }
+        let hold = freeport_core::driver::bend_speed(1.0 / 15.0);
+        // A step short of the first turning point, which is point 40.
+        let on = bend_limit(&points, 39, points[39].0, 8.0, 500.0, R);
+        let want = (hold * hold + 2.0 * 8.0 * 3.0).sqrt();
+        println!("a step short of the bend {on:.2} m/s against {want:.2}");
+        assert!(
+            (on - want).abs() < 0.2,
+            "{on} a step short of the bend against {want}"
+        );
+        // And thirty four steps short of it.
+        let before = bend_limit(&points, 6, points[6].0, 8.0, 500.0, R);
+        let want = (hold * hold + 2.0 * 8.0 * 102.0).sqrt();
+        println!("a hundred metres before it {before:.2} m/s against {want:.2}");
+        assert!((before - want).abs() < 1.0, "{before} against {want}");
+        // And out of reach it does not bind at all.
+        assert_eq!(bend_limit(&points, 6, points[6].0, 8.0, 50.0, R), top);
     }
 
     /// Round a BEND the car looks only as far as the straight line to
