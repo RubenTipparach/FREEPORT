@@ -1,33 +1,37 @@
-//! The MAP behind M: a plan of the roads, the settlements and the pumps
-//! round the car, with markers a player sets by hand for a route.
+//! The MAP behind M: the ground round the car seen from straight above,
+//! RENDERED, with markers a player sets by hand for a route.
 //!
 //! It is a MODE and not a screen, which is swarm-demo's sensors manager
-//! rule: M dims the drive rather than leaving it, the car goes on being
-//! driven under it, and Esc or M again brings the road back. What it
-//! draws is the same road network the car drives, `World::routes` off
-//! the atlas, and not a picture of the chart, so a road on the map is a
-//! road under the wheels. A click sets a numbered marker, a right click
-//! takes the last one back, the legs between them are straight lines
-//! summed against the tank in the route panel, the wheel zooms about
-//! the cursor from the region down to a town, a drag pans, and it opens
-//! centred on the car. A marker is a PLACE and never a road: the total
-//! is the crow's distance and understates a drive round a bay, and a
-//! route that follows the roads between markers is A* over the road
-//! graph, whose input this is.
+//! rule: M covers the drive rather than leaving it, the car goes on
+//! being driven under it, and Esc or M again brings the road back. What
+//! it shows is a PICTURE of the world and not a diagram over the drive:
+//! the planet's own heights shaded, tinted and contoured, the sea by its
+//! depth, every road off the line its tarmac is laid on and every town's
+//! streets and buildings at their own size (`freeport_core::map`, drawn
+//! on a thread by `map/raster.rs`). Over it go what only a map has: the
+//! route the markers ask for, the markers, the pumps, the labels and
+//! the car. A click sets a numbered marker, a right click takes the last
+//! one back, the route panel sums the legs along the roads against the
+//! tank, the wheel zooms about the cursor from the region down to a
+//! street, a drag pans, and it opens centred on the car.
 //!
 //! This file is the MODE: the chart, the view, the markers, the keys and
 //! the mouse, the route panel's figures and the tests. `map/draw.rs` is
-//! what is DRAWN: an OVERLAY camera of its own, a `Camera2d` a layer
-//! above the world that clears nothing and draws over it, with the
-//! roads, the legs, the markers and the car as gizmo lines in screen
-//! pixels, the labels as `Text2d`, the sea as a mesh of wet cells
-//! sampled off the planet's own field, and the panels as UI nodes aimed
-//! at that camera. The projection is GNOMONIC about the map's centre,
-//! the sphere seen from its own middle, which is exact both ways and is
-//! what lets a click be turned back into a direction on the sphere
-//! without a search.
+//! what is drawn OVER the picture: an OVERLAY camera of its own, a
+//! `Camera2d` a layer above the world, with the route and the car's own
+//! road as gizmo lines in screen pixels, the markers, the car and the
+//! pumps as meshes and sprites, the labels as `Text2d`, and the panels as
+//! UI nodes aimed at that camera. The projection is GNOMONIC about the
+//! map's centre, the sphere seen from its own middle, which is exact both
+//! ways and is what lets a click be turned back into a direction on the
+//! sphere without a search; it is the core's `map::View` and the picture
+//! is drawn in it, so a pixel of the picture and a marker set on it
+//! cannot disagree about where they are.
 
 mod draw;
+mod raster;
+pub(crate) use raster::draw_headless;
+pub use raster::{draw_relief, place_relief, relief_ready, Relief, ReliefSprite};
 
 use crate::args::Args;
 use crate::drive::Thefts;
@@ -39,8 +43,8 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-pub use draw::{draw_map, sea_layer, spawn_map};
-use freeport_core::town;
+pub use draw::{draw_map, spawn_map};
+use freeport_core::map::View;
 
 /// How much ground the map shows across the window when it opens and at
 /// its widest, metres: the page's own region, a morning's drive.
@@ -58,14 +62,12 @@ const MOST: usize = 12;
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct MapGizmos;
 
-/// The overlay camera, the dimmer under everything, the sea layer, and
-/// the panels: what opening and closing the map shows and hides.
+/// The overlay camera, the page under everything, and the panels: what
+/// opening and closing the map shows and hides.
 #[derive(Component)]
 pub struct Overlay;
 #[derive(Component)]
 pub struct Dim;
-#[derive(Component)]
-pub struct SeaLayer(Handle<Mesh>);
 #[derive(Component)]
 pub struct MapUi;
 /// A panel a click on is a click on the panel and not on the map.
@@ -75,13 +77,23 @@ pub struct Panel;
 pub struct ScaleBar;
 #[derive(Component)]
 pub struct Clear;
-/// A line of text on the route panel or the scale bar.
+/// A line of text on the route panel or the scale bar: a leg's name and
+/// its length, by the leg's place in the route, and the sums.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum Says {
-    Legs,
+    LegName(usize),
+    LegKm(usize),
     Total,
     Holds,
     Scale,
+}
+
+/// A row of the route panel that shows only when it has something to
+/// say: a leg by its place, or the line that says there are none.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum Row {
+    Leg(usize),
+    NoLegs,
 }
 
 /// The markers a player has set, in the order set, as directions on the
@@ -89,54 +101,34 @@ pub enum Says {
 #[derive(Resource, Default)]
 pub struct Markers(pub Vec<DVec3>);
 
-/// The sphere seen from over the map's own middle: the gnomonic
-/// projection about `centre`, east across and north up, at `scale`
-/// metres a pixel.
+/// The sphere seen from over the map's own middle: the core's own
+/// gnomonic `map::View`, east across and north up, in the overlay's `f32`
+/// pixels. ONE projection, because the picture is drawn in the core's
+/// and a marker set in a second one would be a marker a hair off the
+/// ground it was set on everywhere but the middle.
 #[derive(Clone, Copy, Debug)]
-pub struct Chart {
-    pub centre: DVec3,
-    east: DVec3,
-    north: DVec3,
-    pub radius: f64,
-    pub scale: f64,
-}
+pub struct Chart(View);
 
 impl Chart {
     /// The chart about a direction at a scale.
     pub fn new(centre: DVec3, radius: f64, scale: f64) -> Chart {
-        let (east, north) = town::frame_at(centre);
-        Chart {
-            centre,
-            east,
-            north,
-            radius,
-            scale,
-        }
+        Chart(View::new(centre, radius, scale))
+    }
+
+    /// Metres a pixel at the middle.
+    pub fn scale(self) -> f64 {
+        self.0.scale
     }
 
     /// Where a direction lands, pixels from the middle with north up, or
     /// nothing for a direction past the horizon of the projection.
     pub fn to_px(self, dir: DVec3) -> Option<Vec2> {
-        let c = dir.dot(self.centre);
-        if c < 0.2 {
-            return None;
-        }
-        let x = self.radius * dir.dot(self.east) / c / self.scale;
-        let y = self.radius * dir.dot(self.north) / c / self.scale;
-        Some(Vec2::new(x as f32, y as f32))
+        self.0.to_px(dir).map(|p| p.as_vec2())
     }
 
     /// The direction under a pixel.
     pub fn to_dir(self, px: Vec2) -> DVec3 {
-        let x = px.x as f64 * self.scale / self.radius;
-        let y = px.y as f64 * self.scale / self.radius;
-        (self.centre + self.east * x + self.north * y).normalize()
-    }
-
-    /// How far the chart reaches from its middle to a window's corner,
-    /// radians.
-    fn reach(&self, size: Vec2) -> f64 {
-        (size.length() as f64 * 0.5 * self.scale / self.radius).atan()
+        self.0.to_dir(px.as_dvec2())
     }
 }
 
@@ -154,11 +146,6 @@ pub struct MapView {
     /// The cursor a frame ago, so a drag is read off where the cursor
     /// IS and never off motion events, which come in another unit.
     last: Option<Vec2>,
-    /// The view the sea layer was last built for.
-    sea_at: Option<(DVec3, f64)>,
-    /// Per route, its middle and how far it reaches from it, radians,
-    /// so a road nowhere near the view costs one test.
-    plan: Vec<(DVec3, f64)>,
     /// Whether `--map` has opened it once.
     fired: bool,
     /// Whether the layers are showing, so closing hides them once.
@@ -173,8 +160,6 @@ impl Default for MapView {
             scale: 50.0,
             press: None,
             last: None,
-            sea_at: None,
-            plan: Vec::new(),
             fired: false,
             shown: false,
         }
@@ -224,7 +209,7 @@ impl Whereabouts<'_> {
 
 /// What opening the map shows and closing it hides.
 type Shown<'w, 's> =
-    Query<'w, 's, &'static mut Visibility, Or<(With<MapUi>, With<Dim>, With<SeaLayer>)>>;
+    Query<'w, 's, &'static mut Visibility, Or<(With<MapUi>, With<Dim>, With<ReliefSprite>)>>;
 
 /// What the map's own toggling touches.
 #[derive(SystemParam)]
@@ -272,9 +257,6 @@ pub fn toggle_map(
         view.scale = REGION / width.max(1.0) as f64;
         view.press = None;
         view.last = None;
-        if view.plan.is_empty() {
-            view.plan = at.ground.0.routes.iter().map(|r| spread(&r.line)).collect();
-        }
         if let Ok(mut cursor) = layers.cursor.single_mut() {
             cursor.grab_mode = CursorGrabMode::None;
             cursor.visible = true;
@@ -290,17 +272,6 @@ pub fn toggle_map(
             Visibility::Hidden
         };
     }
-}
-
-/// A route's middle and how far it reaches from it, radians.
-fn spread(line: &[DVec3]) -> (DVec3, f64) {
-    let sum: DVec3 = line.iter().sum();
-    let mid = sum.normalize_or(DVec3::Y);
-    let reach = line
-        .iter()
-        .map(|p| p.angle_between(mid))
-        .fold(0.0, f64::max);
-    (mid, reach)
 }
 
 /// The mouse on the map: a wheel zooms about the cursor, a drag pans, a
@@ -385,14 +356,16 @@ fn zoom(view: &mut MapView, radius: f64, size: Vec2, at: Vec2, notches: f64) {
     }
 }
 
-/// The route panel and the scale bar: the legs from the car through the
-/// markers, their sum, what the tank holds, and a bar a round number of
-/// kilometres long.
+/// The route panel and the scale bar: a row a leg, from the car through
+/// the markers, named the page's own way ("car to 1", "1 to 2") with its
+/// length along the roads; their sum, what the tank holds, and a bar a
+/// round number of kilometres long.
 pub fn show_route(
     view: Res<MapView>,
     route: crate::route::Planned,
     at: Whereabouts,
     mut says: Query<(&mut Text, &Says)>,
+    mut rows: Query<(&mut Node, &Row), Without<ScaleBar>>,
     mut bar: Query<&mut Node, With<ScaleBar>>,
 ) {
     if !view.open {
@@ -404,20 +377,11 @@ pub fn show_route(
     let (bar_m, bar_px) = scale_of(view.scale);
     for (mut line, what) in &mut says {
         line.0 = match what {
-            Says::Legs if legs.is_empty() => "no markers set".to_string(),
-            Says::Legs => legs
-                .iter()
-                .enumerate()
-                .map(|(i, (d, roads))| {
-                    format!(
-                        "{}   {}{}",
-                        i + 1,
-                        km(*d),
-                        if *roads { "" } else { ", no road" }
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
+            Says::LegName(0) => "car to 1".to_string(),
+            Says::LegName(i) => format!("{i} to {}", i + 1),
+            Says::LegKm(i) => legs.get(*i).map_or(String::new(), |(d, roads)| {
+                format!("{}{}", km(*d), if *roads { "" } else { ", no road" })
+            }),
             Says::Total => km(total),
             Says::Holds => holds.map_or("on foot".to_string(), |m| {
                 if total > m && !legs.is_empty() {
@@ -428,6 +392,13 @@ pub fn show_route(
             }),
             Says::Scale => km(bar_m),
         };
+    }
+    for (mut node, row) in &mut rows {
+        let shows = match row {
+            Row::Leg(i) => *i < legs.len(),
+            Row::NoLegs => legs.is_empty(),
+        };
+        node.display = if shows { Display::Flex } else { Display::None };
     }
     for mut node in &mut bar {
         node.width = Val::Px(bar_px);
@@ -503,6 +474,7 @@ pub fn press_clear(mut markers: ResMut<Markers>, mut buttons: Pressed) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use freeport_core::town;
 
     /// The chart goes both ways: a direction to a pixel and back is the
     /// direction, anywhere in the window, and a kilometre north is a

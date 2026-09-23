@@ -20,6 +20,7 @@ pub mod figure;
 pub mod flight;
 pub mod fuel;
 pub mod lattice;
+pub mod map;
 pub mod march;
 pub mod model;
 pub mod noise;

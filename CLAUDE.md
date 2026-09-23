@@ -4303,27 +4303,34 @@ own frame (`town::frame_at`) and `hud::toward` a marker's bearing and
 its distance along the ground, and both are tested on the sphere and
 never on a plane.
 
-**The status line moves.** At the wheel the HUD has the bottom
-corners, so the harness's own line stands under the compass strip,
-centred, and on foot and in the air it is the line along the bottom
-it always was. It is `status.rs` now, because `main.rs` went over
-this file's own nine hundred lines the moment the HUD was wired in.
+**The status line GOES at the wheel.** It stood under the compass
+strip for a commit, and the side by side with the page found it
+running through the strip and the clock: the page has no line of the
+harness's own over the HUD, and what the line says is in the log. On
+foot and in the air it is the line along the bottom it always was. It
+is `status.rs`, because `main.rs` went over this file's own nine
+hundred lines the moment the HUD was wired in.
 
 **The map is a MODE and not a screen**, which is swarm-demo's sensors
-manager rule: M dims the drive rather than leaving it, the car goes on
-being driven under it, Esc or M brings the road back, and the mouse is
-given back while it is open, because a map a player clicks on is a map
-the cursor has to be free for. `map.rs` is the mode and `map/draw.rs`
-what is drawn:
+manager rule: M covers the drive rather than leaving it, the car goes
+on being driven under it, Esc or M brings the road back, and the mouse
+is given back while it is open, because a map a player clicks on is a
+map the cursor has to be free for. `map.rs` is the mode, `map/raster.rs`
+the PICTURE (the next section) and `map/draw.rs` what is drawn over it:
 
 - **An OVERLAY camera**, a `Camera2d` at order one that clears nothing
   and draws over the world, on `RenderLayers` 2, because 1 is the LOD
-  wireframe's, with `MapGizmos` as a gizmo group of its own on that
-  layer, `Text2d` labels, sprites for the pumps, a mesh for the sea and
+  wireframe's, with the page and the picture as sprites at the bottom,
+  `MapGizmos` as a gizmo group of its own on that layer, `Text2d`
+  labels, meshes for the markers and the car, sprites for the pumps and
   UI nodes aimed at it for the panels. The 3D camera says
   `IsDefaultUiCamera` outright, because two cameras on one window with
   no word on which draws the UI is a warning and a guess.
-- **The projection is GNOMONIC**, `Chart`: the sphere seen from over
+- **The projection is GNOMONIC**, the core's `map::View`, which the
+  app's `Chart` only carries into `f32` pixels: ONE projection, because
+  the picture is drawn in the core's and a marker set in a second one
+  would be a hair off the ground it was set on everywhere but the
+  middle. It is the sphere seen from over
   the map's own middle, east across and north up, exact both ways, so a
   click is turned back into a direction on the sphere without a search
   (`the_chart_goes_to_a_pixel_and_back` holds the round trip under a
@@ -4333,16 +4340,16 @@ what is drawn:
   three notches left the ground 0.46 px off the cursor, and a second
   step closes it to under a hundredth, which
   `a_zoom_holds_the_ground_under_the_cursor` measures.
-- **What it draws is the road the car drives**, `World::routes` off the
-  atlas and never the chart's picture of them, so a road on the map is
-  a road under the wheels. Each route keeps its middle and its spread
-  so a road nowhere near the view costs one test, a line is walked at a
-  stride of about a point a pixel and a half, and the car's OWN road
-  (`Network::nearest_road`, within `OFF_ROAD`) is drawn last and
-  brighter. A settlement is two rings at its tier's size, the port
-  ringed again in the route's colour; the sea is the cells of a 96 by
-  54 grid over the window whose middle is under the water, sampled off
-  `Planet::surface` once per view and never per frame.
+- **What is drawn OVER the picture is what only a map has.** The car's
+  OWN road (`Network::nearest_road`, within `OFF_ROAD`) again and
+  brighter, the route solid along its tarmac and dashed across a hop,
+  the markers as the page's filled cyan discs with their numbers, the
+  car as its filled amber arrow turned to its bearing, the pumps as
+  the page's amber squares with the page showing through them, every
+  settlement's name past its own reach on the map, and the port ringed
+  in the route's colour while it is small enough for a ring to find
+  it. The roads, the towns and the sea are the PICTURE's, so a road on
+  the map is the road under the wheels drawn once and not twice.
 - **A marker is a PLACE and never a road.** A click sets one, a press
   that moves `CLICK` (4 px) is a drag and not a click, a right click
   takes the last one back, `MOST` is twelve, and the legs from the car
@@ -4374,8 +4381,7 @@ on, and the compass strip carries the one thing a driver needs from it.
 
 **What is MISSING, named rather than hidden.** The G prompt is tested
 and not photographed, because the scripted drive
-never stops at a pump; the sea on the map is a grid of 96 by 54 cells
-and reads as one when the map is zoomed to a town; and the HUD is laid
+never stops at a pump; and the HUD is laid
 out in shares of the window and not scaled by its height the way
 swarm-demo's deck is, so on a very wide window the dials stand further
 from the strip than the page draws them.
@@ -4402,13 +4408,93 @@ it, at 48 m a pixel across 62 km: the four roads out of the port with
 the car's own drawn brighter, the port ringed and labelled, the pumps
 on the roads, the leg to the marked goal running off the frame, the
 route panel reading one leg of 52 km against a tank that holds 41 and
-saying short, and a 5.0 km scale bar of 103 px. And the DIM under the map is measured
+saying short, and a 5.0 km scale bar of 103 px. And the DIM under the map was measured
 rather than the page's number: the page composites in sRGB, where its
 0.82 leaves the drive at 18% of its brightness, and Bevy composites in
 linear light, where 0.82 left the street under the map at 45% in sRGB
 (17% in linear, which is the alpha doing exactly what it says in the
-wrong space); at 0.97 it is 23% in sRGB, which is the page's own dim to
-the eye.
+wrong space). The map is opaque now and the lesson went to the GLASS,
+which is the same mistake at the page's 0.58: the next section.
+
+## The map is a PICTURE of the ground, and the HUD is the page's own glass
+
+The owner read the first map off a picture and named what was wrong
+with it: "I want an actual map, not a screen overlay", a terrain height
+map with the water, the roads as they are and the buildings, "a
+rendered version of the height map plus roads and buildings top down".
+The page's own map was a diagram over a dimmed drive, lines and rings
+and a grid of wet cells, and that is what the first build carried.
+
+**`freeport_core::map` DRAWS it, because a picture of the world is a
+function of the world.** One sample of the planet a pixel, on the
+gnomonic `View` the harness turns a click back into a place with, over
+threads the caller hands in:
+
+- **The land is tinted by its height and shaded by its slope**, a
+  relief map's own order from lowland green through olive and tan to
+  grey rock and snow, lit from the north west and steepened four times,
+  because relief seen from straight over it is flatter than it looks
+  from the ground. The lowest land is the brightest green on the page:
+  the first tint put it at the darkest, and the port's own valley floor,
+  a coastal plain falling from 25 m to 4 m over seven kilometres, read
+  as a hole in the picture.
+- **It is CONTOURED at the scale's own interval**, the finest of 5, 10,
+  20, 50, 100, 200 and 500 m that is at least two pixels of scale (a
+  hundred metres at the region's 48 m a pixel, five at a street's 2),
+  on the HIGHER side of the height it marks so a line is one pixel and
+  never two, every fifth an index line drawn darker, which is how a
+  topographic sheet lets an eye count height with no label on it.
+  `a_contour_interval_follows_the_scale_and_its_lines_are_one_pixel`
+  holds the ladder and the one pixel.
+- **The sea is by its depth**, lighter over a shelf and the page's own
+  blue past it, with its coast drawn.
+- **A road is its own line**, `World::routes` on its tarmac only, at
+  its true width (6.9 m, the lanes and the shoulders) or two pixels,
+  whichever is wider.
+- **A town is its streets and its buildings**, every piece of paving
+  and every lot at its own size and place, a lot under two pixels laid
+  on the pixel it stands in by its own area so a town of buildings
+  smaller than a pixel still reads as a town; and a town whose plan
+  would be smaller than the page's own mark for its tier (a city seven
+  pixels, a town five, a village three) is drawn AS that mark, which
+  is the page's region and a real plan the moment there are pixels for
+  one. `a_map_draws_a_towns_plan_and_its_roads_where_they_are` holds
+  the town's pixels to between 0.8 and 1.3 of what its own plan covers.
+
+**It is drawn on a THREAD and never in the frame**, `map/raster.rs`,
+the sky's own rule: one answer and no queue, a `JoinHandle` and
+`is_finished`. A pan or a zoom moves and scales the LAST picture under
+the cursor at once, by the ratio of the scale it was drawn at to the
+scale the view is at, and the new one replaces it when it lands; the
+page under it is opaque, which is what a pan uncovers at the edge
+until then. A screenshot with the map open waits for its picture.
+
+**`--map-png PATH` draws one with no window**, at `--map-scale` metres a
+pixel over the port or `--eye`, before any of Bevy is built, which is
+the atlas bake's own rule for a thing that is arithmetic and a file.
+
+**The HUD's GLASS was the map's dim a second time.** The side by side
+with the page, element by element, found every panel a pale grey over
+the sky where the page's are dark smoked glass: its 0.58 composited in
+sRGB is 0.82 composited in linear light over a daylit sky, 0.80 over
+mid grey and 0.72 over a dark street, so the glass is 0.82 and every
+panel on both screens reads it. The same comparison found three things
+the page has and the build did not: the speed dial's nine ticks, every
+other one longer, and the fuel dial's one at half a tank; each dial's
+own dark face under its arc; and the speed arc in the readout's cream
+rather than the needle's amber. A tick and a needle are one builder
+now (`hud::spoke`), a bar turned about the dial's middle, from the
+middle out for a needle and from part way for a tick, so the two turn
+by the one rule and cannot disagree about where the arc starts.
+
+Measured, headless off `--map-png` on the harness body: a picture of
+1280 by 720 is **326 to 349 ms on four cores** at 48, 8 and 2 m a
+pixel, the same third of a second at every scale because it is one
+sample of the planet a pixel and the towns and roads are a small part
+of it. At 48 m a pixel the region reads as hills, the coastal plain,
+the sea and the four roads out of the port; at 8 the port's own plan
+stands in the middle of its plain; at 2 it is blocks, courtyards, the
+square and the streets between them.
 
 ## A route FOLLOWS the roads, and A* finds it on the atlas's own waypoints
 
@@ -4497,6 +4583,18 @@ highway outside a village was outside the village's OUTLINE and so in
 no town at all; and a car ARRIVING from off the paving goes to the
 nearest crossing first rather than the one after it, which is across
 whatever stands between.
+
+**And a car OFF its route inside a town takes the streets ONTO it.**
+The route's first step is a hop from where it was planned onto the road
+beside it, and a hop under `SHORT_HOP` is driven straight, which is
+right in the country and wrong in a town: the first drive on the
+chord bounded look ahead held its throttle against a building eighteen
+metres from the port's slip for six minutes, `steering for the route
+18 m off` at 3 km/h, because the straight line to the slip's first
+point ran through the corner of a block. More than `ONTO` (the
+carriageway and its shoulder, 3.45 m) off the route and inside a
+town's reach, the car walks the town's streets to where the route's
+tarmac starts.
 
 **What is MISSING, named rather than hidden.** A route is shortest by
 DISTANCE and nothing else: a highway and a village street cost the same
@@ -4877,8 +4975,8 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 213, the core, about 60 s
-cargo test -p freeport_app                        # 58, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 218, the core, about 100 s
+cargo test -p freeport_app                        # 59, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format

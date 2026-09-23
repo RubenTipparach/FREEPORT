@@ -180,7 +180,25 @@ impl Auto {
     ) -> Option<(&'static str, DVec3)> {
         let leg = script.route.first().filter(|l| l.roads)?;
         let (radius, points) = (world.planet.radius, &leg.points);
-        let (near, _) = progress(points, car.dir, radius)?;
+        let (near, off) = progress(points, car.dir, radius)?;
+        // OFF the route inside a town, the way ONTO it is the town's own
+        // streets, to where its tarmac starts. The route's first step is
+        // a hop from where it was planned onto the road beside it, and
+        // driven straight that is straight across whatever stands between:
+        // the drive out of the port held its throttle against a building
+        // eighteen metres from the slip for six minutes. Out in the
+        // country there is no town, and the hop is driven as it was.
+        if off > ONTO {
+            let onto = if points[near].1 {
+                near
+            } else {
+                tarmac_after(points, near)
+            };
+            if let Some(p) = self.through_town(world, car.dir * car.foot, points[onto].0 * car.foot)
+            {
+                return Some(("the streets onto the route", p));
+            }
+        }
         let look = Look {
             ahead: AHEAD,
             short: SHORT_HOP,
@@ -361,6 +379,11 @@ const AHEAD: f64 = 400.0;
 /// streets. Shorter than a piece, so a village's closed stations, a
 /// piece apart, are never mistaken for one.
 const SHORT_HOP: f64 = 50.0;
+
+/// How far off its route a car may stand and still be ON it, metres: the
+/// highway's own carriageway and shoulder either side of the centreline,
+/// which a car in its lane is well inside.
+const ONTO: f64 = road::ribbon::HALF + road::ribbon::SHOULDER;
 
 /// How far off the nearest crossing a car has to stand, in pitches of
 /// the town's grid, to be ARRIVING at a town rather than on its paving:

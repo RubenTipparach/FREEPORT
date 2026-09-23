@@ -208,6 +208,10 @@ fn main() {
         world::bake_atlas(&args);
         return;
     }
+    if let Some(path) = args.map_png.clone() {
+        map::draw_headless(&args, &path);
+        return;
+    }
     let lod_debug = lod_debug::LodDebug {
         enabled: args.lod_wire,
         frozen: false,
@@ -353,7 +357,8 @@ fn tick(app: &mut App) {
                         map::toggle_map,
                         map::work_map,
                         route::plan_route,
-                        map::sea_layer,
+                        map::draw_relief,
+                        map::place_relief,
                         map::draw_map,
                         map::show_route,
                         map::press_clear,
@@ -824,6 +829,7 @@ fn take_shot(
     mut commands: Commands,
     args: Res<Args>,
     streamer: Option<Res<Streamer>>,
+    map: (Res<map::MapView>, Res<map::Relief>),
     mut shot: Local<ShotState>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -837,10 +843,12 @@ fn take_shot(
     }
     // The picture waits for the ground: every chunk the rings want drawn
     // once, or ten times the frames asked for, whichever comes first.
+    // And a map open over it waits for its own picture, which is drawn
+    // on a thread and lands a few frames after the view is settled.
     let ready = match &streamer {
         Some(s) => s.idle() || shot.frame >= args.frames * 10,
         None => true,
-    };
+    } && (map::relief_ready(&map.0, &map.1) || shot.frame >= args.frames * 10);
     if shot.taken.is_none() && shot.frame >= args.frames && ready {
         commands
             .spawn(Screenshot::primary_window())

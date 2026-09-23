@@ -69,6 +69,10 @@ pub(crate) struct Args {
     /// Open the MAP once the world is up, or once a scripted drive is at
     /// the wheel, so a picture can be taken of it.
     pub(crate) map: bool,
+    /// Draw the MAP with no window and write it here, then stop.
+    pub(crate) map_png: Option<String>,
+    /// How close the map is drawn, metres a pixel, for `--map-png`.
+    pub(crate) map_scale: f64,
     pub(crate) levels: u8,
     pub(crate) shot: Option<String>,
     pub(crate) frames: u32,
@@ -118,6 +122,8 @@ impl Default for Args {
             approach: None,
             bake_atlas: false,
             map: false,
+            map_png: None,
+            map_scale: 48.0,
             levels: LEVELS,
             shot: None,
             frames: 30,
@@ -161,6 +167,14 @@ pub(crate) fn parse_args() -> Args {
             "--hour" => args.hour = it.next().and_then(|v| v.parse().ok()),
             "--bake-atlas" => args.bake_atlas = true,
             "--map" => args.map = true,
+            "--map-png" => args.map_png = it.next(),
+            "--map-scale" => {
+                args.map_scale = it
+                    .next()
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .filter(|v| v.is_finite() && *v > 0.0)
+                    .unwrap_or(48.0)
+            }
             "--eye" => args.eye = it.next().and_then(|v| vec3(&v)),
             "--look" => args.look = it.next().and_then(|v| vec3(&v)),
             "--levels" => {
