@@ -2549,13 +2549,16 @@ the eye's neighbourhood:
 - **Every townsman in the port was placed every frame** to find the few
   dozen within `REACH`. A loop now carries a box
   (`Circuit::distance_from`), so an agent whose loop is out of reach is
-  passed over without asking where on it he is.
+  passed over without asking where on it he is: **3.22 ms a frame to
+  0.44**.
 - **Every car on every highway was placed every frame**, six thousand
   of them for the dozen ever drawn. A road now carries a sphere
-  (`commute::bounds`) and a road out of reach is passed over whole.
+  (`commute::bounds`) and a road out of reach is passed over whole:
+  **2.35 ms a frame to 0.05**.
 
 **Measured together: the update from 29.9 ms to 10.6, the game's own
-systems from 26.0 to 4.8.** The frame on lavapipe does not move, because
+systems from 26.0 to 4.8**, and the trace's own `Update` schedule from
+27.97 ms a frame to 8.04. The frame on lavapipe does not move, because
 lavapipe's frame is its fragments; on a real GPU a 30 ms main thread is
 the frame, and it was a flier over a city that paid it.
 
