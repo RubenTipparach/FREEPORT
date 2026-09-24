@@ -392,6 +392,16 @@ impl Run {
             }
         }
     }
+
+    /// A box every point of the run is inside: its two ends for a
+    /// straight, and the whole circle for a turn, which is looser than
+    /// the quarter it sweeps and costs a comparison.
+    fn bounds(&self) -> (DVec2, DVec2) {
+        match self {
+            Run::Line { from, to } => (from.min(*to), from.max(*to)),
+            Run::Turn { centre, radius, .. } => (*centre - *radius, *centre + *radius),
+        }
+    }
 }
 
 /// A closed loop of street an agent goes round for ever, offset into its
@@ -402,12 +412,23 @@ pub struct Circuit {
     /// Where each run starts, metres round the loop, with the whole
     /// length last, so a binary search answers `at`.
     marks: Vec<f64>,
+    /// A box the whole loop is inside, in the town's own metres.
+    bounds: (DVec2, DVec2),
 }
 
 impl Circuit {
     /// How far round it is, metres.
     pub fn length(&self) -> f64 {
         self.marks.last().copied().unwrap_or(0.0)
+    }
+
+    /// How far a point is from the box the loop is inside, which is no
+    /// further than it is from anything going round it. What lets a
+    /// crowd pass over every agent on a loop nowhere near the eye without
+    /// asking where any of them is; an empty loop is infinitely far.
+    pub fn distance_from(&self, p: DVec2) -> f64 {
+        let (lo, hi) = self.bounds;
+        (lo - p).max(p - hi).max(DVec2::ZERO).length()
     }
 
     /// Where a thing `s` metres round the loop is. `s` is taken modulo
@@ -508,7 +529,15 @@ fn lane(nodes: &[Node], kind: Kind) -> Circuit {
         s += r.length();
     }
     marks.push(s);
-    Circuit { runs, marks }
+    let bounds = runs.iter().map(Run::bounds).fold(
+        (DVec2::INFINITY, DVec2::NEG_INFINITY),
+        |(lo, hi), (a, b)| (lo.min(a), hi.max(b)),
+    );
+    Circuit {
+        runs,
+        marks,
+        bounds,
+    }
 }
 
 /// The two lanes of one face: the pavement and the roadway. One face is

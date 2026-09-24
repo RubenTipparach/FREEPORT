@@ -249,6 +249,39 @@ fn nobody_ever_leaves_the_street() {
     );
 }
 
+/// Nobody on a loop stands further from a point than the loop's box says
+/// they can be nearer than: every sample of every lane is inside it, so
+/// a crowd that skips a loop for being out of reach skips nobody it
+/// should have drawn.
+#[test]
+fn a_loop_is_never_nearer_than_its_box_says() {
+    let town = town();
+    let traffic = Traffic::of(&town, 7);
+    let probes = [
+        DVec2::ZERO,
+        DVec2::new(40.0, -25.0),
+        DVec2::new(-300.0, 120.0),
+    ];
+    let mut sampled = 0;
+    for lanes in &traffic.faces {
+        for lane in [&lanes.foot, &lanes.car] {
+            let len = lane.length();
+            let steps = (len / 0.5).ceil() as usize;
+            for k in 0..steps {
+                let at = lane.at(k as f64 * len / steps as f64).at;
+                for &p in &probes {
+                    assert!(lane.distance_from(p) <= (at - p).length() + 1e-9);
+                }
+                sampled += 1;
+            }
+        }
+    }
+    assert!(sampled > 1000, "{sampled} samples");
+    assert!(lane(&[], Kind::Foot)
+        .distance_from(DVec2::ZERO)
+        .is_infinite());
+}
+
 /// A circuit CLOSES and its heading does not jump. An agent that teleported
 /// round a corner would pass every other test here: what says it does not
 /// is that the step between two samples is the arc length between them and

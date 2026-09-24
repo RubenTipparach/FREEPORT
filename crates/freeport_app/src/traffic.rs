@@ -203,6 +203,9 @@ pub struct Crowds {
     /// where it is, which is the same rule a townsman keeps: this body
     /// carries six thousand of them and draws a dozen.
     roads: Vec<Vec<commute::Commuter>>,
+    /// Each road's own sphere (`commute::bounds`), planet local, so a
+    /// road nowhere near the eye is passed over whole.
+    road_bounds: Vec<(DVec3, f64)>,
     /// Per tint: the body, then the two legs.
     folk: Vec<[Handle<Mesh>; 3]>,
     /// Per tint: the car, less its lamps.
@@ -271,11 +274,10 @@ impl Crowds {
     /// Every car out on a ROAD within `reach` of a place, as the road
     /// and car it is, its tint, where it stands and which way it points.
     ///
-    /// Every commuter on the body is asked, because asking one is a
-    /// lerp and two normalizes and there are six thousand of them: a
-    /// reject by road would want the stretch middles `roads::Network`
-    /// keeps, which is a second index for a walk that does not need
-    /// one.
+    /// A road whose own sphere is out of reach is passed over whole.
+    /// Asking every commuter on the body was 2.35 ms a frame over the
+    /// port: one is a lerp and two normalizes, and there are six
+    /// thousand of them for the dozen ever drawn.
     pub fn road_cars_near(
         &self,
         world: &crate::world::World,
@@ -289,6 +291,10 @@ impl Crowds {
             let Some(route) = world.routes.get(r) else {
                 continue;
             };
+            let far = |&(centre, bound): &(DVec3, f64)| centre.distance(here) > bound + reach;
+            if self.road_bounds.get(r).is_some_and(far) {
+                continue;
+            }
             let course = route.course();
             for (k, car) in cars.iter().enumerate() {
                 let Some((at, fwd)) = commute::spot(course, radius, car, now) else {
@@ -424,6 +430,11 @@ pub fn turn_out(
                     .sum();
                 commute::plan(r, route.line.len(), metres, seed)
             })
+            .collect(),
+        road_bounds: world
+            .routes
+            .iter()
+            .map(|route| commute::bounds(route.course(), radius))
             .collect(),
         folk: (0..TINTS)
             .map(|k| {
@@ -799,8 +810,12 @@ fn near(
         // The eye in the TOWN's own metres, so the distance to an agent
         // is two subtractions rather than a frame apiece.
         let here = lot_frame(radius, town, 0.0, 0.0).local(eye.0 .0 - centre);
+        let eye_at = bevy::math::DVec2::new(here.x, here.y);
         for (a, agent) in traffic.agents.iter().enumerate() {
-            if stolen.binary_search(&(t, a)).is_ok() {
+            // A loop out of reach is everybody on it out of reach, and its
+            // box is a comparison where each of them is a search and a sine.
+            let lane = traffic.faces[agent.face].of(agent.kind);
+            if lane.distance_from(eye_at) > REACH || stolen.binary_search(&(t, a)).is_ok() {
                 continue;
             }
             let spot = traffic.at(agent, now);

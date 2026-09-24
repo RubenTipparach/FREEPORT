@@ -2526,6 +2526,39 @@ town's triangles from the street, of the 1.55 million its tiles are
 drawn with. Both switches are `render.json` booleans
 (`occlusion_culling`, `shadow_proxies`), so the A/B is one line.
 
+**And the MAIN THREAD was not the city at all, it was the ROADS.** The
+update was 29.9 ms a frame over the port, 26.0 of it the game's own
+systems, and a trace off a `bevy/trace_chrome` and `bevy/debug` build
+(the names are hidden without the second) named them: the flier's own
+step was 16.6 ms, the townsfolk 3.2 and the highway cars 2.35. Each was
+a walk of something the size of the BODY to find something the size of
+the eye's neighbourhood:
+
+- **`flight::sweep_planet` walked every site on the body** on every
+  sweep, 800 towns and 700,000 corridor arcs, to learn whether the
+  segment sat inside one level town disc. `Planet::around` already
+  answers which sites can reach a segment, and the function called it
+  on its own last line; it is called FIRST now and the loop is over
+  what it keeps. A site it drops is further off than its own outer
+  band, so it could neither take the shortcut nor count as an earlier
+  site, and the index sorts stably on one key, so the ones it keeps
+  keep their order: `far_sites_change_nothing_about_a_sweep_here` holds
+  the answer to the bit with a thousand towns added on the far side.
+  **The step goes from 17.39 ms to 0.96, p99 23.76 to 1.80**, and the
+  benchmark's route ends at the same position to the last bit.
+- **Every townsman in the port was placed every frame** to find the few
+  dozen within `REACH`. A loop now carries a box
+  (`Circuit::distance_from`), so an agent whose loop is out of reach is
+  passed over without asking where on it he is.
+- **Every car on every highway was placed every frame**, six thousand
+  of them for the dozen ever drawn. A road now carries a sphere
+  (`commute::bounds`) and a road out of reach is passed over whole.
+
+**Measured together: the update from 29.9 ms to 10.6, the game's own
+systems from 26.0 to 4.8.** The frame on lavapipe does not move, because
+lavapipe's frame is its fragments; on a real GPU a 30 ms main thread is
+the frame, and it was a flier over a city that paid it.
+
 ## A city is BLOCKS of four by four lots, and a settlement has a TIER
 
 `docs/mockups/city-blocks.html` is the record and `town/plot.rs` is it

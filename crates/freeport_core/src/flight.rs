@@ -59,8 +59,16 @@ pub fn sweep_planet(planet: &Planet, from: DVec3, to: DVec3, clearance: f64) -> 
     let last = to.normalize_or(first);
     // The small expansion covers rounding in normalization at planet scale.
     let span = (first - last).length() + 1e-12;
+    // The sites that can reach this segment, filtered ONCE. A body's roads
+    // are hundreds of thousands of corridor arcs, and walking every one of
+    // them for the one level disc a segment might sit inside was the whole
+    // cost of a flier's step over the port. A site `around` drops is
+    // further off than its own outer band, so it could neither take the
+    // shortcut below nor count as an earlier site, and the ones it keeps
+    // keep their order, because the index sorts stably on one key.
+    let near = planet.around(first, span);
     let mut earlier_site = false;
-    for site in &planet.sites {
+    for site in &near.sites {
         let (inner, _) = site_band(site);
         let inside = 2.0 * (inner / (2.0 * planet.radius)).sin();
         let separation = (first - site.dir).length();
@@ -81,7 +89,7 @@ pub fn sweep_planet(planet: &Planet, from: DVec3, to: DVec3, clearance: f64) -> 
         }
         earlier_site |= separation - span <= inside;
     }
-    sweep_along(&planet.around(first, span), from, to, clearance)
+    sweep_along(&near, from, to, clearance)
 }
 
 struct Along<'a> {
@@ -256,6 +264,42 @@ mod tests {
         planet.sites.push(Site::round(DVec3::Y, 1000.0, 160.0));
         assert_eq!(sweep_planet(&planet, start, end, 0.5), expected);
         assert!(planet.at(expected) <= -0.5);
+    }
+
+    /// A sweep over a town answers exactly what it did before a thousand
+    /// towns went up on the far side of the body, and never looks at
+    /// them: the filter keeps the shortcut and the order it depends on.
+    #[test]
+    fn far_sites_change_nothing_about_a_sweep_here() {
+        let here = Site::round(DVec3::Y, 1200.0, 160.0);
+        let alone = Planet {
+            octaves: 18,
+            sites: vec![here.clone()].into(),
+            ..Default::default()
+        };
+        let mut crowded = alone.clone();
+        let mut far: Vec<Site> = (0..1000)
+            .map(|i| {
+                let a = i as f64 * 0.006;
+                Site::round(DVec3::new(a.cos(), -0.9, a.sin()).normalize(), 20.0, 160.0)
+            })
+            .collect();
+        far.push(here);
+        crowded.sites = far.into();
+        let (inner, _) = crate::field::site_band(&alone.sites[0]);
+        for (from, to) in [
+            (DVec3::Y * 1_004_100.0, DVec3::ZERO),
+            (
+                DVec3::new(inner * 0.5, 1_001_205.0, 0.0),
+                DVec3::new(inner * 0.5 + 30.0, 1_001_100.0, 5.0),
+            ),
+            (DVec3::X * 1_010_000.0, DVec3::X * 990_000.0),
+        ] {
+            assert_eq!(
+                sweep_planet(&crowded, from, to, 0.5),
+                sweep_planet(&alone, from, to, 0.5)
+            );
+        }
     }
 
     #[test]
