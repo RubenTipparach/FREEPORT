@@ -34,6 +34,7 @@ The rest of the changes reduce work and keep it away from the frame thread:
 | Shading | Explicit texture gradients permit skipping zero-weight materials and fully faded normal maps | A distant single-material pixel needs at most six texture reads instead of 45 |
 | Sky lighting | Cache completed filtering of the static sky cubemap | The same radiance and irradiance maps no longer require convolution every frame |
 | Collision | Conservative bounds for the swept region and direction; nearby recovery bracket | Remote town skirts no longer force thousands of collision samples or large recovery jumps |
+| Collision in a city | A sweep filters its sites once with `Planet::around` before looking for a level town disc | Every sweep used to walk all 800 towns and 700,000 road corridor arcs: 17.39 ms a flight step over the port's street on lavapipe, now 0.96, with the same end position to the bit |
 
 GPU sampling still supplies signs to CPU contouring. f64 root finding, QEF
 vertices, normals and LOD seam topology stay on the CPU. This preserves the

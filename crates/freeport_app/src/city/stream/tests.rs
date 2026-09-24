@@ -66,3 +66,63 @@ fn one_town_a_frame_converges_without_ever_holding_too_many() {
         assert_eq!(have, want, "the set did not converge at town {k}");
     }
 }
+
+/// What the port costs tile by tile: how many tiles, how many triangles
+/// its blocks are against its bakes, and how long a tile takes to build
+/// at each grade. A measurement and not a check, so it prints.
+#[test]
+#[ignore]
+fn measure_the_port_by_tile() {
+    use crate::city::tiles::{draw, stops, tiles_of, MASS};
+    let planet = crate::world::home_planet(crate::OCTAVES);
+    let atlas = crate::atlas::load(crate::world::HOME, &planet, crate::SEA, crate::TOWN_RADIUS)
+        .expect("the harness body's atlas");
+    let towns = atlas.towns(&planet, crate::SEA);
+    let library = crate::buildings::Library::load();
+    let town = &towns[0];
+    let t0 = std::time::Instant::now();
+    let tiles = tiles_of(town, crate::RADIUS);
+    println!(
+        "the port: {} lots and {} pieces in {} tiles, cut in {:.1} ms",
+        town.lots.len(),
+        town.pieces.len(),
+        tiles.len(),
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
+    for grade in 0..=MASS {
+        let t0 = std::time::Instant::now();
+        let tris: usize = tiles
+            .iter()
+            .map(|t| {
+                draw(
+                    &library,
+                    town,
+                    t,
+                    grade,
+                    crate::RADIUS,
+                    crate::SEA,
+                    crate::SEED,
+                )
+                .triangles
+            })
+            .sum();
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        println!(
+            "grade {grade}: {tris} triangles, built in {ms:.0} ms, {:.2} ms a tile",
+            ms / tiles.len() as f64
+        );
+    }
+    let t0 = std::time::Instant::now();
+    let boxes: usize = tiles
+        .iter()
+        .map(|t| {
+            stops(&library, town, t, crate::RADIUS, crate::SEED)
+                .blocks
+                .len()
+        })
+        .sum();
+    println!(
+        "boxes: {boxes} in {:.0} ms",
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
+}

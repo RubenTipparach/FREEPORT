@@ -34,7 +34,7 @@
 use crate::clock;
 use crate::drive::Thefts;
 use crate::fuel::Wallet;
-use crate::map::{MapView, Markers};
+use crate::map::MapView;
 use crate::roads::Network;
 use crate::sky::Weather;
 use crate::world::Ground;
@@ -52,8 +52,25 @@ use std::time::Instant;
 /// The page's own palette: glass over the road, its edge, the readout
 /// white, the dim grey, the amber of a needle, the route's cyan, the
 /// alarm red and the green of a full tank.
-pub const GLASS: Color = Color::srgba_u8(12, 14, 17, 148);
+///
+/// The GLASS is not the page's 0.58, for the reason the map's page once
+/// was not its 0.82: a browser composites in sRGB and Bevy in linear
+/// light, and the same alpha over a daylit sky leaves several times the
+/// light through. And the page is DARK because its world is: measured
+/// off the side by side, its glass reads (32, 42, 57) over a night blue
+/// scene, and this one read (103, 115, 115) at 0.82 over a noon sky of
+/// (215, 249, 249), a pale grey panel where the page has smoked glass.
+/// 0.94 is the page's own darkness over the brightest sky this world
+/// has, and over a dark street it is the page exactly.
+pub const GLASS: Color = Color::srgba_u8(12, 14, 17, 240);
 pub const EDGE: Color = Color::srgba_u8(233, 230, 216, 41);
+/// A dial's own face under its arc, the page's `rgba(12,14,17,0.35)`
+/// raised the same way, its rim, and the track the arc fills.
+const FACE: Color = Color::srgba_u8(12, 14, 17, 130);
+const RIM: Color = Color::srgba_u8(233, 230, 216, 36);
+const TRACK: Color = Color::srgba_u8(233, 230, 216, 56);
+/// A tick on the speed dial, the page's half white.
+const TICK: Color = Color::srgba_u8(233, 230, 216, 128);
 pub const HUD: Color = Color::srgb_u8(233, 230, 216);
 pub const DIM: Color = Color::srgb_u8(154, 152, 140);
 pub const AMBER: Color = Color::srgb_u8(240, 179, 74);
@@ -71,6 +88,14 @@ const DIAL: f32 = 118.0;
 const RING: f32 = 92.0;
 const STROKE: f32 = 6.0;
 const NEEDLE: f32 = 40.0;
+/// The face's own radius, and the speed dial's nine ticks: from the
+/// page's 37 (every other one) or 41 out to 49, which is across the
+/// arc's own inner half.
+const FACE_R: f32 = 55.0;
+const TICKS: usize = 9;
+const TICK_OUT: f32 = 49.0;
+const TICK_MAJOR: f32 = 37.0;
+const TICK_MINOR: f32 = 41.0;
 /// Where the arc starts, clockwise from the top, and how far it sweeps:
 /// from the bottom left over the top to the bottom right, three quarters
 /// of a turn, so a dial reads like a dial.
@@ -268,33 +293,37 @@ fn dial(row: &mut RelatedSpawnerCommands<'_, ChildOf>, which: Dial, name: &str, 
             },
             children![label(name)],
         ));
-        d.spawn((ring(inset), BorderGradient(vec![conic(EDGE, 1.0)])));
-        d.spawn((ring(inset), BorderGradient(vec![conic(AMBER, 0.0)]), which));
         d.spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(DIAL * 0.5),
-                top: Val::Px(DIAL * 0.5),
-                width: Val::ZERO,
-                height: Val::ZERO,
+                left: Val::Px(DIAL * 0.5 - FACE_R),
+                top: Val::Px(DIAL * 0.5 - FACE_R),
+                width: Val::Px(FACE_R * 2.0),
+                height: Val::Px(FACE_R * 2.0),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::MAX,
                 ..default()
             },
-            UiTransform::from_rotation(Rot2::radians(ARC_FROM)),
-            which,
-            Needle,
-            children![(
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(-1.5),
-                    bottom: Val::ZERO,
-                    width: Val::Px(3.0),
-                    height: Val::Px(NEEDLE),
-                    border_radius: BorderRadius::all(Val::Px(1.5)),
-                    ..default()
-                },
-                BackgroundColor(AMBER),
-            )],
+            BackgroundColor(FACE),
+            BorderColor::all(RIM),
         ));
+        d.spawn((ring(inset), BorderGradient(vec![conic(TRACK, 1.0)])));
+        d.spawn((ring(inset), BorderGradient(vec![conic(HUD, 0.0)]), which));
+        let ticks: Vec<(f32, f32, f32)> = match which {
+            // The speed dial's nine, every other one longer.
+            Dial::Speed => (0..TICKS)
+                .map(|k| {
+                    let from = if k % 2 == 0 { TICK_MAJOR } else { TICK_MINOR };
+                    (k as f32 / (TICKS - 1) as f32, from, TICK_OUT)
+                })
+                .collect(),
+            // The fuel dial's one, at half a tank.
+            Dial::Fuel => vec![(0.5, 42.0, 50.0)],
+        };
+        for (at, from, to) in ticks {
+            d.spawn(spoke(ARC_FROM + ARC_SWEEP * at, from, to, 1.5, TICK));
+        }
+        d.spawn((spoke(ARC_FROM, 0.0, NEEDLE, 3.0, AMBER), which, Needle));
         d.spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -304,7 +333,18 @@ fn dial(row: &mut RelatedSpawnerCommands<'_, ChildOf>, which: Dial, name: &str, 
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            children![(text("0", 21.0, HUD), figure)],
+            children![(
+                text("0", 21.0, HUD),
+                figure,
+                children![(
+                    TextSpan::new(if which == Dial::Fuel { " km" } else { "" }),
+                    TextFont {
+                        font_size: 10.0,
+                        ..default()
+                    },
+                    TextColor(DIM),
+                )],
+            )],
         ));
         if which == Dial::Fuel {
             for (mark, left, right) in [
@@ -338,6 +378,36 @@ fn ring(inset: f32) -> Node {
         border_radius: BorderRadius::MAX,
         ..default()
     }
+}
+
+/// A bar out from a dial's middle along a turn, from `from` to `to`
+/// pixels out: a node of no size at the middle turned by the angle, the
+/// bar hung off it. A needle is one from the middle out; a tick is one
+/// from part way.
+fn spoke(turn: f32, from: f32, to: f32, width: f32, colour: Color) -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(DIAL * 0.5),
+            top: Val::Px(DIAL * 0.5),
+            width: Val::ZERO,
+            height: Val::ZERO,
+            ..default()
+        },
+        UiTransform::from_rotation(Rot2::radians(turn)),
+        children![(
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(-width * 0.5),
+                bottom: Val::Px(from),
+                width: Val::Px(width),
+                height: Val::Px(to - from),
+                border_radius: BorderRadius::all(Val::Px(width * 0.5)),
+                ..default()
+            },
+            BackgroundColor(colour),
+        )],
+    )
 }
 
 /// The arc: a conic gradient from the bottom left, the colour out to
@@ -577,7 +647,7 @@ pub fn show_hud(read: Read, mut hud: Panels, mut frames: Local<Frames>) {
     for (mut line, mut paint, what) in &mut hud.texts {
         match what {
             Readout::Speed => line.0 = format!("{:.0}", car.speed.abs() * 3.6),
-            Readout::Range => line.0 = format!("{:.0} km", car.tank.reach() / 1000.0),
+            Readout::Range => line.0 = format!("{:.0}", car.tank.reach() / 1000.0),
             Readout::Cash => line.0 = dollars(read.wallet.0.dollars),
             Readout::Pump => {
                 line.0 = pump.map_or("none".to_string(), |(d, _)| format!("{:.1} km", d / 1000.0));
@@ -594,7 +664,7 @@ pub fn show_hud(read: Read, mut hud: Panels, mut frames: Local<Frames>) {
     }
     for (mut fill, which) in &mut hud.rings {
         *fill = match which {
-            Dial::Speed => BorderGradient(vec![conic(AMBER, pace)]),
+            Dial::Speed => BorderGradient(vec![conic(HUD, pace)]),
             Dial::Fuel => BorderGradient(vec![conic(fuel, share as f32)]),
         };
     }
@@ -666,7 +736,7 @@ type GoalTicks<'w, 's> =
 /// first marker's tick and distance on it.
 pub fn turn_compass(
     thefts: Res<Thefts>,
-    markers: Res<Markers>,
+    route: crate::route::Planned,
     ground: Res<Ground>,
     strip: Query<&ComputedNode, With<Compass>>,
     mut marks: Query<(&mut Node, &mut Visibility, &Bearing)>,
@@ -697,10 +767,13 @@ pub fn turn_compass(
             None => *seen = Visibility::Hidden,
         }
     }
-    let first = markers
-        .0
-        .first()
-        .map(|&m| toward(theft.car.dir, m, ground.0.planet.radius));
+    // The tick is where the marker IS and the figure how far it is to
+    // DRIVE there, along the roads the map planned: the bearing is what
+    // says which way, and the distance is what the tank is held against.
+    let first = route.markers.0.first().map(|&m| {
+        let (deg, crow) = toward(theft.car.dir, m, ground.0.planet.radius);
+        (deg, route.first().map_or(crow, |l| l.metres))
+    });
     for (mut node, mut seen) in &mut goal {
         match first.and_then(|(deg, _)| place(deg, 2.0)) {
             Some(x) => {

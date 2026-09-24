@@ -126,6 +126,23 @@ pub fn spot(course: Course<'_>, radius: f64, car: &Commuter, time: f64) -> Optio
     Some((at, fwd))
 }
 
+/// A sphere every place `spot` can put a car on a course is inside,
+/// centred on the middle of its stations at their own height and
+/// reaching the furthest of them plus the lane, the lift and a metre for
+/// the chord between two stations, which sags a millimetre. A course
+/// with no stations reaches nowhere. What lets a crowd pass over a whole
+/// road nowhere near the eye without asking where any of its cars is.
+pub fn bounds(course: Course<'_>, radius: f64) -> (DVec3, f64) {
+    let n = course.line.len().min(course.run.len());
+    if n == 0 {
+        return (DVec3::ZERO, f64::NEG_INFINITY);
+    }
+    let points = || (0..n).map(|k| course.line[k] * (radius + course.run[k]));
+    let centre = points().sum::<DVec3>() / n as f64;
+    let far = points().map(|p| p.distance(centre)).fold(0.0, f64::max);
+    (centre, far + LANE + super::ribbon::LIFT + 1.0)
+}
+
 /// How far off the centreline the tarmac reaches, metres: what a caller
 /// checks a place against to know a car is ON the road it was put on.
 pub const EDGE: f64 = HALF;
@@ -216,6 +233,48 @@ mod tests {
             "a car rides {worst_off:.2} m off the centreline, not {LANE:.2}"
         );
         assert!(worst_off < EDGE, "and it is on the tarmac");
+    }
+
+    /// Every car on a road stays inside the road's own sphere, at every
+    /// moment, on a road that climbs; and a road with nothing on it
+    /// reaches nowhere.
+    #[test]
+    fn a_car_never_leaves_its_roads_bounds() {
+        let radius = 1_000_000.0;
+        let points = 300;
+        let (line, _, open) = road(radius, points);
+        let run: Vec<f64> = (0..points).map(|k| k as f64 * 0.07 * PIECE).collect();
+        let course = Course {
+            line: &line,
+            run: &run,
+            open: &open,
+            graded: &open,
+            lit: &open,
+            pumps: &[],
+            first: 0,
+        };
+        let (centre, reach) = bounds(course, radius);
+        let cars = plan(1, points, (points - 1) as f64 * PIECE, 11);
+        assert!(!cars.is_empty());
+        let mut closest = f64::INFINITY;
+        for car in &cars {
+            for step in 0..400 {
+                let (at, _) = spot(course, radius, car, step as f64 * 1.3).expect("a spot");
+                closest = closest.min(reach - at.distance(centre));
+            }
+        }
+        println!("the nearest a car comes to its road's bound is {closest:.2} m inside it");
+        assert!(closest > 0.0);
+        let empty = Course {
+            line: &[],
+            run: &[],
+            open: &[],
+            graded: &[],
+            lit: &[],
+            pumps: &[],
+            first: 0,
+        };
+        assert!(bounds(empty, radius).1 < 0.0);
     }
 
     /// A road too short to carry anybody carries nobody, and a garbage

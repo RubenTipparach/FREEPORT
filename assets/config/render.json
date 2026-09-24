@@ -5,7 +5,11 @@
   "terrain_jobs_ahead": 32,
   "terrain_workers": 0,
   "terrain_compute_batch": 2,
+  "building_lod_detail": 80.0,
   "building_lod_near": 250.0,
   "building_lod_far": 1200.0,
-  "lod_hysteresis": 0.15
+  "building_jobs": 3,
+  "lod_hysteresis": 0.15,
+  "occlusion_culling": true,
+  "shadow_proxies": true
 }

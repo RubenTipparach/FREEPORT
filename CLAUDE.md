@@ -11,7 +11,9 @@ shader, with f64 crossings and dual-contouring LOD seams retained on CPU. Mesh
 conversion runs on workers and asset installation has a real frame budget. Rings
 adapt to altitude and wait for replacement coverage when changing levels.
 Buildings are authored by headless Blender with editable Exact Boolean cutters,
-then baked into static meshes, collision boxes and three visual LODs. Windows
+then baked into static meshes, collision boxes and three visual LODs, and past
+those a building is a solid block drawn per city block (see "A town is its
+BLOCKS" below). Windows
 have actual openings and transparent glazing. The parametric source is
 `assets/config/buildings.json`; `tools/bake_buildings.py` regenerates the library.
 `docs/buildings-and-streaming.md` describes this workflow and supersedes the older
@@ -526,8 +528,71 @@ function and every constant in it arrives in a uniform (`biome::Gpu`), so
 a threshold cannot be tuned on one side and left stale on the other. The
 landform and the cut are evaluated in full, because they are few octaves
 each and there is nothing worth stopping early for; the HILLS keep the
-sampler's own octave interval, and `signed` is monotone, so an interval
+sampler's own octave interval, and `soft` is monotone, so an interval
 on the partial sum is still an interval on the height.
+
+## The hills are never CLIPPED, and the GPU cuts where the CPU does
+
+The owner looked at the map and asked why the port was all flat. It was,
+and it was not the port's own levelling: seven kilometres of plain round
+it stood DEAD flat, with a knife edge where the relief switched back on
+and a coast running as one straight line. The hills term there read
+exactly -440.00 m across the middle four kilometres.
+
+**`signed` CLAMPS, and past the clamp every octave of the hills goes
+together.** A stretch to minus one through one is right for a term that
+goes through a smoothstep of its own afterwards, the shelf and the belt,
+and wrong for the hills, which are the finest term and the ground under a
+walker's feet: on the top and bottom hundredth of the body the whole sum
+is pinned at its amplitude, which is a plateau or a basin with no detail
+in it at all. The comment on `FBM_REACH` called that no part of a picture
+anybody looks at twice. The port is the LOWEST ground on the body
+(`town::in_order`), so it stands in one of those basins by construction,
+and it is the one place everybody looks at: measured, the port's basin
+runs 23 to 32% past the clamp (a stretched value of -1.23 to -1.32), and
+2.00% of the whole body is pinned.
+
+**`biome::soft` is the hills' own stretch**: the identity out to `KNEE`
+(0.75), then `KNEE + (CEILING - KNEE) u / (1 + u)`, which leaves the
+identity with the same slope and eases toward `CEILING` (1.3) without
+reaching it, so the deepest basin keeps a share of its small hills rather
+than none. A rational and not a `tanh`, because the field is add,
+multiply, divide and compare, bit for bit the same on every client.
+`band` carries the ceiling; the slope bound needs nothing, because the
+curve never rises faster than the stretch. Only the hills take it: the
+continent and the belt still clamp, since their flat ends are the abyssal
+plain and the plateau and a smoothstep follows them anyway.
+
+Measured on the harness body, before and after: **2.00% of the body
+pinned at the clamp against nought; the port's middle four kilometres
+0.00 m of hills against 23.01 m; the water 57.85% against 57.84%; and
+land that rises under five centimetres over twenty metres 4.81% against
+4.60%**. `the_hills_are_never_clipped_flat` holds the curve's own shape
+and finds nought of 20,000 directions pinned, against 391 on the clamp.
+It moved the bare ground, so the ATLAS was re-baked:
+**786 settlements and 369 roads over 55,452 km joining 157 of the 160
+cities, planned in 472.7 s**, against 832, 365, 60,651 km and 153. The
+port is the same town on the same site, 6 km from the sea.
+
+**And the GPU sampler never took the min that makes a town CUT.**
+`Planet::surface` is `min(graded, bare)` with a road's `fill` blended
+over it, which is this file's rule that a city flattens ground and never
+adds any; `sampling.wgsl` added `bias + bare * keep` and never took the
+min, and skipped the relief outright wherever `keep` was nought. So on a
+real GPU, where the compute sampler is on by default, a town filled every
+dip in its plateau and stood on its old pedestal down its downhill skirt,
+drawn where the walker and the car, which collide against the CPU's
+field, found nothing: ground drawn in the air. It never showed here,
+because lavapipe samples on the CPU, and
+`gpu_preserves_cpu_signs_and_lod_seams` is ignored for want of a device
+and passed by luck, since no dip fell in its chunks. The new hills put
+one there: the site's level 1392.82 m against the bare 1390.77, the GPU
+calling rock (1.81) where the CPU has air (-0.25). The shader
+transcribes the rule now (`levelled`, which rises in the bare ground
+whatever the site does, so the octave loop's interval still bounds it),
+a point carries `[bias, 1 - fill]` in a fifth lane, and the relief is
+skipped only on a road's own flat. Measured on lavapipe: identical signs
+and mesh geometry over 74,088 samples, 22.75 ms against the CPU's 75.18.
 
 ## A planet from orbit is a CHART, not a colour a vertex
 
@@ -1441,6 +1506,13 @@ level is the lowest of them; a dip between two neighbouring samples is
 the only ground a site can still fill, and how deep that can be is
 bounded by the `LEVEL` fall the site had to pass to be accepted.
 
+**That one level is GONE, and the section on graded ground below is
+what replaced it.** A town's ground follows the country now, cut and
+never filled, and `LEVEL` went with the flat pad it limited: what is
+left to limit is the cut, which is `CUT`. The paragraphs from here to
+that section are the record of the flat pad, and every rule in them
+about cutting and never filling still holds.
+
 **A CITY IS TEN TIMES BIGGER now and that made a QUARRY of every one of
 them, which is the constant's own doc condemning itself.** `TOWN_RADIUS`
 is 537 m rather than 170, the square root of ten on the radius for ten
@@ -1517,6 +1589,7 @@ all, and each had to be given a level that cuts before it tested
 anything again.
 
 **The ground under a town is LEVELLED and that is the field's job**
+(GRADED now, which is the same job: the section below)
 (`Planet.sites`: one right across the town and nought past an `APRON` of
 12 m, the relief the site's height and the noise not asked), so a plateau
 has a smooth skirt cut by the same field, and every building stands plumb
@@ -1731,14 +1804,66 @@ each of eighteen bands: flat to 2.72 m out and 0.172 m up from 2.95 to
 A pavement's slab is SUNK 15 cm into the ground, because an underside
 lying exactly on that plane would fleck along its whole length.
 
-**One mesh a town, and eight towns are eight draws.** `model::fabric`
-welds every lot's model and every piece of street into one mesh in the
-TOWN's own frame, each carried there from its own lot's frame in `f64` and
-then cast: a town is eighty metres across, so an `f32` in its frame holds
-a micron, which is the chunk local rule at a town's scale. The entity is
-placed from the town's world position through the floating origin like a
-chunk, and `rebase_origin` moves it with everything else, which is what
-`Anchored` is.
+**A town is its BLOCKS, and a far block is a SOLID BLOCK.** The owner's
+ask was whole cities of thousands of buildings in one picture, with the
+far ones as solid blocks, and a town drawn as one mesh cannot give it: a
+town at one grade is every building at that grade, and standing in the
+port that is 1,522 buildings at the nearest bake, **2.72 million
+triangles and 551 ms of one frame** to raise. So `city/tiles.rs` cuts a
+town into TILES a block each (`PITCH`, 48.5 m; 326 of them in the port),
+and each tile is drawn at the grade its OWN distance is worth: the
+library's three bakes to `building_lod_detail`, `_near` and `_far` (80,
+250 and 1,200 m) and a solid block past that.
+
+**A block is read OFF THE MODEL** (`model::massing`): the footprint and
+the eaves are the model's own SOLIDS, the walls a body is stopped by,
+and the top is its own mesh, so a variant re-baked taller comes back
+taller at every range with nothing edited. A box to the eaves in the
+building's own skin, a gable where a house has one, a drum of eight
+faces where a tower is round, sunk 40 cm so a coarse chunk far off
+cannot show sky under it. A street at that grade is one quad
+(`street_graded`), and at the grade before it the kerb sides and the
+paint go (`flat`), because a kerb is 12 cm and at 250 m that is under a
+pixel. Measured on the port, a tile at a time and whole: **2,718,442
+triangles at the nearest bake, 1,870,606 at the next, 253,160 at the
+farthest and 32,686 as blocks**, which is 21 a lot against 1,786, and
+building every tile as blocks is **23 ms** against 551.
+
+**Every tile always HAS its blocks, and detail is swapped over them.**
+A town is raised on a WORKER (`detail::raise`: its tiles and every
+tile's blocks), stood in one frame (`detail::stand`), and from then on
+`stream_tiles` asks each tile what its distance wants and puts what is
+missing on `AsyncComputeTaskPool`, nearest first, `building_jobs` (3) at
+a time. A grade lands HIDDEN and the block under it is hidden in the
+same frame, so a tile is never a hole for a frame, which is the
+terrain streamer's own rule. What a tile is DRAWN as and what it STOPS a
+body with are two jobs: a wall is the same wall at every grade and only
+a tile a body can reach needs one, so its boxes and lamps are built
+within `STOPS_NEAR` (180 m) and dropped past `STOPS_FAR` (260), and a
+job for boxes goes before a job for a picture, because walking into a
+wall that is not there yet is worse than a block that is still a block.
+The port is 152,899 boxes whole; standing in it the eight built towns
+hold **30,506**.
+
+**One mesh a TILE, in the town's own frame.** `model::fabric_part` is
+`fabric` over the lots and pieces of one tile, each carried from its own
+lot's frame in `f64` and then cast: a town is a kilometre across, so an
+`f32` in its frame holds a tenth of a millimetre, which is the chunk
+local rule at a town's scale. The town is one parent entity placed from
+its world position through the floating origin like a chunk, the tiles
+are its children with identity transforms and their own bounds, and
+`rebase_origin` moves the parent with everything else, which is what
+`Anchored` is. `a_town_built_in_parts_is_the_town_built_whole` holds
+the tiles to the town to the triangle.
+
+Measured on lavapipe from 650 m up and 1.9 km off the port, the same
+2,435 terrain chunks either side: **554 tiles at 49,698 triangles, a
+median frame of 699 ms against 2,601, a worst of 1,611 against 10,042,
+and the terrain settled in 115.6 s against 419.5**, because the frame
+the streamer drains in is no longer a frame spent drawing every window
+in eight towns. On the port's main street: 13 tiles at the nearest
+bake, 67 at the next, 246 at the farthest and 228 as blocks, 761,998
+triangles for all eight towns.
 
 **A lamp is a light near the eye and a number everywhere else.** Every
 building's lamps are known to the world (2,771 of them on this seed), and
@@ -1956,21 +2081,23 @@ sixty four seeds and three sizes: nought points outside the outline,
 and the least demand anywhere inside 0.645 of the edge is 0.0010.
 
 **And a town always has a SOLID MIDDLE, which is arithmetic rather
-than a coincidence.** The bite is scaled by `1 - want`, nought at the
-middle and one at the rim, so it can only take a block out where
-`want < GRAIN / (1 + GRAIN)`, which is 0.645 of the way out to that
-bearing's own edge. A city's core is solid and its fringe is shredded,
+than a coincidence.** It was the bite's `1 - want` once; it is the
+FRONT's own cap now (the next section but one): the grain is read to
+at most `CAP` deviations, so nothing is taken out of the inner quarter
+of any bearing. A city's core is solid and its fringe is shredded,
 which is what the density of a real built up area does as you walk out
 of one; a uniform bite would eat the towers at the same rate and leave
 a town that is merely thinner everywhere, and a one block hamlet would
 be shredded to nothing.
 
-**And `plot` reads the same bite**, which is the divergent path rule
-arriving at a town's empty ground: what FRAYS a town's edge and what
-THINS the ground inside it are one number now (`shape::bite`) rather
-than a fractal outline round a coin toss. A suburb still has its own
-base emptiness, because what makes a suburb a suburb is the space, but
-the holes in it are the shape of the holes in its own edge.
+**And `plot` asks the same question lot by lot**, which is the
+divergent path rule arriving at a town's empty ground: a block is built
+off the demand at its middle and a lot on its rim off the demand at the
+lot's own place, so what FRAYS a town's edge and what THINS the ground
+inside it are one number rather than a fractal outline round a coin
+toss. A suburb still has its own base emptiness, because what makes a
+suburb a suburb is the space, but the holes in it are the shape of the
+holes in its own edge.
 
 **And the jitter is a TOWN's own and not a suburb's.** `plot` moved a
 lot by `SUBURB_SETBACK` everywhere, which is a suburban house standing
@@ -2068,8 +2195,8 @@ doing it by hand for its own sweep.
 **A town is BUILT when the EYE comes near it**, which is `city::stream`,
 and it was picked once at startup. Every town on the body is planned
 from the first frame: it levels its own ground in the planet's field and
-the chart paints it. What streams is the BUILDINGS, one town built a
-frame and one dropped a frame, which is the rule `stream.rs` keeps for
+the chart paints it. What streams is the BUILDINGS, one town raised on
+a worker at a time and one dropped a frame, which is the rule `stream.rs` keeps for
 the ground and `lamps.rs` for the lights. The owner read the gap off
 two pictures side by side: a chart with a hundred and sixty cities on it
 and ground with nothing standing on it, and driving to the next town
@@ -2088,6 +2215,9 @@ whole reason sites are planned for every town from the start.
 and its place in that town's own list; a crowd and a theft read the
 built set every frame and skip what is not in it. A slot in the built
 list would name a different thing the moment a town went out of range.
+A lamp inside a town is keyed by its TILE and its place in that tile's
+own list (`PER_TILE`, 4,096), because a tile's lamps come and go with
+its boxes and a place in a town wide list would shift under them.
 
 **And a reach bounds the count, which the count cannot bound itself.**
 `TOWNS_REACH` is 200 km: without it the nearest eight are built however
@@ -2115,6 +2245,322 @@ world of identical towns while carrying a city two and a half times the
 area of any of them. A chunk near the port is 17 ms on lavapipe against
 12 before, which is what a site that cuts costs: `surface` can no longer
 return a level without asking the relief what was under it.
+
+## A city's ground is GRADED to the country, and that is what let it grow
+
+The owner asked why the city is so small, and the answer was not the
+constant: it was the flat pad. A town levelled its ground to ONE height
+right across its outline, and a site was accepted only where the
+natural ground fell no more than `CUT` (15 m) across the whole of it.
+`examples/town_ground.rs` measures that over 240 land candidates on the
+harness body: at a 537 m town the median fall across its outline is
+99 m and not one candidate in 240 falls under fifteen, so the 130
+cities the atlas found were the rare plains out of twenty thousand
+directions; at three times the radius the median fall is 282 m and a
+flat pad six and a half kilometres across is not a thing this planet
+has at all.
+
+**So a town's ground FOLLOWS the country** (`town::Grade`, in
+`town/grade.rs`). It is surveyed on a grid of `STEP` (50 m), each node
+the lowest bare ground over its own cell at half a step; lowered until
+no two neighbours differ by more than `GRADE` (8%) over the run
+between them, which is a chamfer distance transform with the heights
+as its seeds and only ever lowers, so a town still only ever CUTS; sunk
+`DIP` (0.75 m) more; and drawn between nodes as a quadratic B-spline.
+Graded at 8%, a third of land candidates take a city three times the
+size with no cut deeper than fifteen metres anywhere, and 58% over four
+fifths of it. `docs/civil-engineering.md` has the grade's row: eight
+per cent is an urban collector on rolling ground, and every street runs
+along one of the two axes it is held on.
+
+**A B-SPLINE, because a street is laid on this in straight pieces.** A
+bilinear grid creases along every node line, and at eight per cent
+either side of a ridge a 2.8 m piece spanning one is buried 11 cm in
+its middle. The spline's slope along an axis is a linear blend of node
+steps, so it never passes `GRADE`, and its curvature is bounded by
+`2 GRADE / STEP`, which holds the same piece within three millimetres.
+
+**`DIP` is measured, not chosen.** A node is the lowest of nine samples
+over its cell and the spline is an average, so a dip narrower than the
+samples can stand under the grade: a street or a floor hanging over a
+hollow. At five metres over twelve accepted big towns the worst is
+0.38 to 0.71 m on under 0.6% of the ground, and it does not grow with
+finer sampling, so the whole ground is cut 0.75 m deeper rather than
+left hanging anywhere. `a_graded_ground_only_ever_cuts` holds it at
+under five centimetres off the grid.
+
+**Only what the town READS is held**, and the SEA is a floor. A survey
+that held every node out to a margin round the town dragged a coastal
+city's waterfront under the water off the sea floor beside it, which
+refused exactly the coastal sites the size law wants biggest: the test
+ball's towns shrank to 86 to 101 m and moved inland. A node is held now
+only when a point the town reaches (its levelling and its skirt) is
+within a step and a half of it, which is what the spline reads, and
+every node is floored at the habitable window over the sea: the ground
+is the LOWER of the grade and the country, so a grade standing over the
+sea floor offshore changes nothing there.
+
+**A site is accepted on how deep its grade CUTS** (`settle`), surveyed
+over the town's whole band because a town's lobes are drawn off its
+rank and the rank is not known yet, and graded again along its own
+outline once it is (`grade_of`), which cuts no deeper: fewer nodes are
+held, and a node held by nothing below it stands at least as high. The
+grade is DERIVED at load rather than stored, off the bare analytic
+surface the probe already guarantees is the baked body's, and `GRADE`
+is in the atlas's fingerprint so a file baked at another grade is
+refused.
+
+**A building stands over ALL its ground, on a plinth.** `lot_stand`
+puts a building at the highest the ground reaches under its footprint,
+asked at nine points because the spline can bulge 16 cm between two
+corners of a twenty metre lot, so no room has earth in it; a concrete
+plinth goes down to under the lowest and on `BURY` (0.3 m) more, solid
+because a body walking round it is stopped by it. The port's deepest is
+2.29 m. `a_building_on_graded_ground_stands_on_a_plinth`.
+
+**A street is DRAPED, and the square is laid in tiles.** A piece of
+street is written flat in its own frame; `fabric_part` lifts every
+vertex and lamp by the ground at its own point and turns every box to
+the slope at its own middle (`Frame::lean`, which shears a point and
+turns an axis so the two agree to a third of a millimetre on a kerb).
+A market square is ONE piece up to 137 m across and one plane cannot lie
+on a curving grade, so its paving is cut into eight metre tiles.
+`a_street_is_laid_on_its_graded_ground` measures every vertex of every
+piece of the port against where it belongs: 7.9 mm at worst.
+
+**And the cities GREW.** `TOWN_RADIUS` is 1,611 m rather than 537, and
+the atlas re-baked on graded ground: **the median city is 948 m of
+radius against 209, 73 of the 160 are over a kilometre against none,
+and the port is 1,815 m against 517**, so the median city covers about
+twenty times the ground it did. `WAYSIDE` fell by the same three so a
+village is the size a village was (a median of 120 m). From 5 km over
+the port the city fills the frame, 4,206 tiles of solid blocks at
+672,924 triangles for the eight built towns. The bake is 877.9 s
+against 472.7, most of it grading the candidates it looks at, and at
+load every town is graded again off the bare planet on every core.
+
+**Two things the bigger cities found that were always wrong.** A
+roadside village kept apart from other towns by their RADII while
+cities kept apart by their OUTLINES, so a village could stand inside a
+city's outline, where two levellings meet at a cliff: a slip laid
+across one fell 61 m over 2.8 m. And the harness's census of where
+tarmac stops walked every piece of street of every town for each of
+3,512 mouths, which was 294 s of startup once a city was 60,000 pieces;
+it visits towns nearest first now, and all three of the startup's
+ground and road reports run on a thread of their own, because they are
+log lines and nothing waits on them.
+
+**And the CPU mesher contoured every chunk against the WHOLE BODY.**
+The GPU's own input was built on `compute::local_planet`, the chunk's
+planet with only the sites that reach into it, and the CPU path never
+was: every sample walked a latitude band of the site index as wide as
+the widest site on the body, which is 42.7 us a sample in the port
+against 2.5 on the local planet, and cities three times the size made
+that band three and a half times wider. Measured from 5 km over the
+port on lavapipe: **82.3 ms a chunk before any of this, 542 with the
+bigger cities, and 23.7 on the chunk's own planet**, three and a half
+times faster than the terrain ever meshed.
+
+## A city is a PERCOLATION FRONT, and the oval was its own outline
+
+The owner asked for a city with a more fractal shape than an oval,
+and the grain had been built for exactly that and measured 1.17 on the
+box count. What the map showed was an oval anyway, and the reason is
+one number: the grain bit only where its noise stood OVER its own
+mean, so a block just inside the outline was built whenever the noise
+stood under it, which is half of them. Measured on a 1,611 m city, the
+outer twentieth of the outline was **60% built**: the lobed ellipse
+`edge` draws was the line an eye traced round every town, and the grain
+only speckled the inside of it.
+
+**So a town is a GRADIENT PERCOLATION** (`town/shape.rs`: `FRONT`,
+`FADE`, `CAP`), which is Sapoval, Rosso and Gouyet's diffusion front
+and the model Makse, Havlin and Stanley fitted to real urban growth in
+1995: ground is built where a CORRELATED noise stands under a
+threshold that falls steadily from the middle of a town to its
+outline, `want * FADE / FRONT - FADE` of the grain's own deviations. At
+`FRONT` (0.35) of the demand half the ground is built, which is where a
+city frays into bays, fingers and outlying pieces; by the outline the
+threshold stands `FADE` (2.6) deviations under the noise, so there is
+almost nothing left for the ellipse to show. How far under the
+threshold the grain stands is a point's MARGIN, and the demand is the
+outline's own `want` scaled by it up to `EASE` (one deviation) and no
+further, so the outline, the density and the skyline are still three
+readings of one number. The grain is capped at `CAP` (3) deviations,
+which keeps the inner quarter of every bearing solid by arithmetic.
+
+**The first cut SUBTRACTED the grain everywhere, and downtown turned
+to suburb in patches.** A block facing the square in the middle of a
+city read as suburb wherever the noise stood high and still carried a
+six storey office, because facing the square builds big whatever the
+zone; `a_town_has_towers_in_the_middle_and_suburbs_outside` found it.
+Scaled by the margin instead, a block comfortably inside the front
+reads the outline's own smooth demand and only the band along the front
+shades toward suburb, which is where a real town's suburbs are.
+
+**A lot is asked the same question as a block**, at its own place,
+where the old grain threw a hash against a bite; the parks stay `OPEN`
+on the block's own hash, and the block a town STANDS on is never one of
+them, because the smallest settlement on the body is 64 m and the front
+leaves one that size little more than its middle block.
+
+Measured on four seeds (`town::fractal`), at the harness's own 1,611 m:
+the outline's outer twentieth **60.3% built against 2.5%**; the HULL,
+the outline the country sees with the holes left out, **1.192 against
+1.270** on the box count; and 7 pieces of a block or more, with 2.7% of
+the town standing apart from its main body. At 537 m it is 60.2%
+against 2.5% and 1.173 against 1.253. The sweep (`sweep_the_front`)
+runs from 1.155 at a front of 0.20 to 1.302 at 0.45, and 0.35 was
+picked off pictures of the whole sweep on two seeds rather than off
+the number, since past it a town loses ground faster than it gains
+any edge.
+
+**What it COST is the ground a town covers**, which is arithmetic and
+is reported rather than compensated for: the frame the plan fills goes
+from 16.5% to 9.5%, and inside the same outline a 537 m city lays
+**1,160 lots against 1,935**, a 250 m town 252 against 478 and a 150 m
+village 65 against 142. The outline is what the grading follows and
+what the atlas was accepted against, so growing it back is a re-bake
+and not a constant. And the front only ever takes demand AWAY, which is
+why this one needed none: `Site::level_r`, the grade, the skirt,
+`WOBBLE` and the planet's own slope bound are exactly what they were.
+It moved the zones' mix the grain's way, the fringe it takes being one
+storey houses (41.8% tall at the old 0.55), and `TOWN_AT` was re-swept
+to 0.67 with `CORE_AT` at 0.85 for the owner's quarter: **26.2% tall at
+537 m and 25.4% at 1,611 m**.
+
+**And a lot's own number was two towns' in a big city.** `Lot::id`
+packed its block as `i + 64` in thirteen bits, which is a town of
+sixty four blocks either way; the 1,815 m port reaches seventy seven,
+and a block past sixty four wrapped into another's number and put the
+same building on both. It is eleven bits a side now (`plot::lot_id`).
+
+**What is MISSING, named rather than hidden: ARMS.** A real city is
+star shaped because it runs out along its roads, which is what the
+approved city-blocks page drew, and the front has made the room for
+it: built ground now stops well inside the outline, so an arm down a
+highway's own bearing can reach out to the outline and no further
+without a re-bake. What it wants is the bearings of the roads arriving
+at a town handed to `lay`, which the atlas has.
+
+## A big city is CULLED, a far one is DISTRICTS, and a shadow is a BLOCK
+
+The owner flew the 1,815 m port and read it as badly optimised. It is
+10,413 buildings on 2,082 tiles, and the benchmark was taught to say
+where that goes before anything was changed: how many meshes each view
+is handed and how many of them are a town's (`flight_bench::Urban`),
+per pass vertex counts off `--profile-render`, and the update split at
+`PostUpdate` into the game's own systems and the engine's. Measured on
+the port's street, 180 frames on lavapipe: **the main view was handed
+2,222 meshes, 1,704 of them a town's, and the sun's four cascades drew
+3.72 million vertices against the camera's 3.09**. The shadows were
+the bigger half of the town's vertex work, and the far cascade alone
+was 2.42 million of it, because a tile at its second bake is up to a
+hundred thousand triangles and the sun was drawing every one of them
+into a map whose texel is a metre.
+
+Three answers, each asked of the one thing it can see:
+
+- **The camera takes the GPU's own occlusion culling**
+  (`cull::cull_views`, Bevy's two phase `OcclusionCulling`): what last
+  frame's depth pyramid proves hidden is dropped in the mesh
+  preprocessing compute pass and never reaches the vertex stage. That
+  is the compute shader this wanted, and it is Bevy's rather than a
+  second one beside it. From the street it takes the depth prepass from
+  3.09 to 2.85 million vertices, which is modest and honest: a tile is
+  one mesh 48.5 m across and is culled only when ALL of its bounds are
+  hidden, and a street is walled in by the tiles nearest the eye, which
+  are the ones it cannot cull.
+- **NOT on the sun.** Bevy 0.18 takes the same component on a
+  directional light and culls each cascade against its own last shadow
+  map, and on this build and this driver every cascade came back at
+  NOUGHT vertices, the terrain's included, with 973 meshes still handed
+  to them. A shadow pass that draws nothing is a world with no shadows
+  in it, and the frame looked faster for exactly that reason. Why is not
+  known (Bevy's own light setup still carries a TODO about GPU culling
+  for shadow passes a few lines from where it wires this up), so it is
+  off the light until a picture says otherwise on real silicon.
+- **A tile past its nearest bake casts its shadow from its BLOCK**
+  (`cull::casts`, `cull::ShadowOnly`, `shadow_only.wgsl`): its detail
+  meshes carry `NotShadowCaster` and its block stays up wearing a
+  material with NO prepass and a main pass vertex shader that puts
+  every corner on one point, so the sun draws a box to the eaves and
+  the camera draws nothing. From eighty metres a tile's shadow is a
+  footprint and an eave, and those are exactly what the block is
+  (`model::massing`, off the model's own solids). The far cascade goes
+  from **2.42 to 0.77 million vertices**, the four together from 3.72
+  to 1.64, and their GPU time from 488 ms to 281. What it costs is a
+  window's own reveal: a recessed pane past eighty metres sits inside
+  the block's face and is shaded as if the wall had no opening, which
+  at that range is under a pixel; and the proxies' own corners, about
+  190,000 of them, still pass through the main pass's vertex stage on
+  the way to being collapsed.
+- **The first cut of that cast NOTHING, and the numbers said it was a
+  triumph.** It put the block on a render layer only the sun sees, and
+  the benchmark read a far cascade of 0.51 million vertices against
+  2.42. A picture from 300 m over the port at nine in the morning then
+  had no building shadow in it anywhere, the blocks' included: Bevy
+  0.18's `queue_shadows` skips a mesh whose layers miss the CAMERA's,
+  so a mesh the camera cannot see casts no shadow whatever the light's
+  own layers say. Against the picture before any of this, the layer
+  version moved 24.9% of the frame and the material moves 1.6%, which
+  is the edge of a shadow cast by a block rather than by its detail. A
+  number that falls that far is a thing to photograph before believing.
+- **A far city is DISTRICTS** (`city/district.rs`): four by four tiles,
+  194 m square, as ONE mesh while every tile in it is a block and none
+  is showing detail, and its tiles' own blocks when any of them is. The
+  swap is one frame, the block and the district never drawn together,
+  which `a_district_is_one_mesh_only_while_all_its_tiles_are_blocks`
+  holds both ways. On the street 134 districts are whole and the main
+  view is handed **1,481 meshes against 2,222**, 963 of them a town's
+  and 322 of those proxies. It costs mesh memory, because a tile keeps
+  its own block for when the district splits: the allocator's slabs
+  went from 480 MB to 558.
+
+Measured together on the same route: **vertex invocations 10.08
+million a frame against 7.70, and a frame of 2,696 ms against 2,923**
+on lavapipe, where the main pass's 784,000 fragments of the terrain
+shader are two thirds of a frame and no culling touches them. What is
+left in the main pass is the town: the camera is handed 912,000 of the
+town's triangles from the street, of the 1.55 million its tiles are
+drawn with. Both switches are `render.json` booleans
+(`occlusion_culling`, `shadow_proxies`), so the A/B is one line.
+
+**And the MAIN THREAD was not the city at all, it was the ROADS.** The
+update was 29.9 ms a frame over the port, 26.0 of it the game's own
+systems, and a trace off a `bevy/trace_chrome` and `bevy/debug` build
+(the names are hidden without the second) named them: the flier's own
+step was 16.6 ms, the townsfolk 3.2 and the highway cars 2.35. Each was
+a walk of something the size of the BODY to find something the size of
+the eye's neighbourhood:
+
+- **`flight::sweep_planet` walked every site on the body** on every
+  sweep, 800 towns and 700,000 corridor arcs, to learn whether the
+  segment sat inside one level town disc. `Planet::around` already
+  answers which sites can reach a segment, and the function called it
+  on its own last line; it is called FIRST now and the loop is over
+  what it keeps. A site it drops is further off than its own outer
+  band, so it could neither take the shortcut nor count as an earlier
+  site, and the index sorts stably on one key, so the ones it keeps
+  keep their order: `far_sites_change_nothing_about_a_sweep_here` holds
+  the answer to the bit with a thousand towns added on the far side.
+  **The step goes from 17.39 ms to 0.96, p99 23.76 to 1.80**, and the
+  benchmark's route ends at the same position to the last bit.
+- **Every townsman in the port was placed every frame** to find the few
+  dozen within `REACH`. A loop now carries a box
+  (`Circuit::distance_from`), so an agent whose loop is out of reach is
+  passed over without asking where on it he is: **3.22 ms a frame to
+  0.44**.
+- **Every car on every highway was placed every frame**, six thousand
+  of them for the dozen ever drawn. A road now carries a sphere
+  (`commute::bounds`) and a road out of reach is passed over whole:
+  **2.35 ms a frame to 0.05**.
+
+**Measured together: the update from 29.9 ms to 10.6, the game's own
+systems from 26.0 to 4.8**, and the trace's own `Update` schedule from
+27.97 ms a frame to 8.04. The frame on lavapipe does not move, because
+lavapipe's frame is its fragments; on a real GPU a 30 ms main thread is
+the frame, and it was a flier over a city that paid it.
 
 ## A city is BLOCKS of four by four lots, and a settlement has a TIER
 
@@ -2147,7 +2593,7 @@ it always was; then:
   `Frame::turned` is the one place a frame is turned. A building drawn
   with its door on its own south wall would otherwise open onto the
   courtyard on three sides of every block.
-- **And the GRAIN thins the ring lot by lot** (`shape::bite` at the
+- **And the FRONT is asked again lot by lot** (`shape::demand` at the
   lot's own place), so a town's edge is ragged at the scale of the
   thing that is laid. `grain_octaves` is keyed to the LOT now and not
   the block: keyed to a 48.5 m block a 537 m city fell from six octaves
@@ -3016,14 +3462,15 @@ in 30 s wedged against a building, then 230 m and stuck at a corner, then
 steady 58 km/h**, which is the car flat out on a country road for ten
 minutes with nothing to back off from.
 
-**What is MISSING is the NETWORK.** The car follows ONE road, the one it
-joined, from the town's own streets: there is no route across the roads
-that join at a town, so a settlement that is not on the road it reached
-is a settlement it drives past rather than to. The scripted drive's goal
-is the nearest settlement whatever road it is on, so `--drive` measures
-the country driving honestly and the distance to its goal does not close.
-A route over the road graph is the same breadth first walk one level up
-and is named here rather than hidden.
+**What WAS missing is the NETWORK, and the route closes it.** The car
+followed ONE road, the one it joined, from the town's own streets: there
+was no route across the roads that join at a town, so a settlement that
+was not on the road it reached was a settlement it drove past rather
+than to, and the distance to its goal never closed. It drives the ROUTE
+the map plans now, which is A* over the road graph one level up from the
+town's own breadth first walk, and the section on the route below is the
+whole of it; `Network::follow` is what it falls back to when no road
+joins the car to its goal.
 
 **And a car with no ROUTE cannot get out of a town, which is measured
 rather than guessed.** The scripted drive aimed straight at the next
@@ -3197,12 +3644,11 @@ with nothing on the pedals, so it never brakes, never steers back onto
 the road and never rejoins the traffic; two knocked cars do not hit each
 other, only the player's car hands out knocks; and a car on the rails
 still does not know the player is there until it touches, because
-knowing would mean state. And the scripted drive out of the port WEDGES at
+knowing would mean state. The scripted drive out of the port WEDGED at
 80 m on this binary and on the one before it alike (81 m in 180 s at
 4 km/h against 83 m at 3, the same car, the same street), so the
-wedge is the blocks port's own way out and not the knock's: it is the
-routing defect the stolen car's own section names and it is measured
-here rather than left to be read as ramming's.
+wedge was the blocks port's own way out and not the knock's; it was
+the routing, and the section on the route below is how it was closed.
 
 ## A road is ON THE GROUND now, and its corridor is levelled like a town's
 
@@ -3615,6 +4061,26 @@ seven metres off the last one's, so the nearest is the one whose ramp it
 is, and `a_corridors_ground_ramps_through_a_station_without_a_landing`
 holds the profile to within a centimetre of the straight line the road
 was routed at, against 0.66 m before.
+
+**And a road's skirt is laid OVER a town's ground, never under it.** A
+road FILLS where a town CUTS, and `Planet::levelling` composited every
+partial site in the index's own order: where a town came after a road
+it pulled the road's skirt toward the town's level, so at the edge of
+the corridor's flat, where the road's own weight comes to one, the
+ground stepped by the town's share of the difference, and where the
+town covered the ground outright the road's skirt was dropped and the
+ground stepped by all of it. The scripted car out of the port found it
+as a wall it could not see: the slip's corridor stood 4.2 m over the
+sloping apron a metre ahead of the bonnet, and the car made three
+centimetres in thirty seconds against a step the car's own rule was
+right to refuse. It is two composites now (`field::Layer`), the towns'
+over the relief and the roads' over that, so a road's weight going to
+one takes its own level exactly whatever stands under it; towns alone
+and roads alone come out as they always did.
+`a_roads_skirt_ramps_down_onto_a_towns_ground_and_never_steps` walks a
+road 5 m up out of a town cut to -3 every five centimetres, in both
+orders the two can be listed in: **8.000 m in one step before, 0.055 m
+after**, which is the skirt's own smoothstep and nothing else.
 
 **The tarmac is the streets' own cross section at the country's scale.**
 `LANE` each way read off `town::street` rather than written again, a
@@ -4302,27 +4768,34 @@ own frame (`town::frame_at`) and `hud::toward` a marker's bearing and
 its distance along the ground, and both are tested on the sphere and
 never on a plane.
 
-**The status line moves.** At the wheel the HUD has the bottom
-corners, so the harness's own line stands under the compass strip,
-centred, and on foot and in the air it is the line along the bottom
-it always was. It is `status.rs` now, because `main.rs` went over
-this file's own nine hundred lines the moment the HUD was wired in.
+**The status line GOES at the wheel.** It stood under the compass
+strip for a commit, and the side by side with the page found it
+running through the strip and the clock: the page has no line of the
+harness's own over the HUD, and what the line says is in the log. On
+foot and in the air it is the line along the bottom it always was. It
+is `status.rs`, because `main.rs` went over this file's own nine
+hundred lines the moment the HUD was wired in.
 
 **The map is a MODE and not a screen**, which is swarm-demo's sensors
-manager rule: M dims the drive rather than leaving it, the car goes on
-being driven under it, Esc or M brings the road back, and the mouse is
-given back while it is open, because a map a player clicks on is a map
-the cursor has to be free for. `map.rs` is the mode and `map/draw.rs`
-what is drawn:
+manager rule: M covers the drive rather than leaving it, the car goes
+on being driven under it, Esc or M brings the road back, and the mouse
+is given back while it is open, because a map a player clicks on is a
+map the cursor has to be free for. `map.rs` is the mode, `map/raster.rs`
+the PICTURE (the next section) and `map/draw.rs` what is drawn over it:
 
 - **An OVERLAY camera**, a `Camera2d` at order one that clears nothing
   and draws over the world, on `RenderLayers` 2, because 1 is the LOD
-  wireframe's, with `MapGizmos` as a gizmo group of its own on that
-  layer, `Text2d` labels, sprites for the pumps, a mesh for the sea and
+  wireframe's, with the page and the picture as sprites at the bottom,
+  `MapGizmos` as a gizmo group of its own on that layer, `Text2d`
+  labels, meshes for the markers and the car, sprites for the pumps and
   UI nodes aimed at it for the panels. The 3D camera says
   `IsDefaultUiCamera` outright, because two cameras on one window with
   no word on which draws the UI is a warning and a guess.
-- **The projection is GNOMONIC**, `Chart`: the sphere seen from over
+- **The projection is GNOMONIC**, the core's `map::View`, which the
+  app's `Chart` only carries into `f32` pixels: ONE projection, because
+  the picture is drawn in the core's and a marker set in a second one
+  would be a hair off the ground it was set on everywhere but the
+  middle. It is the sphere seen from over
   the map's own middle, east across and north up, exact both ways, so a
   click is turned back into a direction on the sphere without a search
   (`the_chart_goes_to_a_pixel_and_back` holds the round trip under a
@@ -4332,25 +4805,25 @@ what is drawn:
   three notches left the ground 0.46 px off the cursor, and a second
   step closes it to under a hundredth, which
   `a_zoom_holds_the_ground_under_the_cursor` measures.
-- **What it draws is the road the car drives**, `World::routes` off the
-  atlas and never the chart's picture of them, so a road on the map is
-  a road under the wheels. Each route keeps its middle and its spread
-  so a road nowhere near the view costs one test, a line is walked at a
-  stride of about a point a pixel and a half, and the car's OWN road
-  (`Network::nearest_road`, within `OFF_ROAD`) is drawn last and
-  brighter. A settlement is two rings at its tier's size, the port
-  ringed again in the route's colour; the sea is the cells of a 96 by
-  54 grid over the window whose middle is under the water, sampled off
-  `Planet::surface` once per view and never per frame.
+- **What is drawn OVER the picture is what only a map has.** The car's
+  OWN road (`Network::nearest_road`, within `OFF_ROAD`) again and
+  brighter, the route solid along its tarmac and dashed across a hop,
+  the markers as the page's filled cyan discs with their numbers, the
+  car as its filled amber arrow turned to its bearing, the pumps as
+  the page's amber squares with the page showing through them, every
+  settlement's name past its own reach on the map, and the port ringed
+  in the route's colour while it is small enough for a ring to find
+  it. The roads, the towns and the sea are the PICTURE's, so a road on
+  the map is the road under the wheels drawn once and not twice.
 - **A marker is a PLACE and never a road.** A click sets one, a press
   that moves `CLICK` (4 px) is a drag and not a click, a right click
   takes the last one back, `MOST` is twelve, and the legs from the car
   through them are summed along the GROUND (the angle times the
   radius, this file's own rule) against the tank in the route panel,
-  which says "short" when the tank does not reach. The total is the
-  crow's distance and understates a drive round a bay, and a route
-  that follows the roads between markers is A* over the road graph,
-  whose input this is.
+  which says "short" when the tank does not reach. The legs are the
+  way over the ROADS between them now, which is the section on the
+  route below; the crow's distance, which understates a drive round a
+  bay, is what a leg falls back to where no road joins its two ends.
 - **The scale bar is a round number that fits**, `scale_of` on a
   ladder from 100 m to 50 km inside 160 px. The first ladder started
   at 500 m, and at the two metres a pixel a town is looked at that is
@@ -4361,18 +4834,19 @@ what is drawn:
 player does before setting off and what a headless run has no pointer
 to do: the compass strip's tick and the map's first leg are then in
 the picture. `--map` opens the map once the car is at the wheel, which
-is M pressed by a run that has no key to press.
+is M pressed by a run that has no key to press, and HALFWAY to the first
+marker, which is M and then a drag: the next town is fifty kilometres
+off and the map is sixty two across, so a map opened on the car had the
+route running off the edge of the picture.
 
 **What it decided against is a minimap.** A small always-on map in a
 corner was drawn and taken out: at the scale a car covers ground it is
 either a blur of the road under the car or too coarse to place a pump
 on, and the compass strip carries the one thing a driver needs from it.
 
-**What is MISSING, named rather than hidden.** No route follows the
-roads, which is the A* the owner named as the feature after this; the
-G prompt is tested and not photographed, because the scripted drive
-never stops at a pump; the sea on the map is a grid of 96 by 54 cells
-and reads as one when the map is zoomed to a town; and the HUD is laid
+**What is MISSING, named rather than hidden.** The G prompt is tested
+and not photographed, because the scripted drive
+never stops at a pump; and the HUD is laid
 out in shares of the window and not scaled by its height the way
 swarm-demo's deck is, so on a very wide window the dials stand further
 from the strip than the page draws them.
@@ -4399,13 +4873,270 @@ it, at 48 m a pixel across 62 km: the four roads out of the port with
 the car's own drawn brighter, the port ringed and labelled, the pumps
 on the roads, the leg to the marked goal running off the frame, the
 route panel reading one leg of 52 km against a tank that holds 41 and
-saying short, and a 5.0 km scale bar of 103 px. And the DIM under the map is measured
+saying short, and a 5.0 km scale bar of 103 px. And the DIM under the map was measured
 rather than the page's number: the page composites in sRGB, where its
 0.82 leaves the drive at 18% of its brightness, and Bevy composites in
 linear light, where 0.82 left the street under the map at 45% in sRGB
 (17% in linear, which is the alpha doing exactly what it says in the
-wrong space); at 0.97 it is 23% in sRGB, which is the page's own dim to
-the eye.
+wrong space). The map is opaque now and the lesson went to the GLASS,
+which is the same mistake at the page's 0.58: the next section.
+
+## The map is a PICTURE of the ground, and the HUD is the page's own glass
+
+The owner read the first map off a picture and named what was wrong
+with it: "I want an actual map, not a screen overlay", a terrain height
+map with the water, the roads as they are and the buildings, "a
+rendered version of the height map plus roads and buildings top down".
+The page's own map was a diagram over a dimmed drive, lines and rings
+and a grid of wet cells, and that is what the first build carried.
+
+**`freeport_core::map` DRAWS it, because a picture of the world is a
+function of the world.** One sample of the planet a pixel, on the
+gnomonic `View` the harness turns a click back into a place with, over
+threads the caller hands in:
+
+- **The land is tinted by its height and shaded by its slope**, a
+  relief map's own order from lowland green through olive and tan to
+  grey rock and snow, lit from the north west and steepened four times,
+  because relief seen from straight over it is flatter than it looks
+  from the ground. The lowest land is the brightest green on the page:
+  the first tint put it at the darkest, and the port's own valley floor,
+  a coastal plain falling from 25 m to 4 m over seven kilometres, read
+  as a hole in the picture.
+- **It is CONTOURED at the scale's own interval**, the finest of 5, 10,
+  20, 50, 100, 200 and 500 m that is at least two pixels of scale (a
+  hundred metres at the region's 48 m a pixel, five at a street's 2),
+  on the HIGHER side of the height it marks so a line is one pixel and
+  never two, every fifth an index line drawn darker, which is how a
+  topographic sheet lets an eye count height with no label on it.
+  `a_contour_interval_follows_the_scale_and_its_lines_are_one_pixel`
+  holds the ladder and the one pixel.
+- **The sea is by its depth**, lighter over a shelf and the page's own
+  blue past it, with its coast drawn.
+- **A road is its own line**, `World::routes` on its tarmac only, at
+  its true width (6.9 m, the lanes and the shoulders) or two pixels,
+  whichever is wider.
+- **A town is its streets and its buildings**, every piece of paving
+  and every lot at its own size and place, a lot under two pixels laid
+  on the pixel it stands in by its own area so a town of buildings
+  smaller than a pixel still reads as a town; and a town whose plan
+  would be smaller than the page's own mark for its tier (a city seven
+  pixels, a town five, a village three) is drawn AS that mark, which
+  is the page's region and a real plan the moment there are pixels for
+  one. `a_map_draws_a_towns_plan_and_its_roads_where_they_are` holds
+  the town's pixels to between 0.8 and 1.3 of what its own plan covers.
+- **And a town too fine to draw is drawn as its BUILT-UP AREA**, which
+  is how a real map generalises a city as it zooms out. The map opens
+  at forty eight metres a pixel, where a lot is a fifth of a pixel and a
+  street a sixth, so laid on by their own area the port's lots came out
+  as a faint grey smudge twelve pixels across and the owner asked
+  whether a road grid like a city was supposed to be there. It was, and
+  it was under a pixel. `map::built_up` lays every built block's own
+  cell, the block and half the street round it, in the town's colour,
+  wholly while a lot is under half a pixel and not at all past a pixel
+  and a half, and the plan is drawn over it. Each pixel asks where it
+  stands in the TOWN's frame, four samples a pixel, rather than a
+  quadrilateral being laid a cell at a time, because the cells tile the
+  ground and two laid one after the other leave a seam wherever they
+  share a pixel. `a_town_too_fine_to_draw_is_drawn_as_its_built_up_area`
+  holds the fixture town at 12 m a pixel to 321 pixels changed against
+  278 of its own cells.
+
+**It is drawn on a THREAD and never in the frame**, `map/raster.rs`,
+the sky's own rule: one answer and no queue, a `JoinHandle` and
+`is_finished`. A pan or a zoom moves and scales the LAST picture under
+the cursor at once, by the ratio of the scale it was drawn at to the
+scale the view is at, and the new one replaces it when it lands; the
+page under it is opaque, which is what a pan uncovers at the edge
+until then. A screenshot with the map open waits for its picture.
+
+**`--map-png PATH` draws one with no window**, at `--map-scale` metres a
+pixel over the port or `--eye`, before any of Bevy is built, which is
+the atlas bake's own rule for a thing that is arithmetic and a file.
+
+**The HUD's GLASS was the map's dim a second time.** The side by side
+with the page, element by element, found every panel a pale grey over
+the sky where the page's are dark smoked glass: its 0.58 composited in
+sRGB is 0.82 composited in linear light over a daylit sky, 0.80 over
+mid grey and 0.72 over a dark street. And 0.82 was still grey, because
+the page is dark because its WORLD is: measured off the second side by
+side, the page's glass reads (32, 42, 57) over a night blue scene and
+this one (103, 115, 115) over a noon sky of (215, 249, 249). The glass
+is 0.94, the page's own darkness over the brightest sky this world has
+and the page exactly over a dark street, and every panel on both
+screens reads it. The same comparison found three things
+the page has and the build did not: the speed dial's nine ticks, every
+other one longer, and the fuel dial's one at half a tank; each dial's
+own dark face under its arc; and the speed arc in the readout's cream
+rather than the needle's amber. A tick and a needle are one builder
+now (`hud::spoke`), a bar turned about the dial's middle, from the
+middle out for a needle and from part way for a tick, so the two turn
+by the one rule and cannot disagree about where the arc starts.
+
+Measured, headless off `--map-png` on the harness body: a picture of
+1280 by 720 is **326 to 349 ms on four cores** at 48, 8 and 2 m a
+pixel, the same third of a second at every scale because it is one
+sample of the planet a pixel and the towns and roads are a small part
+of it. At 48 m a pixel the region reads as hills, the coastal plain,
+the sea and the four roads out of the port; at 8 the port's own plan
+stands in the middle of its plain; at 2 it is blocks, courtyards, the
+square and the streets between them.
+
+## A route FOLLOWS the roads, and A* finds it on the atlas's own waypoints
+
+The owner named it as the feature after the map: markers put down by
+hand, and the way between them found along the roads. `road/path.rs` in
+the core is the finding and `route.rs` in the app is when to ask.
+
+**The graph is the ATLAS's, and that is what makes it exact.** Every
+road on a body is a walk of ONE Dijkstra tree over one set of waypoints
+(`road::connect`), so two roads that share a stretch share the very
+waypoints it runs through, bit for bit, and every road ends at its two
+towns' own centres. A waypoint is a node, a step on any road is an edge,
+and a junction is simply a node with more than two edges: a fork where a
+trunk splits, or a town where roads meet. Nothing is matched by
+distance, so there is no tolerance anywhere to get wrong; a node is
+keyed on its direction to a billionth of the radius, which is a
+millimetre here. The harness body is **4,456 waypoints and 4,668
+steps**. The other graph there was to build is the refined lines the
+roads are DRAWN on, which is 700,000 points and junctions found by
+looking for points that stand near each other: a tolerance that is right
+on a trunk and wrong at a crossing, which is exactly what the merge's
+own `SHARE` and `LEAST` exist to tell apart.
+
+**A* on the straight run still to go**, which is ADMISSIBLE because no
+road between two places is shorter than the great circle between them,
+and CONSISTENT because a step and the run after it cannot be beaten by
+the run alone, so the first time the goal comes off the frontier it has
+come off by the shortest way. The frontier is ordered on `total_cmp` and
+then the node, so two runs pop the same node at every tie, which is the
+network's own search's rule. `a_star_finds_the_shortest_way_between_every_pair_of_towns`
+holds it against a search with NO heuristic over every pair of towns on
+a real routed planet: 144 pairs, 74 joined and agreeing to the
+millimetre, and the other 70 agreeing that there is no way at all.
+
+**A step three roads share is run on the road that OWNS it**, the lowest
+numbered, which is `trunk::merge`'s own rule for who carries a trunk's
+tarmac: every other road there is snapped onto the owner's line and
+CLOSED, so a route that ran a trunk on a sharer's line would run it on
+points with no tarmac under them.
+
+**A way is TRACED onto the lines the roads are drawn on**
+(`path::trace`), because a waypoint is ten kilometres from the next and
+a curve of 1,116 m cuts every corner by up to 250 m. Each leg runs from
+the point of its road nearest where the last one ended, which makes a
+fork ONE line, since a road forking off a trunk is snapped onto the
+trunk's own line until it leaves; the first starts nearest the car and
+the last ends nearest the marker, the places themselves and never the
+waypoints they were snapped to. A step that is not on tarmac is a HOP:
+onto the road from wherever the car is, across a town between the
+crossings two roads end at, or through a village the highway stops short
+of, which is every village a road passes (`road::open`).
+
+**The map draws a route SOLID along the tarmac and DASHED across a
+hop**, which is the approved page's own dashed line kept for exactly
+what it meant there: a line that follows no road. The route panel sums
+the legs ALONG the roads and says "no road" beside a leg with none,
+since a marker on an island is a straight line to it, which is all a leg
+ever was before. And the compass strip's figure is the DRIVE and not the
+crow: the tick is where the marker IS and the figure how far it is to
+drive there, because the bearing is what says which way and the
+distance is what the tank is held against.
+
+**The route is planned again as the car drives**, every `REPLAN`
+(100 m), because its first leg runs FROM the car. Out of the port to the
+next town it is **54.3 km along the roads against 51.6 km as the crow
+flies, planned in 0.84 ms**: the search is 4,456 nodes and the trace a
+walk of the few roads it takes, so re-planning every two seconds at the
+car's top speed costs nothing a frame can find.
+
+**And the scripted drive DRIVES it**, which is what closes the gap the
+stolen car's own section named. `Auto::along` pursues the route along
+its tarmac as far as `AHEAD` (400 m) and never further than the straight
+line to the point stays within half the carriageway of every point of
+the route it passes (`route::ahead_on`): a curve of 1,116 m holds that to
+about 157 m and a slip's fifteen metre turns to a few, where a flat
+400 m aimed the first run of this across the corner of the port and into
+the building standing on it. It drives straight across a hop no longer than
+`SHORT_HOP` (50 m, the step onto the road beside it and a fork inside
+one corridor), and takes a longer hop, which is a town or a village, on
+that town's own streets (`Streets::route`) to where the tarmac starts
+again. Two things `through_town` needed for that, and both are the
+highway's own geometry arriving at the car: a town REACHES as far as its
+own tarmac does, which is its levelling and the skirt round it plus a
+piece (`road::open`'s own reach), because a car at the end of the
+highway outside a village was outside the village's OUTLINE and so in
+no town at all; and a car ARRIVING from off the paving goes to the
+nearest crossing first rather than the one after it, which is across
+whatever stands between.
+
+**And a car OFF its route inside a town takes the streets ONTO it.**
+The route's first step is a hop from where it was planned onto the road
+beside it, and a hop under `SHORT_HOP` is driven straight, which is
+right in the country and wrong in a town: the first drive on the
+chord bounded look ahead held its throttle against a building eighteen
+metres from the port's slip for six minutes, `steering for the route
+18 m off` at 3 km/h, because the straight line to the slip's first
+point ran through the corner of a block. More than `ONTO` (the
+carriageway and its shoulder, 3.45 m) off the route and inside a
+town's reach, the car walks the town's streets to where the route's
+tarmac starts.
+
+**Off the route is measured to the TARMAC's LINE, never to a point.**
+It was the distance to the route's nearest POINT, and the nearest point
+of a route planned from the car is its first hop's own start, which is
+where the car stood when it was planned: thirty metres down the slip
+the car was twenty eight from it, called itself off the route, and
+walked the streets back toward it. `route::off_tarmac` is the distance
+to the nearest SEGMENT whose step is tarmac and never over a hop, and
+the look ahead starts from whichever end of that segment the car is
+nearer. Halfway between two points a hundred metres apart it reads
+0.00125 m, which is the chord's own sagitta at a thousand kilometres.
+
+**A scripted car BRAKES for a bend, or it orbits the point it aims
+at.** Past the slip it held 160 km/h into the slip's fifteen metre
+turns, ran wide onto the grass and went round there for two minutes,
+because a point pursued faster than the lock can hold the arc to it is
+a point the car circles. `driver::bend_speed` is the steering taper the
+other way up, the fastest a bend of a given curvature can be held at:
+an 8 m bend at 5.68 m/s, the slip's 15 m at 17.86, and anything past
+about thirty metres, which is every highway curve, at the top speed.
+`route::bend_limit` reads the tarmac ahead within braking distance and
+gives the fastest the car may go and still slow for each bend in time
+(`sqrt(v^2 + 2 a d)` at the script's own 8 m/s^2), and `Auto::pace`
+takes the lower of that and the pursuit arc it is steering through,
+never under a walking pace, so slowing for a corner is not taken for
+being stuck.
+
+**And a car that has JOINED its route keeps to the tarmac.** The
+streets are the way ONTO the route from inside a town and never the
+way back to it: a car a few metres wide of its line at speed and still
+inside the port's reach was handed to the streets, which took it back
+into town, down the slip and off its far end again, three times round
+in twenty seconds. `Auto::joined` is a latch set the first time the car
+is within `ONTO` of the tarmac and cleared only once it has strayed
+`STRAYED` (60 m, a block and a street) off it, so a car that has run
+wide comes back to its line rather than into town.
+
+**Measured, the scripted drive out of the port: 9,380 m in 240 s, the
+last three minutes of it at 160 km/h**, with the goal closing from
+51.63 km to 44.97. The route was read against the car a second at a
+time and plotted: down the slip, onto the highway fifty seconds in, and
+on its tarmac line to the metre for all but one stretch, the V at 4.9 km
+where the route turns back on itself through a hop, which the car ran
+180 m past and came back from inside ten seconds.
+
+**What is MISSING, named rather than hidden.** A route is shortest by
+DISTANCE and nothing else: a highway and a village street cost the same
+metre, a grade weighs nothing, and no pump is planned into a route the
+tank cannot hold (the panel says "short", which is the moment to plan
+one by hand). The way through a town is a hop on the map and a breadth
+first walk of its streets under a scripted car, and the two are not the
+same line. The map is still the page's own region at its widest, sixty
+two kilometres across, so a route to anywhere past the next town runs
+off the edge and is followed by dragging. And a crossing of two roads
+that share no waypoint is not a junction, which is the rule the network
+was built by: it has none.
 
 ## The hour is a MENU now, and it writes the one offset there is
 
@@ -4774,8 +5505,8 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 194, the core, about 40 s
-cargo test -p freeport_app                        # 57, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 234, the core, about 100 s
+cargo test -p freeport_app                        # 67, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
@@ -5165,7 +5896,14 @@ Numbers in the commit message. What is measured so far:
   turning round at every bend; and 9,297 m in 600 s at a steady 58 km/h.
   The last is the car flat out on a country road for ten minutes, and
   its distance to the goal does not close, because it is following the
-  road it reached rather than routing over the network.
+  road it reached rather than routing over the network. On the ROUTE,
+  four more: wedged at 548 m reading itself 28 m off a route it was on,
+  because off was measured to a point; wedged at 838 m against a 4.2 m
+  step where a road's skirt met a town's ground; orbiting on the grass
+  at 1,215 m every thirty seconds, because it never braked for a bend;
+  and looping back into town off a line it had already joined. Then
+  **9,380 m in 240 s, the last three minutes at 160 km/h, the goal from
+  51.63 km to 44.97**.
 - **The JUNCTION where a highway meets a town**, on the port, in six
   measurements and six pictures: the slip spliced INSIDE the loop that
   builds the sites read the bare relief and drew as its own curved

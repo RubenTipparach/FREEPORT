@@ -361,7 +361,7 @@ fn a_corridor_levels_the_ground_along_its_whole_length() {
     let site = crate::town::Site::arc((a, -60.0), (b, -20.0), 8.0);
     let (inner, outer) = site_band(&site);
     let planet = Planet {
-        sites: vec![site].into(),
+        sites: vec![site.clone()].into(),
         ..bare.clone()
     };
     for k in 0..40 {
@@ -469,6 +469,57 @@ fn a_corridors_ground_ramps_through_a_station_without_a_landing() {
     assert!(
         worst < 0.01,
         "the corridor's ground strays {worst:.3} m from the ramp it was cut to"
+    );
+}
+
+/// A road's corridor RAMPS off into a town's ground, and never steps.
+///
+/// A road fills and a town cuts, so where a highway runs out of a town
+/// its flat stands over the town's plateau and its skirt has to come
+/// down onto it. With one composite in the index's own order it did not:
+/// where the town covered the ground outright the road's skirt was
+/// dropped and the ground stepped the whole difference at the edge of
+/// the corridor's flat, and where the town reached after the road it
+/// pulled the skirt down and the ground stepped the town's share of it.
+/// The scripted car out of the port met that as a four metre wall one
+/// metre deep. Walked across the corridor's edge every five centimetres,
+/// inside the town's plateau and out through its skirt, in either order
+/// the two sites can be listed in.
+#[test]
+fn a_roads_skirt_ramps_down_onto_a_towns_ground_and_never_steps() {
+    use crate::town::Site;
+    const RADIUS: f64 = 40_000.0;
+    let (east, north) = crate::town::frame_at(DVec3::Z);
+    let at = |x: f64, y: f64| (DVec3::Z * RADIUS + east * x + north * y).normalize();
+    let town = Site::round(DVec3::Z, -3.0, 300.0);
+    let road = Site::arc(
+        (at(150.0, 0.0), 5.0),
+        (at(600.0, 0.0), 5.0),
+        crate::road::CORRIDOR,
+    );
+    let mut worst = 0.0f64;
+    for sites in [vec![town.clone(), road.clone()], vec![road, town]] {
+        let planet = Planet {
+            radius: RADIUS,
+            relief: 0.0,
+            overhang: 0.0,
+            ledge: 0.0,
+            sites: sites.into(),
+            ..Default::default()
+        };
+        for x in (160..=420).step_by(10) {
+            let mut last = planet.surface(at(x as f64, -60.0)).0;
+            for k in 1..=2400 {
+                let here = planet.surface(at(x as f64, -60.0 + k as f64 * 0.05)).0;
+                worst = worst.max((here - last).abs());
+                last = here;
+            }
+        }
+    }
+    println!("the ground steps {worst:.3} m in five centimetres across a road's edge in a town");
+    assert!(
+        worst < 0.1,
+        "the ground steps {worst:.3} m in five centimetres where a road's corridor meets a town's"
     );
 }
 
@@ -582,7 +633,7 @@ fn a_sites_weight_is_one_across_it_and_nought_past_its_apron() {
         sites: vec![crate::town::Site::round(DVec3::Y, 0.0, 200.0)].into(),
         ..Planet::default()
     };
-    let site = planet.sites[0];
+    let site = planet.sites[0].clone();
     let (inner, outer) = site_band(&site);
     let (east, _) = crate::town::frame_at(DVec3::Y);
     let at = |m: f64| planet.site_weight(&site, (DVec3::Y * planet.radius + east * m).normalize());

@@ -117,23 +117,66 @@ impl Library {
     /// buildings downtown and round the square) is built parametrically
     /// at its own footprint, as is any kind the library does not carry.
     pub fn model(&self, lot: &Lot, lod: usize, seed: u32) -> Model {
-        let (lo, hi) = lot.kind.storeys();
         let dice = seed ^ lot.id;
-        let baked = ((lot.w - LOT).abs() < 1e-6)
-            .then(|| {
-                self.0
-                    .get(&(lot.kind.name().into(), lot.storeys.clamp(lo, hi)))
-            })
-            .flatten();
-        match baked {
+        match self.baked(lot) {
             Some(models) => {
                 let mut m = models[lod.min(2)].clone();
                 m.reskin(freeport_core::field::CONCRETE, lot.kind.skin(dice));
                 m
             }
+            None => Self::parametric(lot, dice),
+        }
+    }
+
+    /// The bake a lot is built from, if the library carries one: one lot
+    /// square, of a kind that is baked, at its storeys.
+    fn baked(&self, lot: &Lot) -> Option<&[Model; 3]> {
+        let (lo, hi) = lot.kind.storeys();
+        ((lot.w - LOT).abs() < 1e-6)
+            .then(|| {
+                self.0
+                    .get(&(lot.kind.name().into(), lot.storeys.clamp(lo, hi)))
+            })
+            .flatten()
+    }
+
+    /// A lot built from numbers, at its own footprint.
+    fn parametric(lot: &Lot, dice: u32) -> Model {
+        let w = lot.kind.covers() * lot.w;
+        model::building(lot.kind, w, w, lot.storeys, dice)
+    }
+
+    /// The lot as a SOLID BLOCK (`model::massing`), off its farthest bake
+    /// or its parametric model, in the trade it is built of.
+    pub fn massing(&self, lot: &Lot, seed: u32) -> Model {
+        let dice = seed ^ lot.id;
+        let skin = lot.kind.skin(dice);
+        match self.baked(lot) {
+            Some(models) => model::massing(&models[2], lot.kind, skin),
+            None => model::massing(&Self::parametric(lot, dice), lot.kind, skin),
+        }
+    }
+
+    /// What a lot STOPS a body with and the lamps it hangs, and no
+    /// triangles: the collision half of a building, which is the same at
+    /// every LOD, without copying the nearest bake's ten thousand
+    /// triangles to get at it.
+    pub fn solids(&self, lot: &Lot, seed: u32) -> Model {
+        let dice = seed ^ lot.id;
+        match self.baked(lot) {
+            Some(models) => {
+                let mut m = Model {
+                    mesh: Default::default(),
+                    solids: models[0].solids.clone(),
+                    lamps: models[0].lamps.clone(),
+                };
+                m.reskin(freeport_core::field::CONCRETE, lot.kind.skin(dice));
+                m
+            }
             None => {
-                let w = lot.kind.covers() * lot.w;
-                model::building(lot.kind, w, w, lot.storeys, dice)
+                let mut m = Self::parametric(lot, dice);
+                m.mesh = Default::default();
+                m
             }
         }
     }
@@ -257,6 +300,7 @@ mod tests {
                 east: DVec3::X,
                 north: DVec3::Y,
                 base: 0.0,
+                lean: bevy::math::DVec2::ZERO,
             };
             let blocks = models[0].blocks(&frame);
             // The front door is clear from outside to the middle of the room.

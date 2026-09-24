@@ -1,15 +1,18 @@
-//! The map DRAWN: the overlay camera and the layers under it, the sea
-//! as wet cells off the field, the roads, the settlements, the pumps,
-//! the legs, the markers and the car, and the panels' nodes. The mode
-//! that decides what it shows is `map.rs`, which this is a child of.
+//! The map DRAWN over its picture: the overlay camera, the page and the
+//! picture under everything, the car's own road, the route, the markers,
+//! the pumps, the labels and the car, and the panels' nodes. The ground,
+//! the sea, the roads and the towns are the PICTURE's (`map/raster.rs`);
+//! what is here is what only a map has. The mode that decides what it
+//! shows is `map.rs`, which this is a child of.
 
 use super::{
-    Chart, Clear, Dim, MapGizmos, MapUi, MapView, Markers, Overlay, Panel, Says, ScaleBar,
-    SeaLayer, Whereabouts, MOST,
+    Chart, Clear, Dim, MapGizmos, MapUi, MapView, Overlay, Panel, Relief, ReliefSprite, Row, Says,
+    ScaleBar, Whereabouts, MOST,
 };
 use crate::drive::Thefts;
 use crate::hud::{self, AMBER, DIM, EDGE, GLASS, HUD, ROUTE};
 use crate::roads::Network;
+use crate::route::Planned;
 use crate::world::{Ground, World};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
@@ -22,26 +25,32 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use bevy::ui::Val2;
 use bevy::window::PrimaryWindow;
+use freeport_core::map;
 use freeport_core::road::PIECE;
 use freeport_core::town::Tier;
+use freeport_core::town::OUTLINE;
 
 /// The render layer the overlay lives on. Layer 1 is the LOD wireframe's.
 const LAYER: usize = 2;
-/// The sea is sampled on this grid over the window, cells: about
-/// thirteen pixels at 1280 across, five thousand samples of the field
-/// once per view rather than a rebuild a frame.
-const SEA_GRID: (usize, usize) = (96, 54);
 /// How wide a road's line is drawn, pixels.
 const LINE: f32 = 2.0;
-/// The page's own colours for what only the map has. The dimmer's alpha
-/// is not the page's 0.82: a browser composites in sRGB, where 0.82
-/// leaves the drive at 18% of its brightness, and Bevy composites in
-/// linear light, where the same 18% of sRGB is 2.7% and wants 0.97.
-/// Measured on the first render, which left the street under the map
-/// at about half its brightness.
-const DIMMER: Color = Color::srgba(0.031, 0.039, 0.051, 0.97);
-const SEA: Color = Color::srgba(0.16, 0.30, 0.48, 0.55);
-const ROAD: Color = Color::srgb(0.55, 0.52, 0.45);
+/// A hop's dashes and the gaps between them, pixels: the page's own
+/// `setLineDash([6, 5])`.
+const DASH: f32 = 6.0;
+const DASH_GAP: f32 = 5.0;
+/// The page the picture is laid on, the page's own screen `#0b0d10`,
+/// OPAQUE: a map is read, and a drive showing through it is a map that
+/// cannot be. It is also what a pan uncovers at the picture's edge until
+/// the next picture lands.
+const PAGE: Color = Color::srgb(0.043, 0.051, 0.063);
+/// A marker's disc and a pump's mark, pixels: the page's own.
+const MARKER: f32 = 8.0;
+const PUMP: f32 = 8.0;
+/// How far out from a place's mark its ring and its label stand, pixels,
+/// and the largest a town is ringed at: past it the town is its own plan
+/// filling the window and a ring round it is nothing anybody can find.
+const RING_GAP: f32 = 6.0;
+const RING_MOST: f32 = 60.0;
 
 /// A settlement's label, a pump and a marker's number, each placed by
 /// the drawing every frame.
@@ -51,6 +60,9 @@ pub struct Label(usize);
 pub struct PumpSpot(usize);
 #[derive(Component)]
 pub struct MarkerLabel(usize);
+/// The car's own arrow.
+#[derive(Component)]
+pub struct CarMark;
 
 /// A line of text at a size and a colour, on the overlay's own UI.
 fn text(what: &str, size: f32, colour: Color) -> impl Bundle {
@@ -77,7 +89,8 @@ fn glass(node: Node) -> impl Bundle {
     )
 }
 
-/// The overlay camera, the layers under the map and its panels, once.
+/// The overlay camera, the page and the picture under the map, the marks
+/// over it and its panels, once.
 pub fn spawn_map(
     mut commands: Commands,
     ground: Res<Ground>,
@@ -85,6 +98,7 @@ pub fn spawn_map(
     mut config: ResMut<GizmoConfigStore>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let (cfg, _) = config.config_mut::<MapGizmos>();
     cfg.render_layers = RenderLayers::layer(LAYER);
@@ -105,7 +119,7 @@ pub fn spawn_map(
         .id();
     commands.spawn((
         Sprite {
-            color: DIMMER,
+            color: PAGE,
             custom_size: Some(Vec2::splat(20_000.0)),
             ..default()
         },
@@ -114,16 +128,59 @@ pub fn spawn_map(
         Visibility::Hidden,
         Dim,
     ));
-    let sea = meshes.add(cells(&[]));
+    let relief = Relief::new(&mut images);
     commands.spawn((
-        Mesh2d(sea.clone()),
-        MeshMaterial2d(materials.add(ColorMaterial::from_color(SEA))),
+        Sprite {
+            image: relief.image(),
+            custom_size: Some(Vec2::ZERO),
+            ..default()
+        },
         Transform::from_xyz(0.0, 0.0, -1.0),
         layer.clone(),
         Visibility::Hidden,
-        SeaLayer(sea),
+        ReliefSprite,
     ));
-    for (i, t) in ground.0.towns.iter().enumerate() {
+    commands.insert_resource(relief);
+    spawn_labels(&mut commands, &ground.0, &layer);
+    spawn_pumps(&mut commands, network.pump_sites().len(), &layer);
+    let disc = meshes.add(Circle::new(MARKER));
+    let cyan = materials.add(ColorMaterial::from_color(ROUTE));
+    for i in 0..MOST {
+        commands.spawn((
+            Text2d::new((i + 1).to_string()),
+            TextFont {
+                font_size: 11.0,
+                ..default()
+            },
+            TextColor(Color::srgb(0.04, 0.05, 0.06)),
+            Anchor::CENTER,
+            Transform::from_xyz(0.0, 0.0, 3.0),
+            layer.clone(),
+            Visibility::Hidden,
+            MarkerLabel(i),
+            children![(
+                Mesh2d(disc.clone()),
+                MeshMaterial2d(cyan.clone()),
+                Transform::from_xyz(0.0, 0.0, -0.5),
+                layer.clone(),
+            )],
+        ));
+    }
+    commands.spawn((
+        Mesh2d(meshes.add(arrow())),
+        MeshMaterial2d(materials.add(ColorMaterial::from_color(AMBER))),
+        Transform::from_xyz(0.0, 0.0, 4.0),
+        layer.clone(),
+        Visibility::Hidden,
+        CarMark,
+    ));
+    spawn_panels(&mut commands, overlay);
+}
+
+/// A settlement's name beside it: the port, a city in the readout's
+/// white, a town and a village dim.
+fn spawn_labels(commands: &mut Commands, world: &World, layer: &RenderLayers) {
+    for (i, t) in world.towns.iter().enumerate() {
         let (name, colour) = match (i, Tier::of(t.radius)) {
             (0, _) => ("the port".to_string(), HUD),
             (_, Tier::City) => (format!("city {i}"), HUD),
@@ -144,35 +201,53 @@ pub fn spawn_map(
             Label(i),
         ));
     }
-    for i in 0..network.pump_sites().len() {
+}
+
+/// A pump, the page's own mark: an amber square with the page showing
+/// through its middle, so it reads as a place and never as a blot.
+fn spawn_pumps(commands: &mut Commands, count: usize, layer: &RenderLayers) {
+    for i in 0..count {
         commands.spawn((
             Sprite {
                 color: AMBER,
-                custom_size: Some(Vec2::splat(7.0)),
+                custom_size: Some(Vec2::splat(PUMP)),
                 ..default()
             },
             Transform::from_xyz(0.0, 0.0, 1.0),
             layer.clone(),
             Visibility::Hidden,
             PumpSpot(i),
+            children![(
+                Sprite {
+                    color: PAGE,
+                    custom_size: Some(Vec2::splat(PUMP * 0.4)),
+                    ..default()
+                },
+                Transform::from_xyz(0.0, 0.0, 0.1),
+                layer.clone(),
+            )],
         ));
     }
-    for i in 0..MOST {
-        commands.spawn((
-            Text2d::new((i + 1).to_string()),
-            TextFont {
-                font_size: 11.0,
-                ..default()
-            },
-            TextColor(Color::srgb(0.04, 0.05, 0.06)),
-            Anchor::CENTER,
-            Transform::from_xyz(0.0, 0.0, 3.0),
-            layer.clone(),
-            Visibility::Hidden,
-            MarkerLabel(i),
-        ));
-    }
-    spawn_panels(&mut commands, overlay);
+}
+
+/// The car's arrow, pointing up the screen with its tip at the car: the
+/// page's own filled arrowhead, a notch at its tail so which way it
+/// points reads at a glance.
+fn arrow() -> Mesh {
+    let (tip, wing, tail, notch) = (11.0, 7.0, -8.0, -3.0);
+    let positions = vec![
+        [0.0, tip, 0.0],
+        [-wing, tail, 0.0],
+        [0.0, notch, 0.0],
+        [wing, tail, 0.0],
+    ];
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3]));
+    mesh
 }
 
 /// The panels over the map: the title, the north, the route, the legend
@@ -245,7 +320,22 @@ fn route_panel(ui: &mut RelatedSpawnerCommands<'_, ChildOf>) {
     ))
     .with_children(|panel| {
         panel.spawn(text("ROUTE", 10.0, DIM));
-        panel.spawn((text("no markers set", 13.0, DIM), Says::Legs));
+        panel.spawn((text("no markers set", 13.0, DIM), Row::NoLegs));
+        for i in 0..MOST {
+            panel.spawn((
+                Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: Val::Px(12.0),
+                    display: Display::None,
+                    ..default()
+                },
+                Row::Leg(i),
+                children![
+                    (text("", 13.0, ROUTE), Says::LegName(i)),
+                    (text("", 13.0, HUD), Says::LegKm(i)),
+                ],
+            ));
+        }
         for (name, what) in [("total", Says::Total), ("tank holds", Says::Holds)] {
             panel.spawn((
                 Node {
@@ -338,84 +428,21 @@ fn scale_bar(ui: &mut RelatedSpawnerCommands<'_, ChildOf>) {
     ));
 }
 
-/// The sea layer's mesh: a quad a wet cell, in overlay pixels.
-fn cells(wet: &[(Vec2, Vec2)]) -> Mesh {
-    let mut positions = Vec::with_capacity(wet.len() * 4 + 3);
-    let mut indices = Vec::with_capacity(wet.len() * 6 + 3);
-    for (i, (at, size)) in wet.iter().enumerate() {
-        let (x0, y0, x1, y1) = (at.x, at.y, at.x + size.x, at.y + size.y);
-        positions.extend([[x0, y0, 0.0], [x1, y0, 0.0], [x1, y1, 0.0], [x0, y1, 0.0]]);
-        let k = (i * 4) as u32;
-        indices.extend([k, k + 1, k + 2, k, k + 2, k + 3]);
-    }
-    if wet.is_empty() {
-        // A mesh with nothing in it is refused, so an empty sea is one
-        // triangle of no area.
-        positions.extend([[0.0; 3], [0.0; 3], [0.0; 3]]);
-        indices.extend([0, 1, 2]);
-    }
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
-}
-
-/// The sea, as the cells of a grid over the window whose middle is
-/// under the water, rebuilt when the view has moved and the drag has
-/// let go.
-pub fn sea_layer(
-    ground: Res<Ground>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut view: ResMut<MapView>,
-    layer: Query<&SeaLayer>,
-) {
-    if !view.open || view.press.is_some_and(|(_, moved)| moved) {
-        return;
-    }
-    if view.sea_at == Some((view.centre, view.scale)) {
-        return;
-    }
-    let Ok(window) = windows.single() else { return };
-    let Ok(sea) = layer.single() else { return };
-    let size = window.size();
-    let world = &ground.0;
-    let chart = view.chart(world.planet.radius);
-    let cell = Vec2::new(size.x / SEA_GRID.0 as f32, size.y / SEA_GRID.1 as f32);
-    let mut wet = Vec::new();
-    for j in 0..SEA_GRID.1 {
-        for i in 0..SEA_GRID.0 {
-            let at = Vec2::new(
-                -size.x * 0.5 + cell.x * i as f32,
-                -size.y * 0.5 + cell.y * j as f32,
-            );
-            let dir = chart.to_dir(at + cell * 0.5);
-            let ground_r = world.planet.radius + world.planet.surface(dir).0;
-            if ground_r < world.sea.radius {
-                wet.push((at, cell));
-            }
-        }
-    }
-    if let Err(e) = meshes.insert(sea.0.id(), cells(&wet)) {
-        warn!("the map's sea layer could not be written: {e:?}");
-    }
-    view.sea_at = Some((view.centre, view.scale));
-}
-
 /// A thing the drawing PLACES, its transform and whether it shows.
 type Placing<'w, 's, T, F> =
     Query<'w, 's, (&'static mut Transform, &'static mut Visibility, &'static T), F>;
 
-/// What the drawing places: the labels, the pumps and the markers'
-/// numbers.
+/// The car's arrow is none of the other things the drawing places.
+type NotPlaced = (Without<Label>, Without<PumpSpot>, Without<MarkerLabel>);
+
+/// What the drawing places: the labels, the pumps, the markers' numbers
+/// and the car's arrow.
 #[derive(SystemParam)]
 pub struct Placed<'w, 's> {
     labels: Placing<'w, 's, Label, ()>,
     pumps: Placing<'w, 's, PumpSpot, Without<Label>>,
     numbers: Placing<'w, 's, MarkerLabel, (Without<Label>, Without<PumpSpot>)>,
+    car: Placing<'w, 's, CarMark, NotPlaced>,
 }
 
 impl Placed<'_, '_> {
@@ -430,6 +457,9 @@ impl Placed<'_, '_> {
         for (_, mut seen, _) in &mut self.numbers {
             *seen = Visibility::Hidden;
         }
+        for (_, mut seen, _) in &mut self.car {
+            *seen = Visibility::Hidden;
+        }
     }
 }
 
@@ -440,20 +470,20 @@ fn inside(chart: &Chart, dir: DVec3, half: Vec2, slack: f32) -> Option<Vec2> {
         .filter(|p| p.x.abs() <= half.x + slack && p.y.abs() <= half.y + slack)
 }
 
-/// How big a settlement's mark is, pixels: a city, a town, a village.
-fn mark_of(radius: f64) -> f32 {
-    match Tier::of(radius) {
-        Tier::City => 7.0,
-        Tier::Town => 5.0,
-        Tier::Village => 3.0,
-    }
+/// How far a settlement reaches on the map, pixels: its own outline at
+/// the scale, or the picture's own mark for its tier where the outline
+/// would be smaller, which is exactly what the picture drew there.
+fn reach_px(town: &freeport_core::town::Town, scale: f64) -> f32 {
+    let outline = town.radius * OUTLINE / scale;
+    outline.max(map::mark(Tier::of(town.radius))) as f32
 }
 
-/// The map, drawn: the roads, the car's own road brighter, the towns,
-/// the pumps, the legs and the markers, and the car.
+/// The map, drawn over its picture: the car's own road brighter, the
+/// port's ring and every label, the pumps, the route and the markers,
+/// and the car.
 pub fn draw_map(
     view: Res<MapView>,
-    markers: Res<Markers>,
+    route: Planned,
     network: Res<Network>,
     at: Whereabouts,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -471,50 +501,20 @@ pub fn draw_map(
     let world = &at.ground.0;
     let chart = view.chart(at.radius());
     let here = at.here();
-    let on = network.nearest_road(world, here, at.radius());
-    draw_roads(
-        &mut gizmos,
-        &chart,
-        &view,
-        world,
-        on,
-        half,
-        chart.reach(window.size()),
-    );
+    // The picture has every road; the one the car is on is drawn again
+    // over it, brighter, which is the page's own rule.
+    if let Some(r) = network.nearest_road(world, here, at.radius()) {
+        road(&mut gizmos, &chart, &world.routes[r].line, half, HUD);
+    }
     draw_towns(&mut gizmos, &chart, world, half, &mut placed);
     place_pumps(&chart, network.pump_sites(), half, &mut placed);
-    draw_route(&mut gizmos, &chart, here, &markers, &mut placed);
-    draw_car(&mut gizmos, &chart, here, &at.thefts);
+    draw_route(&mut gizmos, &chart, here, &route, half, &mut placed);
+    draw_car(&mut gizmos, &chart, here, &at.thefts, &mut placed);
 }
 
-/// Every road the view can reach, and the car's own last and brighter.
-fn draw_roads(
-    gizmos: &mut Gizmos<MapGizmos>,
-    chart: &Chart,
-    view: &MapView,
-    world: &World,
-    on: Option<usize>,
-    half: Vec2,
-    reach: f64,
-) {
-    for (r, route) in world.routes.iter().enumerate() {
-        if Some(r) == on {
-            continue;
-        }
-        if let Some((mid, spread)) = view.plan.get(r) {
-            if mid.angle_between(chart.centre) > spread + reach {
-                continue;
-            }
-        }
-        road(gizmos, chart, &route.line, half, ROAD);
-    }
-    if let Some(r) = on {
-        road(gizmos, chart, &world.routes[r].line, half, HUD);
-    }
-}
-
-/// A settlement is two rings at its tier's size, the port ringed again
-/// in the route's colour, with its label beside it.
+/// Every settlement's label beside it, past its own reach on the map,
+/// and the port ringed in the route's colour while it is small enough
+/// for a ring to say where it is.
 fn draw_towns(
     gizmos: &mut Gizmos<MapGizmos>,
     chart: &Chart,
@@ -522,22 +522,18 @@ fn draw_towns(
     half: Vec2,
     placed: &mut Placed,
 ) {
-    for (i, t) in world.towns.iter().enumerate() {
-        let r = mark_of(t.radius);
-        if let Some(p) = inside(chart, t.dir, half, 40.0) {
-            let iso = Isometry2d::from_translation(p);
-            gizmos.circle_2d(iso, r, HUD);
-            gizmos.circle_2d(iso, r * 0.5, HUD);
-            if i == 0 {
-                gizmos.circle_2d(iso, r + 6.0, ROUTE);
-            }
+    if let Some(port) = world.towns.first() {
+        let r = reach_px(port, chart.scale());
+        if let Some(p) = inside(chart, port.dir, half, 40.0).filter(|_| r < RING_MOST) {
+            gizmos.circle_2d(Isometry2d::from_translation(p), r + RING_GAP, ROUTE);
         }
     }
     for (mut tf, mut seen, label) in &mut placed.labels {
         let t = &world.towns[label.0];
         match inside(chart, t.dir, half, 40.0) {
             Some(p) => {
-                tf.translation = Vec3::new(p.x + mark_of(t.radius) + 6.0, p.y, 2.0);
+                let off = reach_px(t, chart.scale()).min(RING_MOST) + RING_GAP * 2.0;
+                tf.translation = Vec3::new(p.x + off, p.y, 2.0);
                 *seen = Visibility::Inherited;
             }
             None => *seen = Visibility::Hidden,
@@ -558,25 +554,36 @@ fn place_pumps(chart: &Chart, pumps: &[DVec3], half: Vec2, placed: &mut Placed) 
     }
 }
 
-/// The legs from here through the markers, and a ring and a number on
-/// each marker.
+/// The route: every leg the plan has, along the roads it takes, and
+/// the markers numbered in the order they were set. A leg the plan has
+/// not caught up with yet (a marker set this frame) is drawn straight,
+/// which is what every leg was before there was a way to find.
 fn draw_route(
     gizmos: &mut Gizmos<MapGizmos>,
     chart: &Chart,
     here: DVec3,
-    markers: &Markers,
+    route: &Planned,
+    half: Vec2,
     placed: &mut Placed,
 ) {
-    let mut legs: Vec<Vec2> = chart.to_px(here).into_iter().collect();
-    legs.extend(markers.0.iter().filter_map(|m| chart.to_px(*m)));
-    if legs.len() > 1 {
-        gizmos.linestrip_2d(legs.iter().copied(), ROUTE);
+    let markers = &*route.markers;
+    match route.legs() {
+        Some(legs) => {
+            for leg in legs {
+                draw_leg(gizmos, chart, &leg.points, half);
+            }
+        }
+        None => {
+            let mut from = here;
+            for m in &markers.0 {
+                dashed(gizmos, chart, from, *m, half);
+                from = *m;
+            }
+        }
     }
     for (mut tf, mut seen, number) in &mut placed.numbers {
         match markers.0.get(number.0).and_then(|m| chart.to_px(*m)) {
             Some(p) => {
-                gizmos.circle_2d(Isometry2d::from_translation(p), 8.0, ROUTE);
-                gizmos.circle_2d(Isometry2d::from_translation(p), 6.5, ROUTE);
                 tf.translation = Vec3::new(p.x, p.y, 3.0);
                 *seen = Visibility::Inherited;
             }
@@ -585,28 +592,111 @@ fn draw_route(
     }
 }
 
-/// The car as an arrow along its own heading in a ring, or the eye as a
-/// dot in one when nobody is at a wheel.
-fn draw_car(gizmos: &mut Gizmos<MapGizmos>, chart: &Chart, here: DVec3, thefts: &Thefts) {
-    let Some(p) = chart.to_px(here) else { return };
-    let iso = Isometry2d::from_translation(p);
-    match thefts.driving() {
-        Some(theft) => {
-            let b = hud::bearing(theft.car.dir, theft.car.fwd).to_radians();
-            let h = Vec2::new(b.sin() as f32, b.cos() as f32);
-            gizmos.arrow_2d(p - h * 9.0, p + h * 11.0, AMBER);
+/// One leg: SOLID in the route's colour wherever it is on tarmac, over
+/// the road it follows, and DASHED across a hop, which is the page's own
+/// mark for a line that follows no road: onto the road from wherever
+/// the car is, across a town between two roads, and off it to a marker.
+fn draw_leg(gizmos: &mut Gizmos<MapGizmos>, chart: &Chart, points: &[(DVec3, bool)], half: Vec2) {
+    let mut k = 0;
+    while k + 1 < points.len() {
+        if !points[k + 1].1 {
+            dashed(gizmos, chart, points[k].0, points[k + 1].0, half);
+            k += 1;
+            continue;
         }
-        None => {
-            gizmos.circle_2d(iso, 5.0, AMBER);
+        let mut j = k + 1;
+        while j + 1 < points.len() && points[j + 1].1 {
+            j += 1;
+        }
+        let run: Vec<DVec3> = points[k..=j].iter().map(|p| p.0).collect();
+        road(gizmos, chart, &run, half, ROUTE);
+        k = j;
+    }
+}
+
+/// A dashed line between two places on the chart, cut to the window so
+/// a leg across a sea costs its visible dashes and no more.
+fn dashed(gizmos: &mut Gizmos<MapGizmos>, chart: &Chart, a: DVec3, b: DVec3, half: Vec2) {
+    let (Some(p), Some(q)) = (chart.to_px(a), chart.to_px(b)) else {
+        return;
+    };
+    let Some((p, q)) = clip(p, q, half + Vec2::splat(4.0)) else {
+        return;
+    };
+    let long = p.distance(q);
+    if long <= 0.0 {
+        return;
+    }
+    let along = (q - p) / long;
+    let mut t = 0.0;
+    while t < long {
+        let end = (t + DASH).min(long);
+        gizmos.line_2d(p + along * t, p + along * end, ROUTE);
+        t += DASH + DASH_GAP;
+    }
+}
+
+/// A segment cut to a box about the middle of the window, or nothing
+/// when none of it is inside: Liang and Barsky's clip.
+fn clip(p: Vec2, q: Vec2, half: Vec2) -> Option<(Vec2, Vec2)> {
+    let d = q - p;
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (dp, lo, hi) in [
+        (d.x, p.x + half.x, half.x - p.x),
+        (d.y, p.y + half.y, half.y - p.y),
+    ] {
+        for (num, den) in [(lo, -dp), (hi, dp)] {
+            if den == 0.0 {
+                if num < 0.0 {
+                    return None;
+                }
+            } else {
+                let r = num / den;
+                if den < 0.0 {
+                    t0 = t0.max(r);
+                } else {
+                    t1 = t1.min(r);
+                }
+            }
         }
     }
-    gizmos.circle_2d(iso, 14.0, AMBER);
+    (t0 <= t1).then(|| (p + d * t0, p + d * t1))
+}
+
+/// The car as the page's filled arrow along its own heading, or the
+/// eye as a ring with a dot in it when nobody is at a wheel.
+fn draw_car(
+    gizmos: &mut Gizmos<MapGizmos>,
+    chart: &Chart,
+    here: DVec3,
+    thefts: &Thefts,
+    placed: &mut Placed,
+) {
+    let p = chart.to_px(here);
+    let driving = thefts.driving();
+    for (mut tf, mut seen, _) in &mut placed.car {
+        match (p, driving) {
+            (Some(p), Some(theft)) => {
+                // A bearing is clockwise from north and the screen turns
+                // anticlockwise, so the arrow is turned by the negative.
+                let b = hud::bearing(theft.car.dir, theft.car.fwd).to_radians() as f32;
+                *tf = Transform::from_xyz(p.x, p.y, 4.0).with_rotation(Quat::from_rotation_z(-b));
+                *seen = Visibility::Inherited;
+            }
+            _ => *seen = Visibility::Hidden,
+        }
+    }
+    if let (Some(p), None) = (p, driving) {
+        let iso = Isometry2d::from_translation(p);
+        gizmos.circle_2d(iso, 5.0, AMBER);
+        gizmos.circle_2d(iso, 10.0, AMBER);
+    }
 }
 
 /// One road's line, at a stride that leaves about a point a pixel and a
 /// half, only where either end is in the window.
 fn road(gizmos: &mut Gizmos<MapGizmos>, chart: &Chart, line: &[DVec3], half: Vec2, colour: Color) {
-    let stride = ((1.5 * chart.scale / PIECE) as usize).max(1);
+    let stride = ((1.5 * chart.scale() / PIECE) as usize).max(1);
     let slack = half + Vec2::splat(4.0);
     let mut prev: Option<Vec2> = None;
     let last = line.len().saturating_sub(1);

@@ -15,29 +15,34 @@
 //! beside the ground: driving to the next town arrived at an empty
 //! field.
 
-use crate::city::{spawn_town, Glazing};
+use super::detail::{self, Kit, Raise};
 use crate::stream::Frame;
-use crate::world::{raise_one, Fabric, Raised, World};
+use crate::world::{Fabric, World};
 use crate::{Eye, Ground};
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use bevy::tasks::{futures::check_ready, Task};
 use freeport_core::town::Town;
+use std::sync::Arc;
 
 /// How far the eye moves before the built set is looked at again,
 /// metres. Well under the gap between two settlements, which is the
 /// lamps' own hysteresis rule at the other scale.
 const RECHECK: f64 = 250.0;
 
-/// The buildings' library, loaded once. Reading it per town would be a
-/// file read every time a village came over the horizon.
+/// The buildings' library, loaded once and shared with the workers that
+/// build a town's tiles. Reading it per town would be a file read every
+/// time a village came over the horizon.
 #[derive(Resource)]
-pub struct Library(pub crate::buildings::Library);
+pub struct Library(pub Arc<crate::buildings::Library>);
 
 /// What the town streamer is in the middle of.
 #[derive(Resource, Default)]
 pub struct Building {
     /// Where the eye was when the wanted set was last worked out.
     looked: Option<DVec3>,
+    /// The town being raised on a worker, if one is.
+    raising: Option<(usize, Task<Raise>)>,
 }
 
 /// The planned towns nearest a point, at most `count` of them and none
@@ -67,9 +72,10 @@ pub fn wanted(towns: &[Town], radius: f64, at: DVec3, count: usize, reach: f64) 
     out
 }
 
-/// Build one wanted town that is not standing, or drop one standing town
-/// that is not wanted. ONE a frame, because raising a town is tens of
-/// milliseconds and a frame that raised eight is not a frame.
+/// Raise one wanted town that is not standing, or drop one standing town
+/// that is not wanted. ONE at a time, and the raising on a worker,
+/// because a city of a thousand blocks is not a thing a frame does: the
+/// port raised on the main thread was 601 ms of one frame.
 pub fn stream_towns(
     mut commands: Commands,
     here: Place,
@@ -77,6 +83,31 @@ pub fn stream_towns(
     mut fabric: ResMut<Fabric>,
     mut state: ResMut<Building>,
 ) {
+    let world: &Arc<World> = &here.ground.0;
+    if let Some((k, task)) = state.raising.as_mut() {
+        let k = *k;
+        let Some(raise) = check_ready(task) else {
+            return;
+        };
+        state.raising = None;
+        let raised = detail::stand(
+            &mut commands,
+            &mut kit,
+            &here.frame,
+            here.ground.1,
+            k,
+            raise,
+        );
+        let town = &world.towns[k];
+        info!(
+            "town {k} built {:.0} m off: {} buildings and {} pieces of street in {} tiles",
+            town.dir.angle_between(here.eye.0 .0 - here.ground.1) * world.planet.radius,
+            town.lots.len(),
+            town.pieces.len(),
+            raised.tiles.len(),
+        );
+        fabric.towns.push(raised);
+    }
     let at = here.eye.0 .0 - here.ground.1;
     if state
         .looked
@@ -84,7 +115,6 @@ pub fn stream_towns(
     {
         return;
     }
-    let world: &World = &here.ground.0;
     let want = wanted(
         &world.towns,
         world.planet.radius,
@@ -93,8 +123,8 @@ pub fn stream_towns(
         crate::TOWNS_REACH,
     );
     let have = fabric.standing();
-    // Drop FIRST, so a swap never holds one town's triangles over the
-    // count while it is in flight.
+    // Drop FIRST, so a swap never holds one town over the count while it
+    // is in flight.
     if let Some(&k) = have.iter().find(|k| !want.contains(k)) {
         if let Some(slot) = fabric.towns.iter().position(|t| t.town == k) {
             commands.entity(fabric.towns[slot].entity).despawn();
@@ -105,44 +135,11 @@ pub fn stream_towns(
     }
     let Some(&k) = want.iter().find(|k| !have.contains(k)) else {
         state.looked = Some(at);
+        fabric.towns_settled = true;
         return;
     };
-    let Some(town) = world.towns.get(k) else {
-        return;
-    };
-    let lifted = raise_one(&kit.library.0, town);
-    let bounds =
-        lifted
-            .blocks
-            .iter()
-            .fold((DVec3::INFINITY, DVec3::NEG_INFINITY), |(lo, hi), b| {
-                let (blo, bhi) = b.bounds();
-                (lo.min(blo), hi.max(bhi))
-            });
-    let entity = spawn_town(
-        &mut commands,
-        &mut kit.meshes,
-        &kit.material.ground,
-        &here.frame,
-        world.sea.radius,
-        lifted.mesh,
-        &kit.glass,
-    );
-    info!(
-        "town {k} built {:.0} m off: {} buildings, {} pieces of street, {} boxes, {} lamps",
-        town.dir.angle_between(at) * world.planet.radius,
-        lifted.buildings,
-        lifted.pieces,
-        lifted.blocks.len(),
-        lifted.lamps.len(),
-    );
-    fabric.towns.push(Raised {
-        town: k,
-        blocks: lifted.blocks,
-        bounds,
-        lamps: lifted.lamps,
-        entity,
-    });
+    fabric.bypass_change_detection().towns_settled = false;
+    state.raising = Some((k, detail::raise(world.clone(), kit.library.0.clone(), k)));
 }
 
 /// Where the world is: the eye, the body under it and the render frame.
@@ -151,17 +148,6 @@ pub struct Place<'w> {
     eye: Res<'w, Eye>,
     ground: Res<'w, Ground>,
     frame: Res<'w, Frame>,
-}
-
-/// What a town is raised WITH: the building library, the materials and
-/// the mesh store. One thing, because a system that builds a town is not
-/// a system with eight arguments.
-#[derive(bevy::ecs::system::SystemParam)]
-pub struct Kit<'w> {
-    library: Res<'w, Library>,
-    glass: Res<'w, Glazing>,
-    material: Res<'w, crate::terrain::Ground3d>,
-    meshes: ResMut<'w, Assets<Mesh>>,
 }
 
 #[cfg(test)]

@@ -34,6 +34,7 @@ mod buildings;
 mod city;
 mod clock;
 mod compute;
+mod cull;
 mod distant;
 mod drive;
 mod flight_bench;
@@ -49,6 +50,8 @@ mod planets;
 mod ram;
 mod render_probe;
 mod roads;
+mod route;
+mod shot;
 mod sky;
 mod status;
 mod stream;
@@ -68,7 +71,6 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::math::DVec3;
 use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use drive::{aim_drive, board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
@@ -143,7 +145,17 @@ const TOWNS: usize = 160;
 /// ground it covers: 170 m becomes 537 and a town of 176 lots becomes
 /// one of 1,580. What that costs is the built set, because a town is
 /// its own triangles and `TOWNS_BUILT` of them are standing at once.
-const TOWN_RADIUS: f64 = 537.0;
+///
+/// And THREE TIMES that again, which is the owner's second ask ("why is
+/// the city so small?"), and it took two things this constant could not
+/// buy on its own. A city is drawn a BLOCK at a time now, the far ones
+/// as solid blocks (`city::tiles`), so nine times the buildings is not
+/// nine times the triangles; and its ground is GRADED to the country
+/// rather than levelled to one height (`town::Grade`), because one flat
+/// pad six and a half kilometres across is not a thing this planet has:
+/// of 240 land candidates the median fall across that outline is 282 m,
+/// and not one falls under the fifteen a site may cut.
+const TOWN_RADIUS: f64 = 1_611.0;
 
 /// How many of the planned towns are BUILT, nearest to where the world
 /// starts first.
@@ -207,6 +219,10 @@ fn main() {
         world::bake_atlas(&args);
         return;
     }
+    if let Some(path) = args.map_png.clone() {
+        map::draw_headless(&args, &path);
+        return;
+    }
     let lod_debug = lod_debug::LodDebug {
         enabled: args.lod_wire,
         frozen: false,
@@ -236,6 +252,7 @@ fn main() {
         distant::DistantPlugin,
         WaterPlugin,
         sky::SkyPlugin,
+        cull::CullPlugin,
     ))
     .insert_resource(WireframeConfig {
         global: args.wire && !args.lod_wire,
@@ -261,6 +278,7 @@ fn main() {
     .init_resource::<flight_bench::Benchmark>()
     .init_resource::<map::MapView>()
     .init_resource::<map::Markers>()
+    .init_resource::<route::Plan>()
     .init_gizmo_group::<map::MapGizmos>()
     .add_systems(
         Startup,
@@ -270,6 +288,7 @@ fn main() {
             hud::spawn_hud,
             map::spawn_map,
             flight_bench::setup,
+            cull::cull_views,
         )
             .chain(),
     )
@@ -278,7 +297,14 @@ fn main() {
         flight_bench::clear_input.after(bevy::input::InputSystems),
     )
     .add_systems(Startup, lod_debug::spawn_legend)
-    .add_systems(Last, flight_bench::after_update);
+    .add_systems(
+        PostUpdate,
+        flight_bench::before_post.before(bevy::transform::TransformSystems::Propagate),
+    )
+    .add_systems(
+        Last,
+        (flight_bench::after_update, flight_bench::count_views),
+    );
     tick(&mut app);
     app.run();
 }
@@ -316,8 +342,7 @@ fn tick(app: &mut App) {
                     planets::activate,
                     rebase_origin,
                     planet_view::recentre,
-                    city::update_lod,
-                    city::stream::stream_towns,
+                    (city::stream::stream_towns, city::detail::stream_tiles).chain(),
                     roads::stream_roads,
                     stream,
                     flight_bench::after_stream,
@@ -350,7 +375,9 @@ fn tick(app: &mut App) {
                     (
                         map::toggle_map,
                         map::work_map,
-                        map::sea_layer,
+                        route::plan_route,
+                        map::draw_relief,
+                        map::place_relief,
                         map::draw_map,
                         map::show_route,
                         map::press_clear,
@@ -358,7 +385,7 @@ fn tick(app: &mut App) {
                         .chain(),
                     status::show_status,
                     lod_debug::apply,
-                    take_shot,
+                    shot::take_shot,
                     flight_bench::finish,
                     hold_frame,
                 )
@@ -470,13 +497,14 @@ fn spawn_world(
     traffic::turn_out(&mut commands, 0, &world, SEED, &mut meshes, &mut standard);
     // The towns are BUILT by `city::stream`, one at a time, following
     // the eye. Nothing is raised here.
-    commands.insert_resource(city::stream::Library(buildings::Library::load()));
+    commands.insert_resource(city::stream::Library(Arc::new(buildings::Library::load())));
+    let world = Arc::new(world);
     say_roads(&mut commands, &world);
     commands.insert_resource(city::Glazing::new(&mut standard));
     commands.insert_resource(kit);
     commands.init_resource::<world::Fabric>();
     commands.init_resource::<city::stream::Building>();
-    let mut planets = planets::Planets::load(Arc::new(world));
+    let mut planets = planets::Planets::load(world);
     planets.bodies[0].material = material;
     planets.bodies[0].water = sheet;
     planet_view::spawn(
@@ -512,11 +540,28 @@ fn spawn_world(
     commands.insert_resource(planets);
 }
 
+/// How the ground and the roads came out: whether the terrain a coarse
+/// chunk draws covers the tarmac, how deep a town cuts at its edge, and
+/// the roads' own census. Measurements for the log, off the frame.
+fn measure_ground(world: &World) {
+    if let Some((worst, median, roads)) = roads::ground_over_tarmac(world) {
+        info!(
+            "the ground a coarse chunk draws stands {worst:.2} m over the tarmac of {roads} roads at its worst and {median:.2} m at its median"
+        );
+    }
+    let (deep, steep, mean) = city::worst_cut(world);
+    info!(
+        "a town CUTS up to {deep:.0} m at its own edge ({mean:.0} m on the mean), which its skirt ramps at up to {:.0}%",
+        steep * 100.0
+    );
+    roads::report(world);
+}
+
 /// The body's road network, and a line saying how much tarmac there is.
 /// Every stretch of it is known from the first frame and the ones near
 /// the eye are laid as it moves, which is `city::stream`'s own rule for
 /// a town.
-fn say_roads(commands: &mut Commands, world: &World) {
+fn say_roads(commands: &mut Commands, world: &Arc<World>) {
     let network = roads::Network::of(world);
     // How far the LIGHTING reaches out of a town, measured on the road
     // out of the port rather than restated from `road::LIT_NEAR`: what
@@ -536,20 +581,14 @@ fn say_roads(commands: &mut Commands, world: &World) {
         )
     });
     // Whether the highway JOINS the city it leaves, which is a number
-    // and not a thing to squint at a picture for.
-    if let Some((worst, median, roads)) = roads::ground_over_tarmac(world) {
-        info!(
-            "the ground a coarse chunk draws stands {worst:.2} m over the tarmac of {roads} roads at its worst and {median:.2} m at its median"
-        );
-    }
-    let (deep, steep, mean) = city::worst_cut(world);
-    bevy::log::info!(
-        "a town CUTS up to {deep:.0} m at its own edge ({mean:.0} m on the mean), which its skirt ramps at up to {:.0}%",
-        steep * 100.0
-    );
-    roads::report(world);
+    // and not a thing to squint at a picture for. On a thread of its own,
+    // because it is log lines and nothing waits on them: in the frame it
+    // was two minutes of every launch before cities grew, and seven after.
+    let measured = world.clone();
+    std::thread::spawn(move || measure_ground(&measured));
+    let (nodes, steps) = network.graph().size();
     info!(
-        "{} roads are {} stretches of tarmac with {} gas stations on them; the ones within {:.0} km of the eye are laid{}",
+        "{} roads are {} stretches of tarmac with {} gas stations on them, and a graph of {nodes} waypoints and {steps} steps to route over; the ones within {:.0} km of the eye are laid{}",
         world.roads.len(),
         network.len(),
         network.pumps(),
@@ -811,71 +850,4 @@ fn hold_frame(args: Res<Args>, mut due: Local<Option<Instant>>) {
         _ => now + frame,
     };
     *due = Some(next);
-}
-
-/// With `--shot`, save the frame the arguments asked for once the streamer
-/// has settled (or ten times as many frames on), and leave a few frames
-/// later, once the write has had its chance.
-fn take_shot(
-    mut commands: Commands,
-    args: Res<Args>,
-    streamer: Option<Res<Streamer>>,
-    mut shot: Local<ShotState>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    let Some(path) = &args.shot else {
-        return;
-    };
-    shot.frame += 1;
-    let now = Instant::now();
-    if let Some(last) = shot.last.replace(now) {
-        shot.times.push((now - last).as_secs_f64() * 1000.0);
-    }
-    // The picture waits for the ground: every chunk the rings want drawn
-    // once, or ten times the frames asked for, whichever comes first.
-    let ready = match &streamer {
-        Some(s) => s.idle() || shot.frame >= args.frames * 10,
-        None => true,
-    };
-    if shot.taken.is_none() && shot.frame >= args.frames && ready {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path.clone()));
-        shot.taken = Some(shot.frame);
-        shot.save_metrics(path, streamer.as_deref());
-    }
-    if shot.taken.is_some_and(|t| shot.frame >= t + 12) {
-        exit.write(AppExit::Success);
-    }
-}
-
-#[derive(Default)]
-struct ShotState {
-    frame: u32,
-    taken: Option<u32>,
-    last: Option<Instant>,
-    times: Vec<f64>,
-}
-
-impl ShotState {
-    fn save_metrics(&self, path: &str, streamer: Option<&Streamer>) {
-        let mut times = self.times.clone();
-        times.sort_by(f64::total_cmp);
-        let percentile = |p: f64| {
-            times
-                .get(((times.len().saturating_sub(1)) as f64 * p) as usize)
-                .copied()
-                .unwrap_or(0.0)
-        };
-        let value = serde_json::json!({
-            "frames": self.frame, "frame_p50_ms": percentile(0.5), "frame_p95_ms": percentile(0.95),
-            "frame_max_ms": times.last(), "terrain": streamer.map(Streamer::measurement),
-        });
-        let destination = std::path::Path::new(path).with_extension("metrics.json");
-        if let Ok(bytes) = serde_json::to_vec_pretty(&value) {
-            if let Err(e) = std::fs::write(destination, bytes) {
-                warn!("could not write screenshot metrics: {e}");
-            }
-        }
-    }
 }
