@@ -2466,10 +2466,11 @@ Three answers, each asked of the one thing it can see:
   frame's depth pyramid proves hidden is dropped in the mesh
   preprocessing compute pass and never reaches the vertex stage. That
   is the compute shader this wanted, and it is Bevy's rather than a
-  second one beside it. From the street it takes the main pass from
-  3.09 to 2.86 million vertices, which is modest and honest: a street
-  is walled in by the tiles nearest the eye, and those are the ones it
-  cannot cull.
+  second one beside it. From the street it takes the depth prepass from
+  3.09 to 2.85 million vertices, which is modest and honest: a tile is
+  one mesh 48.5 m across and is culled only when ALL of its bounds are
+  hidden, and a street is walled in by the tiles nearest the eye, which
+  are the ones it cannot cull.
 - **NOT on the sun.** Bevy 0.18 takes the same component on a
   directional light and culls each cascade against its own last shadow
   map, and on this build and this driver every cascade came back at
@@ -2486,10 +2487,14 @@ Three answers, each asked of the one thing it can see:
   every corner on one point, so the sun draws a box to the eaves and
   the camera draws nothing. From eighty metres a tile's shadow is a
   footprint and an eave, and those are exactly what the block is
-  (`model::massing`, off the model's own solids). What it costs is a
+  (`model::massing`, off the model's own solids). The far cascade goes
+  from **2.42 to 0.77 million vertices**, the four together from 3.72
+  to 1.64, and their GPU time from 488 ms to 281. What it costs is a
   window's own reveal: a recessed pane past eighty metres sits inside
   the block's face and is shaded as if the wall had no opening, which
-  at that range is under a pixel.
+  at that range is under a pixel; and the proxies' own corners, about
+  190,000 of them, still pass through the main pass's vertex stage on
+  the way to being collapsed.
 - **The first cut of that cast NOTHING, and the numbers said it was a
   triumph.** It put the block on a render layer only the sun sees, and
   the benchmark read a far cascade of 0.51 million vertices against
@@ -2507,12 +2512,19 @@ Three answers, each asked of the one thing it can see:
   swap is one frame, the block and the district never drawn together,
   which `a_district_is_one_mesh_only_while_all_its_tiles_are_blocks`
   holds both ways. On the street 134 districts are whole and the main
-  view is handed **1,159 meshes against 2,222**, 642 of them a town's.
-  It costs mesh memory, because a tile keeps its own block for when the
-  district splits: the allocator's slabs went from 480 MB to 558.
+  view is handed **1,481 meshes against 2,222**, 963 of them a town's
+  and 322 of those proxies. It costs mesh memory, because a tile keeps
+  its own block for when the district splits: the allocator's slabs
+  went from 480 MB to 558.
 
-Both switches are `render.json` booleans (`occlusion_culling`,
-`shadow_proxies`), so the A/B is one line.
+Measured together on the same route: **vertex invocations 10.08
+million a frame against 7.70, and a frame of 2,696 ms against 2,923**
+on lavapipe, where the main pass's 784,000 fragments of the terrain
+shader are two thirds of a frame and no culling touches them. What is
+left in the main pass is the town: the camera is handed 912,000 of the
+town's triangles from the street, of the 1.55 million its tiles are
+drawn with. Both switches are `render.json` booleans
+(`occlusion_culling`, `shadow_proxies`), so the A/B is one line.
 
 ## A city is BLOCKS of four by four lots, and a settlement has a TIER
 
