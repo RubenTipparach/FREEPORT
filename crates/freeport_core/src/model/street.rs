@@ -159,6 +159,84 @@ pub fn street(piece: &Piece) -> Model {
     }
 }
 
+/// A piece of street at a GRADE of detail, the same ladder a building's
+/// own bakes are on: the whole cross section at the two nearest, then
+/// FLAT, then one SLAB.
+///
+/// A street is laid in pieces a few metres long, and each is thirty two
+/// triangles of kerbs, markings and pavement ends: a town of seven
+/// thousand of them is a quarter of a million triangles of paving,
+/// which is more than its buildings at their own farthest bake. Past a
+/// couple of hundred metres a kerb's twelve centimetres is under a
+/// pixel and a dash of paint is under a tenth of one, so what is left
+/// is the carriageway and the pavement tops (`flat`), and past a
+/// kilometre one quad over the whole piece (`slab`), which is what a
+/// street IS from there: a strip of tarmac through the blocks.
+///
+/// Nothing at a far grade stops a body. What a body is stopped by is
+/// built from the nearest grade and only where a body can reach it.
+pub fn street_graded(piece: &Piece, grade: usize) -> Model {
+    match grade {
+        0 | 1 => street(piece),
+        2 => flat(piece),
+        _ => slab(piece),
+    }
+}
+
+/// A piece with its kerbs and paint taken off: the carriageway at its
+/// own lift and the pavement's tops at theirs, and no sides to either.
+fn flat(piece: &Piece) -> Model {
+    let mut m = Model::new();
+    let top = LIFT + KERB;
+    if piece.square() {
+        let h = DVec2::new(piece.w, piece.d) * 0.5;
+        panel(&mut m, -h, h, top, CONCRETE);
+        return m;
+    }
+    if piece.run() {
+        let half = (if piece.northerly() { piece.d } else { piece.w }) * 0.5;
+        for &(c0, c1) in &BANDS {
+            let (lo, hi) = if piece.northerly() {
+                (DVec2::new(c0, -half), DVec2::new(c1, half))
+            } else {
+                (DVec2::new(-half, c0), DVec2::new(half, c1))
+            };
+            let road = c0 < 0.0 && c1 > 0.0;
+            let (up, material) = if road {
+                (LIFT, STREET)
+            } else {
+                (top, CONCRETE)
+            };
+            panel(&mut m, lo, hi, up, material);
+        }
+        return m;
+    }
+    for (bx, &(x0, x1)) in BANDS.iter().enumerate() {
+        for (bz, &(z0, z1)) in BANDS.iter().enumerate() {
+            let (up, material) = if paved(piece.arms, bx, bz) {
+                (LIFT, STREET)
+            } else {
+                (top, CONCRETE)
+            };
+            panel(&mut m, DVec2::new(x0, z0), DVec2::new(x1, z1), up, material);
+        }
+    }
+    m
+}
+
+/// A piece as ONE quad over the whole of it, in tarmac, or in paving for
+/// the square.
+fn slab(piece: &Piece) -> Model {
+    let mut m = Model::new();
+    let h = DVec2::new(piece.w, piece.d) * 0.5;
+    if piece.square() {
+        panel(&mut m, -h, h, LIFT + KERB, CONCRETE);
+    } else {
+        panel(&mut m, -h, h, LIFT, STREET);
+    }
+    m
+}
+
 /// How wide the plinth in the middle of a square is and how high it
 /// stands, metres, and how far in from the square's own corners its
 /// four lamps stand.

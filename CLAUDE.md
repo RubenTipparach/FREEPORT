@@ -11,7 +11,9 @@ shader, with f64 crossings and dual-contouring LOD seams retained on CPU. Mesh
 conversion runs on workers and asset installation has a real frame budget. Rings
 adapt to altitude and wait for replacement coverage when changing levels.
 Buildings are authored by headless Blender with editable Exact Boolean cutters,
-then baked into static meshes, collision boxes and three visual LODs. Windows
+then baked into static meshes, collision boxes and three visual LODs, and past
+those a building is a solid block drawn per city block (see "A town is its
+BLOCKS" below). Windows
 have actual openings and transparent glazing. The parametric source is
 `assets/config/buildings.json`; `tools/bake_buildings.py` regenerates the library.
 `docs/buildings-and-streaming.md` describes this workflow and supersedes the older
@@ -1794,14 +1796,66 @@ each of eighteen bands: flat to 2.72 m out and 0.172 m up from 2.95 to
 A pavement's slab is SUNK 15 cm into the ground, because an underside
 lying exactly on that plane would fleck along its whole length.
 
-**One mesh a town, and eight towns are eight draws.** `model::fabric`
-welds every lot's model and every piece of street into one mesh in the
-TOWN's own frame, each carried there from its own lot's frame in `f64` and
-then cast: a town is eighty metres across, so an `f32` in its frame holds
-a micron, which is the chunk local rule at a town's scale. The entity is
-placed from the town's world position through the floating origin like a
-chunk, and `rebase_origin` moves it with everything else, which is what
-`Anchored` is.
+**A town is its BLOCKS, and a far block is a SOLID BLOCK.** The owner's
+ask was whole cities of thousands of buildings in one picture, with the
+far ones as solid blocks, and a town drawn as one mesh cannot give it: a
+town at one grade is every building at that grade, and standing in the
+port that is 1,522 buildings at the nearest bake, **2.72 million
+triangles and 551 ms of one frame** to raise. So `city/tiles.rs` cuts a
+town into TILES a block each (`PITCH`, 48.5 m; 326 of them in the port),
+and each tile is drawn at the grade its OWN distance is worth: the
+library's three bakes to `building_lod_detail`, `_near` and `_far` (80,
+250 and 1,200 m) and a solid block past that.
+
+**A block is read OFF THE MODEL** (`model::massing`): the footprint and
+the eaves are the model's own SOLIDS, the walls a body is stopped by,
+and the top is its own mesh, so a variant re-baked taller comes back
+taller at every range with nothing edited. A box to the eaves in the
+building's own skin, a gable where a house has one, a drum of eight
+faces where a tower is round, sunk 40 cm so a coarse chunk far off
+cannot show sky under it. A street at that grade is one quad
+(`street_graded`), and at the grade before it the kerb sides and the
+paint go (`flat`), because a kerb is 12 cm and at 250 m that is under a
+pixel. Measured on the port, a tile at a time and whole: **2,718,442
+triangles at the nearest bake, 1,870,606 at the next, 253,160 at the
+farthest and 32,686 as blocks**, which is 21 a lot against 1,786, and
+building every tile as blocks is **23 ms** against 551.
+
+**Every tile always HAS its blocks, and detail is swapped over them.**
+A town is raised on a WORKER (`detail::raise`: its tiles and every
+tile's blocks), stood in one frame (`detail::stand`), and from then on
+`stream_tiles` asks each tile what its distance wants and puts what is
+missing on `AsyncComputeTaskPool`, nearest first, `building_jobs` (3) at
+a time. A grade lands HIDDEN and the block under it is hidden in the
+same frame, so a tile is never a hole for a frame, which is the
+terrain streamer's own rule. What a tile is DRAWN as and what it STOPS a
+body with are two jobs: a wall is the same wall at every grade and only
+a tile a body can reach needs one, so its boxes and lamps are built
+within `STOPS_NEAR` (180 m) and dropped past `STOPS_FAR` (260), and a
+job for boxes goes before a job for a picture, because walking into a
+wall that is not there yet is worse than a block that is still a block.
+The port is 152,899 boxes whole; standing in it the eight built towns
+hold **30,506**.
+
+**One mesh a TILE, in the town's own frame.** `model::fabric_part` is
+`fabric` over the lots and pieces of one tile, each carried from its own
+lot's frame in `f64` and then cast: a town is a kilometre across, so an
+`f32` in its frame holds a tenth of a millimetre, which is the chunk
+local rule at a town's scale. The town is one parent entity placed from
+its world position through the floating origin like a chunk, the tiles
+are its children with identity transforms and their own bounds, and
+`rebase_origin` moves the parent with everything else, which is what
+`Anchored` is. `a_town_built_in_parts_is_the_town_built_whole` holds
+the tiles to the town to the triangle.
+
+Measured on lavapipe from 650 m up and 1.9 km off the port, the same
+2,435 terrain chunks either side: **554 tiles at 49,698 triangles, a
+median frame of 699 ms against 2,601, a worst of 1,611 against 10,042,
+and the terrain settled in 115.6 s against 419.5**, because the frame
+the streamer drains in is no longer a frame spent drawing every window
+in eight towns. On the port's main street: 13 tiles at the nearest
+bake, 67 at the next, 246 at the farthest and 228 as blocks, 761,998
+triangles for all eight towns.
 
 **A lamp is a light near the eye and a number everywhere else.** Every
 building's lamps are known to the world (2,771 of them on this seed), and
@@ -2131,8 +2185,8 @@ doing it by hand for its own sweep.
 **A town is BUILT when the EYE comes near it**, which is `city::stream`,
 and it was picked once at startup. Every town on the body is planned
 from the first frame: it levels its own ground in the planet's field and
-the chart paints it. What streams is the BUILDINGS, one town built a
-frame and one dropped a frame, which is the rule `stream.rs` keeps for
+the chart paints it. What streams is the BUILDINGS, one town raised on
+a worker at a time and one dropped a frame, which is the rule `stream.rs` keeps for
 the ground and `lamps.rs` for the lights. The owner read the gap off
 two pictures side by side: a chart with a hundred and sixty cities on it
 and ground with nothing standing on it, and driving to the next town
@@ -2151,6 +2205,9 @@ whole reason sites are planned for every town from the start.
 and its place in that town's own list; a crowd and a theft read the
 built set every frame and skip what is not in it. A slot in the built
 list would name a different thing the moment a town went out of range.
+A lamp inside a town is keyed by its TILE and its place in that tile's
+own list (`PER_TILE`, 4,096), because a tile's lamps come and go with
+its boxes and a place in a town wide list would shift under them.
 
 **And a reach bounds the count, which the count cannot bound itself.**
 `TOWNS_REACH` is 200 km: without it the nearest eight are built however
@@ -5122,8 +5179,8 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 222, the core, about 100 s
-cargo test -p freeport_app                        # 61, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 227, the core, about 100 s
+cargo test -p freeport_app                        # 63, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format

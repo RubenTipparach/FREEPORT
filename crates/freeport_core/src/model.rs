@@ -698,21 +698,54 @@ pub fn fabric(town: &Town, radius: f64, seed: u32) -> Fabric {
 pub fn fabric_with(
     town: &Town,
     radius: f64,
+    model: impl FnMut(&crate::town::Lot) -> Model,
+) -> Fabric {
+    let every = Part {
+        lots: &(0..town.lots.len()).collect::<Vec<_>>(),
+        pieces: &(0..town.pieces.len()).collect::<Vec<_>>(),
+        mesh: true,
+        solids: true,
+    };
+    fabric_part(town, radius, &every, model, street)
+}
+
+/// WHICH of a town a fabric is built of, and which half of it: the lots
+/// and the pieces of street by their places in the town's own lists, and
+/// whether the triangles, the boxes and lamps, or both are wanted.
+///
+/// A town is built a TILE at a time, because a city of thousands of
+/// buildings is drawn at the detail each part of it is worth from where
+/// the eye is: a tile far off is drawn and never walked into, and a tile
+/// a body can reach is walked into whatever it is drawn as. The two
+/// halves are asked for apart, so neither pays for the other.
+pub struct Part<'a> {
+    pub lots: &'a [usize],
+    pub pieces: &'a [usize],
+    pub mesh: bool,
+    pub solids: bool,
+}
+
+/// Assemble the part of a town `part` names, each lot drawn by `model`
+/// and each piece of street by `piece`, through the very same lot
+/// transform the whole town is.
+pub fn fabric_part(
+    town: &Town,
+    radius: f64,
+    part: &Part,
     mut model: impl FnMut(&crate::town::Lot) -> Model,
+    mut piece: impl FnMut(&crate::town::Piece) -> Model,
 ) -> Fabric {
     let mut out = Fabric::default();
     let middle = lot_frame(radius, town, 0.0, 0.0);
-    for lot in &town.lots {
+    for lot in part.lots.iter().filter_map(|&k| town.lots.get(k)) {
         // Turned so the door faces the street the lot fronts.
         let frame = lot_frame(radius, town, lot.x, lot.z).turned(lot.yaw);
-        let m = model(lot);
-        weld(&mut out, &m, &frame, &middle);
+        weld(&mut out, &model(lot), &frame, &middle, part);
         out.buildings += 1;
     }
-    for piece in &town.pieces {
-        let frame = lot_frame(radius, town, piece.x, piece.z);
-        let m = street(piece);
-        weld(&mut out, &m, &frame, &middle);
+    for p in part.pieces.iter().filter_map(|&k| town.pieces.get(k)) {
+        let frame = lot_frame(radius, town, p.x, p.z);
+        weld(&mut out, &piece(p), &frame, &middle, part);
         out.pieces += 1;
     }
     out
@@ -720,8 +753,15 @@ pub fn fabric_with(
 
 /// One model welded into a town's fabric: its triangles carried from its
 /// own frame into the town's, in `f64` and then cast, and its boxes and
-/// its lamps carried into the world.
-fn weld(out: &mut Fabric, m: &Model, frame: &Frame, middle: &Frame) {
+/// its lamps carried into the world, as far as `part` asks for each.
+fn weld(out: &mut Fabric, m: &Model, frame: &Frame, middle: &Frame, part: &Part) {
+    if part.solids {
+        out.blocks.extend(m.blocks(frame));
+        out.lamps.extend(m.lights(frame));
+    }
+    if !part.mesh {
+        return;
+    }
     let base = out.mesh.positions.len() as u32;
     // A direction from one frame to the other: out through the lot's axes
     // and back in through the town's, which is a rotation and never the
@@ -742,13 +782,15 @@ fn weld(out: &mut Fabric, m: &Model, frame: &Frame, middle: &Frame) {
         .indices
         .extend(m.mesh.indices.iter().map(|i| i + base));
     out.mesh.materials.extend_from_slice(&m.mesh.materials);
-    out.blocks.extend(m.blocks(frame));
-    out.lamps.extend(m.lights(frame));
 }
 
 /// A piece of STREET as a model: a run, a crossing or the square.
 mod street;
-pub use street::street;
+pub use street::{street, street_graded};
+
+/// A building as a solid block, for the ranges its detail is not worth.
+mod massing;
+pub use massing::massing;
 
 #[cfg(test)]
 mod tests;

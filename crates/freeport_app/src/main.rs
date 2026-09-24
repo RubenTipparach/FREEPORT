@@ -50,6 +50,7 @@ mod ram;
 mod render_probe;
 mod roads;
 mod route;
+mod shot;
 mod sky;
 mod status;
 mod stream;
@@ -69,7 +70,6 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::math::DVec3;
 use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use drive::{aim_drive, board, drive_car, show_cars, Thefts};
 use fly::{fly, FlightSettings, Fly};
@@ -322,8 +322,7 @@ fn tick(app: &mut App) {
                     planets::activate,
                     rebase_origin,
                     planet_view::recentre,
-                    city::update_lod,
-                    city::stream::stream_towns,
+                    (city::stream::stream_towns, city::detail::stream_tiles).chain(),
                     roads::stream_roads,
                     stream,
                     flight_bench::after_stream,
@@ -366,7 +365,7 @@ fn tick(app: &mut App) {
                         .chain(),
                     status::show_status,
                     lod_debug::apply,
-                    take_shot,
+                    shot::take_shot,
                     flight_bench::finish,
                     hold_frame,
                 )
@@ -478,7 +477,7 @@ fn spawn_world(
     traffic::turn_out(&mut commands, 0, &world, SEED, &mut meshes, &mut standard);
     // The towns are BUILT by `city::stream`, one at a time, following
     // the eye. Nothing is raised here.
-    commands.insert_resource(city::stream::Library(buildings::Library::load()));
+    commands.insert_resource(city::stream::Library(Arc::new(buildings::Library::load())));
     say_roads(&mut commands, &world);
     commands.insert_resource(city::Glazing::new(&mut standard));
     commands.insert_resource(kit);
@@ -820,74 +819,4 @@ fn hold_frame(args: Res<Args>, mut due: Local<Option<Instant>>) {
         _ => now + frame,
     };
     *due = Some(next);
-}
-
-/// With `--shot`, save the frame the arguments asked for once the streamer
-/// has settled (or ten times as many frames on), and leave a few frames
-/// later, once the write has had its chance.
-fn take_shot(
-    mut commands: Commands,
-    args: Res<Args>,
-    streamer: Option<Res<Streamer>>,
-    map: (Res<map::MapView>, Res<map::Relief>),
-    mut shot: Local<ShotState>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    let Some(path) = &args.shot else {
-        return;
-    };
-    shot.frame += 1;
-    let now = Instant::now();
-    if let Some(last) = shot.last.replace(now) {
-        shot.times.push((now - last).as_secs_f64() * 1000.0);
-    }
-    // The picture waits for the ground: every chunk the rings want drawn
-    // once, or ten times the frames asked for, whichever comes first.
-    // And a map open over it waits for its own picture, which is drawn
-    // on a thread and lands a few frames after the view is settled.
-    let ready = match &streamer {
-        Some(s) => s.idle() || shot.frame >= args.frames * 10,
-        None => true,
-    } && (map::relief_ready(&map.0, &map.1) || shot.frame >= args.frames * 10);
-    if shot.taken.is_none() && shot.frame >= args.frames && ready {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path.clone()));
-        shot.taken = Some(shot.frame);
-        shot.save_metrics(path, streamer.as_deref());
-    }
-    if shot.taken.is_some_and(|t| shot.frame >= t + 12) {
-        exit.write(AppExit::Success);
-    }
-}
-
-#[derive(Default)]
-struct ShotState {
-    frame: u32,
-    taken: Option<u32>,
-    last: Option<Instant>,
-    times: Vec<f64>,
-}
-
-impl ShotState {
-    fn save_metrics(&self, path: &str, streamer: Option<&Streamer>) {
-        let mut times = self.times.clone();
-        times.sort_by(f64::total_cmp);
-        let percentile = |p: f64| {
-            times
-                .get(((times.len().saturating_sub(1)) as f64 * p) as usize)
-                .copied()
-                .unwrap_or(0.0)
-        };
-        let value = serde_json::json!({
-            "frames": self.frame, "frame_p50_ms": percentile(0.5), "frame_p95_ms": percentile(0.95),
-            "frame_max_ms": times.last(), "terrain": streamer.map(Streamer::measurement),
-        });
-        let destination = std::path::Path::new(path).with_extension("metrics.json");
-        if let Ok(bytes) = serde_json::to_vec_pretty(&value) {
-            if let Err(e) = std::fs::write(destination, bytes) {
-                warn!("could not write screenshot metrics: {e}");
-            }
-        }
-    }
 }

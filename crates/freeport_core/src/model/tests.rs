@@ -671,3 +671,137 @@ fn a_walls_skin_is_on_the_wall_and_not_on_the_floor() {
     assert!(wall >= 4, "{wall} timber boxes is not four walls");
     assert_eq!(floor, 1, "{floor} concrete boxes in a timber house");
 }
+
+/// A town built in PARTS is the town built whole: every lot and every
+/// piece in exactly one part gives the same triangles, boxes and lamps,
+/// and a part asked for only its drawing or only its boxes carries
+/// nothing of the other.
+#[test]
+fn a_town_built_in_parts_is_the_town_built_whole() {
+    let planet = Planet {
+        radius: 4_000.0,
+        relief: 24.0,
+        lumps: 12.0,
+        octaves: 9,
+        overhang: 0.0,
+        ledge: 0.0,
+        seed: 11,
+        sites: vec![].into(),
+    };
+    let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
+    let town = towns.first().expect("the ball grew no town");
+    let whole = fabric(town, planet.radius, 11);
+    let model = |lot: &town::Lot| {
+        let w = lot.kind.covers() * lot.w;
+        building(lot.kind, w, w, lot.storeys, 11 ^ lot.id)
+    };
+    // Three parts, dealt round, so a part is neither a prefix nor a run.
+    let (mut tris, mut blocks, mut lamps) = (0, 0, 0);
+    for k in 0..3 {
+        let lots: Vec<usize> = (0..town.lots.len()).filter(|i| i % 3 == k).collect();
+        let pieces: Vec<usize> = (0..town.pieces.len()).filter(|i| i % 3 == k).collect();
+        let drawn = fabric_part(
+            town,
+            planet.radius,
+            &Part {
+                lots: &lots,
+                pieces: &pieces,
+                mesh: true,
+                solids: false,
+            },
+            model,
+            street,
+        );
+        assert!(drawn.blocks.is_empty() && drawn.lamps.is_empty());
+        let stops = fabric_part(
+            town,
+            planet.radius,
+            &Part {
+                lots: &lots,
+                pieces: &pieces,
+                mesh: false,
+                solids: true,
+            },
+            model,
+            street,
+        );
+        assert!(stops.mesh.indices.is_empty() && stops.mesh.positions.is_empty());
+        tris += drawn.mesh.triangles();
+        blocks += stops.blocks.len();
+        lamps += stops.lamps.len();
+    }
+    assert_eq!(tris, whole.mesh.triangles());
+    assert_eq!(blocks, whole.blocks.len());
+    assert_eq!(lamps, whole.lamps.len());
+}
+
+/// A piece of street at every grade covers the SAME ground, gets cheaper
+/// the further it is drawn from, and stops nothing past the nearest two.
+#[test]
+fn a_street_at_every_grade_covers_its_own_ground_and_gets_cheaper() {
+    let pieces = [
+        Piece {
+            x: 0.0,
+            z: 0.0,
+            w: town::STREET,
+            d: 3.3,
+            arms: 0,
+        },
+        Piece {
+            x: 0.0,
+            z: 0.0,
+            w: 3.3,
+            d: town::STREET,
+            arms: 0,
+        },
+        Piece {
+            x: 0.0,
+            z: 0.0,
+            w: town::STREET,
+            d: town::STREET,
+            arms: arm::NORTH | arm::EAST,
+        },
+    ];
+    // What a piece's top covers seen from straight over it: every face
+    // turned up, projected down.
+    let cover = |m: &Model| -> f64 {
+        m.mesh
+            .indices
+            .chunks(3)
+            .map(|t| {
+                let p: Vec<DVec3> = t
+                    .iter()
+                    .map(|&i| DVec3::from(m.mesh.positions[i as usize].map(f64::from)))
+                    .collect();
+                let n = (p[1] - p[0]).cross(p[2] - p[0]);
+                (n.z > 0.0 && n.z / n.length() > 0.99)
+                    .then_some(n.z * 0.5)
+                    .unwrap_or(0.0)
+            })
+            .sum()
+    };
+    for piece in &pieces {
+        let area = piece.w * piece.d;
+        let mut last = usize::MAX;
+        for grade in 0..4 {
+            let m = street_graded(piece, grade);
+            // The markings lie over the carriageway, so the nearest grades
+            // cover the ground once and the paint again.
+            let covered = cover(&m);
+            assert!(
+                covered >= area - 1e-6,
+                "grade {grade} of {piece:?} covers {covered:.2} of {area:.2} m2"
+            );
+            if grade >= 2 {
+                assert!(
+                    (covered - area).abs() < 1e-6,
+                    "grade {grade} overlaps itself"
+                );
+                assert!(m.solids.is_empty(), "grade {grade} stops a body");
+            }
+            assert!(m.mesh.triangles() <= last, "grade {grade} is dearer");
+            last = m.mesh.triangles();
+        }
+        assert!(street_graded(piece, 3).mesh.triangles() == 2);
+    }
+}

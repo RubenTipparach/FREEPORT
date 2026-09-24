@@ -34,7 +34,13 @@ The bake checks wall manifoldness and positive signed volume, ray-tests every
 window opening and door, and verifies that wall remains below each window.
 LOD0 includes bevels and trim; LOD1 keeps the openings, frames and glass but drops
 bevels and small details; LOD2 keeps the building silhouette and doorway and fills
-subpixel windows. Baked meshes are reused and batched by town. Glass has its own
+subpixel windows. Baked meshes are reused and batched by city block (a tile of
+`PITCH`, 48.5 m). Past the LOD2 distance a block is drawn as SOLID BLOCKS, one box
+per building in its own skin (`model::massing`) and one quad per piece of street,
+which is about 1% of LOD0's triangles. Every tile has this massing from the moment
+its town is raised. Nearer tiles are rebuilt on a worker at their grade and replace
+the massing when ready. Collision boxes and lamps exist only for tiles within
+180 m (dropped past 260 m), again built on a worker. Glass has its own
 transparent material and draw, rather than the opaque terrain shader's window color.
 Missing or invalid libraries produce a warning and use the procedural reference
 models, whose box and pane winding is now corrected.
@@ -90,10 +96,12 @@ The finest grid uses 0.5 m cells, configurable as `terrain_cell_size` or
 follow the contoured surface; cell size is not an exact triangle-edge length.
 
 `assets/config/render.json` controls the mesh installation time/count budgets,
-queue lookahead, worker count, compute batch size, and building LOD distances/hysteresis. Distances are
-metres from the town's bounds in the absolute world frame. Zero selects the default.
+queue lookahead, worker count, compute batch size, building LOD distances/hysteresis
+and the number of building jobs in flight. Distances are metres from each block's own
+bounds, in the town's frame. Zero selects the default.
 The default worker count uses half the available hardware threads and caps terrain workers
-at eight. Building LOD thresholds are 250 and 1,200 metres, with 15% hysteresis.
+at eight. Building LOD thresholds are 80, 250 and 1,200 metres (LOD0 to LOD1, LOD1 to
+LOD2, LOD2 to solid blocks), with 15% hysteresis, and three building jobs run at once.
 
 ## Validation and measurements
 

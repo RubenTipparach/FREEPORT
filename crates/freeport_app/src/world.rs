@@ -12,9 +12,7 @@
 use crate::{Args, LUMPS, RADIUS, RELIEF, SEA, SEED, TOWNS, TOWN_RADIUS};
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use freeport_core::dc::DcMesh;
 use freeport_core::field::{Block, Built, Density, Planet};
-use freeport_core::model;
 use freeport_core::road::{self, Road};
 use freeport_core::town::{self, lot_frame, Frame, Town};
 use freeport_core::walker::Bounds;
@@ -83,8 +81,8 @@ pub(crate) struct Route {
     pub shared: (usize, usize),
 }
 
-/// One BUILT town: the boxes its models were drawn from, the lamps in
-/// them and the entity drawing it.
+/// One BUILT town: the entity it is drawn under, its tiles and what each
+/// of them is drawn and walked into as, and the bound of all of it.
 ///
 /// Per town rather than one flat list with ranges into it, because what
 /// is built STREAMS: a town comes into range as you drive and another
@@ -93,9 +91,16 @@ pub(crate) struct Route {
 pub(crate) struct Raised {
     /// Which of `World::towns` this is, which never moves.
     pub town: usize,
-    pub blocks: Vec<Block>,
+    /// The town's own frame on the planet, which every tile's triangles
+    /// are written in.
+    pub frame: Frame,
+    /// Its tiles, shared with whatever worker is building one of them.
+    pub tiles: Arc<Vec<crate::city::tiles::Tile>>,
+    /// What each tile is drawn as now and what it stops a body with.
+    pub state: Vec<crate::city::detail::TileState>,
+    /// A bound on everything built in it, planet local, so a body far
+    /// from the town never looks at its tiles.
     pub bounds: (DVec3, DVec3),
-    pub lamps: Vec<(DVec3, f64)>,
     pub entity: Entity,
 }
 
@@ -128,6 +133,14 @@ pub(crate) struct Fabric {
     /// The stretches of road standing, which carry lamps of their own on
     /// the approaches to a town.
     pub verges: Vec<Verge>,
+    /// Whether the towns standing are the towns wanted, and how many
+    /// tiles of them are not yet drawn and walked as their distance asks:
+    /// what a picture waits on, since a picture taken while a block is
+    /// still a block is a picture of the streamer and not of the town.
+    pub towns_settled: bool,
+    pub tiles_pending: usize,
+    /// What the towns are drawn with, as the tiles last counted it.
+    pub drawing: crate::city::detail::Drawing,
 }
 
 /// The GROUND and what is BUILT on it: one thing, because what a body
@@ -181,10 +194,13 @@ impl Fabric {
         let mut blocks = Vec::new();
         // The towns' walls and the roads' stations, which are the two
         // things standing on this world that stop a body.
+        let near = |b: &(DVec3, DVec3)| b.0.cmple(hi).all() && b.1.cmpge(lo).all();
         let built = self
             .towns
             .iter()
-            .map(|t| (&t.bounds, &t.blocks))
+            .filter(|t| near(&t.bounds))
+            .flat_map(|t| t.state.iter().filter_map(|s| s.stops.as_ref()))
+            .map(|s| (&s.bounds, &s.blocks))
             .chain(self.verges.iter().map(|v| (&v.bounds, &v.blocks)));
         for (bounds, held) in built {
             if !(bounds.0.cmple(hi).all() && bounds.1.cmpge(lo).all()) {
@@ -203,6 +219,13 @@ impl Fabric {
         }
     }
 
+    /// Whether everything built is what the eye asks for: the towns
+    /// wanted are standing and every tile of them is drawn at its grade
+    /// and carries its boxes where a body can reach it.
+    pub fn settled(&self) -> bool {
+        self.towns_settled && self.tiles_pending == 0
+    }
+
     /// Which planned towns are built, sorted, so a wanted set and a
     /// standing set can be compared.
     pub fn standing(&self) -> Vec<usize> {
@@ -210,14 +233,6 @@ impl Fabric {
         out.sort_unstable();
         out
     }
-}
-
-/// A town's geometry, ready to draw: one mesh in the town's own frame and
-/// the frame it stands in. It is handed to the app at startup and spawned
-/// once, so the workers never carry it.
-pub(crate) struct TownMesh {
-    pub frame: Frame,
-    pub meshes: [DcMesh; 3],
 }
 
 impl World {
@@ -498,38 +513,6 @@ pub(crate) fn build(args: &Args) -> World {
         routes,
         bounds,
         sea: Sea { radius: SEA },
-    }
-}
-
-/// ONE town modelled: its three LODs of mesh in its own frame, and the
-/// boxes and lamps it puts in the world.
-///
-/// A town at a time rather than the whole list, because what is built
-/// STREAMS: raising one is what a frame can afford and raising all of
-/// them is not.
-pub(crate) struct Lifted {
-    pub mesh: TownMesh,
-    pub blocks: Vec<Block>,
-    pub lamps: Vec<(DVec3, f64)>,
-    pub buildings: usize,
-    pub pieces: usize,
-}
-
-pub(crate) fn raise_one(library: &crate::buildings::Library, town: &Town) -> Lifted {
-    let f = model::fabric_with(town, RADIUS, |lot| library.model(lot, 0, SEED));
-    Lifted {
-        mesh: TownMesh {
-            frame: lot_frame(RADIUS, town, 0.0, 0.0),
-            meshes: [
-                f.mesh,
-                model::fabric_with(town, RADIUS, |lot| library.model(lot, 1, SEED)).mesh,
-                model::fabric_with(town, RADIUS, |lot| library.model(lot, 2, SEED)).mesh,
-            ],
-        },
-        blocks: f.blocks,
-        lamps: f.lamps,
-        buildings: f.buildings,
-        pieces: f.pieces,
     }
 }
 

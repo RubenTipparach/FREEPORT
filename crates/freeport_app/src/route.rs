@@ -343,7 +343,7 @@ mod tests {
         // And across it, the tarmac starts again at the point the hop
         // lands on.
         assert_eq!(tarmac_after(&points, 19), 20);
-        assert_eq!(points[21].1, true);
+        assert!(points[21].1);
     }
 
     /// Off the tarmac is measured to the road's LINE, between its points,

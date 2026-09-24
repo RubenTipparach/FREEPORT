@@ -15,7 +15,11 @@ use freeport_core::pos::WorldPos;
 use std::collections::HashMap;
 
 /// How far a lamp is lit from, metres, and how many at most.
-const REACH: f64 = 60.0;
+pub(crate) const REACH: f64 = 60.0;
+/// How many lamps a town's TILE may carry before its index runs into the
+/// next tile's. A tile is one block, sixteen lots at the most, and a
+/// building hangs one lamp over its door and one a storey.
+const PER_TILE: usize = 4096;
 const MOST: usize = 48;
 /// Lumens a lamp gives at full NIGHT: enough to read under this camera's
 /// own daylight exposure. `dim_lamps` is the one writer of it, so how
@@ -31,7 +35,9 @@ pub enum Of {
 }
 
 /// Which lamp a light is: whose it is, the PLANNED town or the road it
-/// belongs to, and its place in that one's own list.
+/// belongs to, and its place in that one's own list: along the whole
+/// road for a road, and its tile's place times `PER_TILE` and its place
+/// in that tile for a town.
 ///
 /// The planned index and not a slot in the built list, because the built
 /// list STREAMS: a town going out of range takes its own entry out of
@@ -58,11 +64,18 @@ pub fn light_lamps(
     }
     *last = Some(eye.0 .0);
     let mut near: Vec<(f64, Lamp, DVec3, f64)> = Vec::new();
+    // A town's lamps are its TILES' own, and only the tiles a body can
+    // reach carry theirs: `city::detail` builds them well past `REACH`.
     for town in &fabric.towns {
-        for (i, (at, reach)) in town.lamps.iter().enumerate() {
-            let d = (*at + ground.1 - eye.0 .0).length();
-            if d < REACH {
-                near.push((d, Lamp(Of::Town, town.town, i), *at, *reach));
+        for (k, stops) in town.state.iter().enumerate() {
+            let Some(stops) = &stops.stops else {
+                continue;
+            };
+            for (i, (at, reach)) in stops.lamps.iter().enumerate() {
+                let d = (*at + ground.1 - eye.0 .0).length();
+                if d < REACH {
+                    near.push((d, Lamp(Of::Town, town.town, k * PER_TILE + i), *at, *reach));
+                }
             }
         }
     }
