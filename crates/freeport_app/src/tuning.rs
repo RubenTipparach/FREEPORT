@@ -20,6 +20,12 @@ pub struct Tuning {
     /// How many tiles of a town may be being built on workers at once.
     pub building_jobs: usize,
     pub lod_hysteresis: f64,
+    /// Whether the GPU culls, for the camera and the sun's cascades, what
+    /// last frame's depth proves is hidden (`cull::cull_views`).
+    pub occlusion_culling: bool,
+    /// Whether a tile drawn past its nearest bake casts its shadow from
+    /// its solid block rather than from its detail (`cull::casts`).
+    pub shadow_proxies: bool,
 }
 
 impl Default for Tuning {
@@ -38,6 +44,8 @@ impl Default for Tuning {
             building_lod_far: 1200.0,
             building_jobs: 3,
             lod_hysteresis: 0.15,
+            occlusion_culling: true,
+            shadow_proxies: true,
         }
     }
 }

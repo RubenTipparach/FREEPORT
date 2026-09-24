@@ -34,6 +34,7 @@ mod buildings;
 mod city;
 mod clock;
 mod compute;
+mod cull;
 mod distant;
 mod drive;
 mod flight_bench;
@@ -286,6 +287,7 @@ fn main() {
             hud::spawn_hud,
             map::spawn_map,
             flight_bench::setup,
+            cull::cull_views,
         )
             .chain(),
     )
@@ -294,7 +296,14 @@ fn main() {
         flight_bench::clear_input.after(bevy::input::InputSystems),
     )
     .add_systems(Startup, lod_debug::spawn_legend)
-    .add_systems(Last, flight_bench::after_update);
+    .add_systems(
+        PostUpdate,
+        flight_bench::before_post.before(bevy::transform::TransformSystems::Propagate),
+    )
+    .add_systems(
+        Last,
+        (flight_bench::after_update, flight_bench::count_views),
+    );
     tick(&mut app);
     app.run();
 }
@@ -681,7 +690,7 @@ fn spawn_light(commands: &mut Commands, sun: DVec3) {
             shadows_enabled: true,
             ..default()
         },
-        bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
+        cull::sun_layers(),
         CascadeShadowConfigBuilder {
             num_cascades: 4,
             first_cascade_far_bound: 12.0,

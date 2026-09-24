@@ -2443,6 +2443,70 @@ highway's own bearing can reach out to the outline and no further
 without a re-bake. What it wants is the bearings of the roads arriving
 at a town handed to `lay`, which the atlas has.
 
+## A big city is CULLED, a far one is DISTRICTS, and a shadow is a BLOCK
+
+The owner flew the 1,815 m port and read it as badly optimised. It is
+10,413 buildings on 2,082 tiles, and the benchmark was taught to say
+where that goes before anything was changed: how many meshes each view
+is handed and how many of them are a town's (`flight_bench::Urban`),
+per pass vertex counts off `--profile-render`, and the update split at
+`PostUpdate` into the game's own systems and the engine's. Measured on
+the port's street, 180 frames on lavapipe: **the main view was handed
+2,222 meshes, 1,704 of them a town's, and the sun's four cascades drew
+3.72 million vertices against the camera's 3.09**. The shadows were
+the bigger half of the town's vertex work, and the far cascade alone
+was 2.42 million of it, because a tile at its second bake is up to a
+hundred thousand triangles and the sun was drawing every one of them
+into a map whose texel is a metre.
+
+Three answers, each asked of the one thing it can see:
+
+- **The camera takes the GPU's own occlusion culling**
+  (`cull::cull_views`, Bevy's two phase `OcclusionCulling`): what last
+  frame's depth pyramid proves hidden is dropped in the mesh
+  preprocessing compute pass and never reaches the vertex stage. That
+  is the compute shader this wanted, and it is Bevy's rather than a
+  second one beside it. From the street it takes the main pass from
+  3.09 to 2.86 million vertices, which is modest and honest: a street
+  is walled in by the tiles nearest the eye, and those are the ones it
+  cannot cull.
+- **NOT on the sun.** Bevy 0.18 takes the same component on a
+  directional light and culls each cascade against its own last shadow
+  map, and on this build and this driver every cascade came back at
+  NOUGHT vertices, the terrain's included, with 973 meshes still handed
+  to them. A shadow pass that draws nothing is a world with no shadows
+  in it, and the frame looked faster for exactly that reason. Why is not
+  known (Bevy's own light setup still carries a TODO about GPU culling
+  for shadow passes a few lines from where it wires this up), so it is
+  off the light until a picture says otherwise on real silicon.
+- **A tile past its nearest bake casts its shadow from its BLOCK**
+  (`cull::casts`, `PROXY_FROM`): its detail meshes carry
+  `NotShadowCaster` and its block, which is the same massing a far tile
+  is drawn as, is moved to `SHADOW_ONLY`, a render layer the sun sees
+  and the camera does not. From eighty metres a tile's shadow is a
+  footprint and an eave, and those are exactly what the block is
+  (`model::massing`, off the model's own solids). The far cascade goes
+  from **2.42 to 0.51 million vertices** and the four together from
+  3.72 to 1.35, with shadow GPU time from 488 ms to 221. What it costs
+  is a window's own reveal: a recessed pane on a tile past eighty
+  metres sits inside the block's face and is shaded as if the wall
+  had no opening, which at that range is under a pixel.
+- **A far city is DISTRICTS** (`city/district.rs`): four by four tiles,
+  194 m square, as ONE mesh while every tile in it is a block and none
+  is showing detail, and its tiles' own blocks when any of them is. The
+  swap is one frame, the block and the district never drawn together,
+  which `a_district_is_one_mesh_only_while_all_its_tiles_are_blocks`
+  holds both ways. On the street 134 districts are whole and the main
+  view is handed **1,159 meshes against 2,222**, 642 of them a town's.
+  It costs mesh memory, because a tile keeps its own block for when the
+  district splits: the allocator's slabs went from 480 MB to 558.
+
+Measured together on the same route: **vertex invocations 10.08
+million a frame against 7.22, and a frame of 2,630 ms against 2,923**
+on lavapipe, where the main pass's fragments are most of a frame and
+no culling touches them. Both switches are `render.json` booleans
+(`occlusion_culling`, `shadow_proxies`), so the A/B is one line.
+
 ## A city is BLOCKS of four by four lots, and a settlement has a TIER
 
 `docs/mockups/city-blocks.html` is the record and `town/plot.rs` is it
@@ -5387,7 +5451,7 @@ time it was broken.
 
 ```sh
 cargo test -p freeport_core                       # 234, the core, about 100 s
-cargo test -p freeport_app                        # 63, the harness. It was NOT in this list and
+cargo test -p freeport_app                        # 67, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format

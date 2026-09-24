@@ -98,6 +98,9 @@ pub(crate) struct Raised {
     pub tiles: Arc<Vec<crate::city::tiles::Tile>>,
     /// What each tile is drawn as now and what it stops a body with.
     pub state: Vec<crate::city::detail::TileState>,
+    /// Its tiles gathered in districts, each drawn as one mesh while all
+    /// of its tiles are blocks.
+    pub districts: Vec<crate::city::district::District>,
     /// A bound on everything built in it, planet local, so a body far
     /// from the town never looks at its tiles.
     pub bounds: (DVec3, DVec3),

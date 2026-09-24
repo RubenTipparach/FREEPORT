@@ -52,6 +52,9 @@ const FOOT: f64 = 2.0;
 /// town's own frame (east, north, up).
 #[derive(Clone, Debug)]
 pub struct Tile {
+    /// Which block of the town's grid it is, in `PITCH`es east and north
+    /// of the middle one.
+    pub key: (i64, i64),
     pub lots: Vec<usize>,
     pub pieces: Vec<usize>,
     pub lo: DVec3,
@@ -90,6 +93,7 @@ pub fn tiles_of(town: &Town, radius: f64) -> Vec<Tile> {
         hi: DVec3,
     ) -> &mut Tile {
         let t = out.entry(k).or_insert(Tile {
+            key: k,
             lots: Vec::new(),
             pieces: Vec::new(),
             lo,
@@ -154,9 +158,31 @@ pub fn draw(
     sea: f64,
     seed: u32,
 ) -> Drawn {
+    draw_part(
+        library,
+        town,
+        (&tile.lots, &tile.pieces),
+        grade,
+        radius,
+        sea,
+        seed,
+    )
+}
+
+/// Any set of a town's lots and pieces of street at a grade, as `draw`
+/// builds one tile's: what a district's blocks are drawn with too.
+pub fn draw_part(
+    library: &Library,
+    town: &Town,
+    (lots, pieces): (&[usize], &[usize]),
+    grade: usize,
+    radius: f64,
+    sea: f64,
+    seed: u32,
+) -> Drawn {
     let part = Part {
-        lots: &tile.lots,
-        pieces: &tile.pieces,
+        lots,
+        pieces,
         mesh: true,
         solids: false,
     };

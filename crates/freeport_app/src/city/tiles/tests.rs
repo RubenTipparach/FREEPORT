@@ -247,3 +247,92 @@ fn the_tiles_near_the_eye_are_drawn_and_walked_and_the_far_ones_are_blocks() {
         .iter()
         .all(|s| s.shown.is_none() && s.grade == MASS));
 }
+
+/// A tile drawn past its nearest bake casts its shadow from its block,
+/// which only the sun sees; a tile at the nearest bake casts its own and
+/// its block is hidden; and a tile drawn as its block is the camera's.
+#[test]
+fn a_detailed_tile_casts_its_shadow_from_its_block() {
+    use crate::cull::{casts, SHADOW_ONLY};
+    use crate::terrain::TerrainMaterial;
+    use bevy::camera::visibility::RenderLayers;
+    use bevy::light::NotShadowCaster;
+    let mut app = app_with(300.0);
+    settle(&mut app, 4000);
+    let world = app.world();
+    let tuning = world.resource::<crate::tuning::Tuning>();
+    let fabric = world.resource::<Fabric>();
+    let mut seen = [0usize; MASS + 1];
+    for state in &fabric.towns[0].state {
+        let Some(block) = state.mass else {
+            continue;
+        };
+        let layers = world
+            .get::<RenderLayers>(block)
+            .cloned()
+            .unwrap_or_default();
+        let shown = world.get::<Visibility>(block) != Some(&Visibility::Hidden);
+        // A tile drawn as its block is the camera's; whether it is drawn
+        // or its district is, is `districts_hold`'s question.
+        let Some((grade, drawn)) = &state.shown else {
+            assert_eq!(layers, RenderLayers::default());
+            continue;
+        };
+        let own = casts(*grade, tuning);
+        assert_eq!(shown, !own, "the block of a tile at grade {grade}");
+        if !own {
+            assert_eq!(layers, RenderLayers::layer(SHADOW_ONLY));
+        }
+        for &e in drawn {
+            if world.get::<MeshMaterial3d<TerrainMaterial>>(e).is_some() {
+                assert_eq!(world.get::<NotShadowCaster>(e).is_none(), own);
+            }
+        }
+        seen[*grade] += 1;
+    }
+    assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");
+}
+
+/// Every district is drawn either whole, with none of its tiles' own
+/// blocks drawn, or as its tiles, with every tile that is a block drawn
+/// as its own: never both and never neither.
+fn districts_hold(app: &App) -> (usize, usize) {
+    let world = app.world();
+    let raised = &world.resource::<Fabric>().towns[0];
+    let drawn = |e: Entity| world.get::<Visibility>(e) != Some(&Visibility::Hidden);
+    let (mut whole, mut split) = (0, 0);
+    for d in &raised.districts {
+        let entity = d.entity.expect("a district with blocks in it");
+        assert_eq!(drawn(entity), d.whole);
+        for s in d.tiles.iter().map(|&k| &raised.state[k]) {
+            if let (None, Some(block)) = (&s.shown, s.mass) {
+                assert_eq!(drawn(block), !d.whole, "a block under a district");
+            }
+        }
+        whole += d.whole as usize;
+        split += !d.whole as usize;
+    }
+    (whole, split)
+}
+
+/// A district is its tiles near the eye and one mesh far from it, and
+/// the two are swapped without a block drawn twice or not at all.
+#[test]
+fn a_district_is_one_mesh_only_while_all_its_tiles_are_blocks() {
+    let mut app = app_with(300.0);
+    settle(&mut app, 4000);
+    let (_, split) = districts_hold(&app);
+    assert!(split > 0, "no district split round the eye");
+    app.world_mut().resource_mut::<Eye>().0 = WorldPos(DVec3::new(0.0, R, 20_000.0));
+    settle(&mut app, 4000);
+    let (whole, split) = districts_hold(&app);
+    assert!(
+        whole > 0 && split == 0,
+        "{whole} whole and {split} split far off"
+    );
+    let fabric = app.world().resource::<Fabric>();
+    let raised = &fabric.towns[0];
+    let tiles: usize = raised.districts.iter().map(|d| d.tiles.len()).sum();
+    assert_eq!(tiles, raised.tiles.len(), "a tile in no district or in two");
+    assert_eq!(fabric.drawing.districts, raised.districts.len());
+}

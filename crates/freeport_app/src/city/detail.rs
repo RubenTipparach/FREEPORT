@@ -10,14 +10,17 @@
 //! one at all: the port is 153,000 boxes, and a city nine times its size
 //! would be most of a gigabyte of them held for a view of the rooftops.
 
+use super::district::{self, District};
 use super::tiles::{self, Drawn, Stops, Tile, MASS};
 use super::Glazing;
+use crate::cull;
+use crate::flight_bench::Urban;
 use crate::stream::Frame as RenderFrame;
 use crate::terrain::Ground3d;
 use crate::tuning::Tuning;
 use crate::world::{Fabric, Raised};
 use crate::{Eye, Ground};
-use bevy::camera::visibility::NoAutoAabb;
+use bevy::camera::visibility::{NoAutoAabb, RenderLayers};
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::tasks::{futures::check_ready, AsyncComputeTaskPool, Task};
@@ -121,7 +124,7 @@ pub fn stream_tiles(
             let d = raised.tiles[k].distance(here);
             state.grade = tiles::grade(state.grade, d, edges, margin);
             if state.grade == MASS && state.shown.is_some() {
-                show(&mut commands, state, None);
+                show(&mut commands, state, None, true);
             }
             if d > STOPS_FAR && state.stops.is_some() {
                 state.stops = None;
@@ -143,6 +146,7 @@ pub fn stream_tiles(
                 wants.push((d, t, k, Work::Draw(state.grade)));
             }
         }
+        drawn.districts += district::follow(&mut commands, &mut raised.districts, &raised.state);
     }
     fabric_ref.tiles_pending = pending;
     fabric_ref.drawing = drawn;
@@ -203,6 +207,9 @@ fn start(
 #[derive(Default, Clone, Copy, Debug, serde::Serialize)]
 pub struct Drawing {
     pub tiles: [usize; MASS + 1],
+    /// How many districts are drawn whole, as one mesh for all their
+    /// tiles' blocks.
+    pub districts: usize,
     pub triangles: usize,
     pub boxes: usize,
 }
@@ -231,8 +238,9 @@ fn land(commands: &mut Commands, kit: &mut Kit, parent: Entity, state: &mut Tile
             // block: what was built for it is thrown away.
             if state.grade < MASS {
                 let tris = drawn.triangles;
-                let entities = spawn(commands, kit, parent, drawn);
-                show(commands, state, Some((g, entities)));
+                let casts = cull::casts(g, &kit.tuning);
+                let entities = spawn(commands, kit, parent, drawn, casts);
+                show(commands, state, Some((g, entities)), casts);
                 state.shown_tris = tris;
             }
         }
@@ -241,49 +249,65 @@ fn land(commands: &mut Commands, kit: &mut Kit, parent: Entity, state: &mut Tile
 }
 
 /// Draw a tile as a grade, or as its block with `None`, and take down what
-/// it was drawn as before.
-fn show(commands: &mut Commands, state: &mut TileState, now: Option<(usize, Vec<Entity>)>) {
+/// it was drawn as before. A grade that does not cast its own shadow
+/// leaves its block standing where only the sun can see it.
+fn show(
+    commands: &mut Commands,
+    state: &mut TileState,
+    now: Option<(usize, Vec<Entity>)>,
+    casts: bool,
+) {
     if let Some((_, old)) = state.shown.take() {
         for e in old {
             commands.entity(e).despawn();
         }
     }
     if let Some(mass) = state.mass {
-        commands.entity(mass).insert(if now.is_some() {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        });
+        let mut block = commands.entity(mass);
+        match (&now, casts) {
+            (None, _) => block.insert((Visibility::Inherited, RenderLayers::default())),
+            (Some(_), false) => block.insert((
+                Visibility::Inherited,
+                RenderLayers::layer(cull::SHADOW_ONLY),
+            )),
+            (Some(_), true) => block.insert(Visibility::Hidden),
+        };
     }
     state.shown = now;
 }
 
 /// A drawn tile's meshes as entities under its town: the opaque half on
-/// the ground's own material and the glazing on the glass.
+/// the ground's own material, casting its own shadow or not, and the
+/// glazing on the glass, which never does.
 pub(crate) fn spawn(
     commands: &mut Commands,
     kit: &mut Kit,
     parent: Entity,
     drawn: Drawn,
+    casts: bool,
 ) -> Vec<Entity> {
     let Some(aabb) = drawn.aabb else {
         return Vec::new();
     };
     let mut out = Vec::new();
     if let Some(mesh) = drawn.opaque {
-        let e = commands
-            .spawn((
-                Mesh3d(kit.meshes.add(mesh)),
-                MeshMaterial3d(kit.material.ground.clone()),
-                Transform::default(),
-                aabb,
-                NoAutoAabb,
-                ChildOf(parent),
-            ))
-            .id();
-        out.push(e);
+        let urban = Urban(triangles(&mesh));
+        let mut e = commands.spawn((
+            Mesh3d(kit.meshes.add(mesh)),
+            MeshMaterial3d(kit.material.ground.clone()),
+            Transform::default(),
+            aabb,
+            NoAutoAabb,
+            urban,
+            ChildOf(parent),
+        ));
+        if !casts {
+            e.insert(bevy::light::NotShadowCaster);
+        }
+        out.push(e.id());
     }
     if let Some(mesh) = drawn.glass {
+        let urban = Urban(triangles(&mesh));
         let e = commands
             .spawn((
                 Mesh3d(kit.meshes.add(mesh)),
@@ -292,6 +316,7 @@ pub(crate) fn spawn(
                 Transform::default(),
                 aabb,
                 NoAutoAabb,
+                urban,
                 ChildOf(parent),
             ))
             .id();
@@ -300,12 +325,19 @@ pub(crate) fn spawn(
     out
 }
 
+/// How many triangles a mesh is, which is what the benchmark sums.
+fn triangles(mesh: &Mesh) -> usize {
+    mesh.indices().map_or(mesh.count_vertices(), |i| i.len()) / 3
+}
+
 /// A town raised: its frame, its tiles and every tile's block, built on a
 /// worker because a city of a thousand blocks is not a thing a frame does.
 pub struct Raise {
     pub frame: freeport_core::town::Frame,
     pub tiles: Arc<Vec<Tile>>,
     pub blocks: Vec<Drawn>,
+    /// Every district's tiles and all their blocks as one mesh.
+    pub districts: Vec<(Vec<usize>, Drawn)>,
     pub bounds: (DVec3, DVec3),
 }
 
@@ -351,10 +383,21 @@ pub fn raise(
             }
         }
         let pad = DVec3::splat(freeport_core::town::STREET);
+        let sea = world.sea.radius;
+        let districts = district::districts_of(&tiles)
+            .into_iter()
+            .map(|members| {
+                let (lots, pieces) = district::parts_of(&tiles, &members);
+                let part = (lots.as_slice(), pieces.as_slice());
+                let drawn = tiles::draw_part(&library, town, part, MASS, radius, sea, crate::SEED);
+                (members, drawn)
+            })
+            .collect();
         Raise {
             frame,
             tiles: Arc::new(tiles),
             blocks,
+            districts,
             bounds: (lo - pad, hi + pad),
         }
     })
@@ -393,8 +436,26 @@ pub fn stand(
         .into_iter()
         .map(|drawn| {
             let tris = drawn.triangles;
-            let mass = spawn(commands, kit, parent, drawn).into_iter().next();
+            let mass = spawn(commands, kit, parent, drawn, true).into_iter().next();
             TileState::massed(mass, tris)
+        })
+        .collect();
+    // Every district starts HIDDEN over tiles that are all blocks: the
+    // first frame of `stream_tiles` finds it whole and swaps it in for
+    // them, in one frame, before anything is drawn.
+    let districts = raise
+        .districts
+        .into_iter()
+        .map(|(tiles, drawn)| {
+            let entity = spawn(commands, kit, parent, drawn, true).into_iter().next();
+            if let Some(e) = entity {
+                commands.entity(e).insert(Visibility::Hidden);
+            }
+            District {
+                tiles,
+                entity,
+                whole: false,
+            }
         })
         .collect();
     Raised {
@@ -402,6 +463,7 @@ pub fn stand(
         frame,
         tiles: raise.tiles,
         state,
+        districts,
         bounds: raise.bounds,
         entity: parent,
     }

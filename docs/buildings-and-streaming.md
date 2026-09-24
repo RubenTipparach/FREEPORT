@@ -103,6 +103,10 @@ bounds, in the town's frame. Zero selects the default.
 The default worker count uses half the available hardware threads and caps terrain workers
 at eight. Building LOD thresholds are 80, 250 and 1,200 metres (LOD0 to LOD1, LOD1 to
 LOD2, LOD2 to solid blocks), with 15% hysteresis, and three building jobs run at once.
+`occlusion_culling` (on by default) lets the GPU cull, for the camera only, what the
+previous frame's depth proves hidden. `shadow_proxies` (on by default) makes a tile drawn
+past its nearest bake cast its shadow from its solid block, which only the sun sees.
+Both are booleans rather than zero-sentinel numbers, so an A/B is one line of this file.
 
 ## Validation and measurements
 

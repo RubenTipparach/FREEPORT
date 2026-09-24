@@ -3,6 +3,7 @@
 //! as from where the eye is (`detail`).
 
 pub mod detail;
+pub mod district;
 pub mod stream;
 pub mod tiles;
 

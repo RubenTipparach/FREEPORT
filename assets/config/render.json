@@ -9,5 +9,7 @@
   "building_lod_near": 250.0,
   "building_lod_far": 1200.0,
   "building_jobs": 3,
-  "lod_hysteresis": 0.15
+  "lod_hysteresis": 0.15,
+  "occlusion_culling": true,
+  "shadow_proxies": true
 }
