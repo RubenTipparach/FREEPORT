@@ -538,7 +538,11 @@ fn a_walker_walks_a_street_and_is_stopped_by_a_wall() {
         seed: 11,
         sites: vec![].into(),
     };
-    let towns = town::plan(&planet, planet.radius - 8.0, 40.0, 1, 11);
+    // Two hundred metres for the biggest, which puts the town at the
+    // size law's floor of about sixty seven: the smallest settlement on
+    // the harness body is 64 m, and a town under a block across is one
+    // the FRONT leaves nothing standing in.
+    let towns = town::plan(&planet, planet.radius - 8.0, 200.0, 1, 11);
     let town = towns[0].clone();
     planet.sites = towns.iter().map(town::site_of).collect();
     let fab = fabric(&town, planet.radius, 11);

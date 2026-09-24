@@ -774,6 +774,7 @@ fn a_building_stands_on_its_own_block_and_never_in_the_street() {
 fn a_city_has_towers_a_town_has_shops_and_a_village_has_houses() {
     for (radius, tier) in [
         (537.0, Tier::City),
+        (1_611.0, Tier::City),
         (250.0, Tier::Town),
         (150.0, Tier::Village),
     ] {

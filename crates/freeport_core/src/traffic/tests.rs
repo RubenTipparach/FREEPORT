@@ -14,11 +14,13 @@ fn town() -> Town {
         seed: 7,
         sites: vec![].into(),
     };
-    // Two hundred and fifty metres for the biggest, because the fixture
-    // ball's level ground stands three times the size law's reach from
-    // its own sea and the towns it grows are all at the law's floor: at
-    // sixty the port came out as one block and turned nobody out.
-    crate::town::plan(&planet, 996.0, 250.0, 4, 7)
+    // Four hundred metres for the biggest, because the fixture ball's
+    // level ground stands three times the size law's reach from its own
+    // sea and the towns it grows are all at the law's floor, and the
+    // FRONT then eats their fringe: at sixty the port came out as one
+    // block and turned nobody out, and at two hundred and fifty, once
+    // the front came in, it was one block again.
+    crate::town::plan(&planet, 996.0, 400.0, 4, 7)
         .into_iter()
         .next()
         .expect("the test planet grew no town")
@@ -578,13 +580,21 @@ fn a_route_out_of_a_town_runs_on_the_towns_own_paving() {
         );
     }
     // It ACTUALLY gets out: the last crossing is further from the middle
-    // than the first, by most of the town.
-    // The last crossing stands most of the radius out, which on a grid
-    // of forty metre blocks is what "out" can mean on a town this size.
+    // than the first, and no crossing the town paved stands further the
+    // way it was sent than a block past where it ended. How far that is
+    // is the town's own FRONT and not its outline, because the country
+    // eats a town's fringe long before the outline arrives.
     let (from, to) = (route[0].length(), route[route.len() - 1].length());
+    let reached = route[route.len() - 1].x;
+    let furthest = streets
+        .nodes()
+        .iter()
+        .map(|n| place(*n).x)
+        .fold(f64::MIN, f64::max);
     assert!(
-        to > from && to >= town.radius * 0.8,
-        "a route out of a town ends {to:.1} m from its middle having started {from:.1}"
+        to > from && reached >= furthest - PITCH,
+        "a route out of a town ends {to:.1} m from its middle having started {from:.1}, \
+         and the town's paving runs {furthest:.1} m east"
     );
     println!(
         "a route out of this town is {} crossings, {from:.1} m to {to:.1} m from the middle",

@@ -2081,21 +2081,23 @@ sixty four seeds and three sizes: nought points outside the outline,
 and the least demand anywhere inside 0.645 of the edge is 0.0010.
 
 **And a town always has a SOLID MIDDLE, which is arithmetic rather
-than a coincidence.** The bite is scaled by `1 - want`, nought at the
-middle and one at the rim, so it can only take a block out where
-`want < GRAIN / (1 + GRAIN)`, which is 0.645 of the way out to that
-bearing's own edge. A city's core is solid and its fringe is shredded,
+than a coincidence.** It was the bite's `1 - want` once; it is the
+FRONT's own cap now (the next section but one): the grain is read to
+at most `CAP` deviations, so nothing is taken out of the inner quarter
+of any bearing. A city's core is solid and its fringe is shredded,
 which is what the density of a real built up area does as you walk out
 of one; a uniform bite would eat the towers at the same rate and leave
 a town that is merely thinner everywhere, and a one block hamlet would
 be shredded to nothing.
 
-**And `plot` reads the same bite**, which is the divergent path rule
-arriving at a town's empty ground: what FRAYS a town's edge and what
-THINS the ground inside it are one number now (`shape::bite`) rather
-than a fractal outline round a coin toss. A suburb still has its own
-base emptiness, because what makes a suburb a suburb is the space, but
-the holes in it are the shape of the holes in its own edge.
+**And `plot` asks the same question lot by lot**, which is the
+divergent path rule arriving at a town's empty ground: a block is built
+off the demand at its middle and a lot on its rim off the demand at the
+lot's own place, so what FRAYS a town's edge and what THINS the ground
+inside it are one number rather than a fractal outline round a coin
+toss. A suburb still has its own base emptiness, because what makes a
+suburb a suburb is the space, but the holes in it are the shape of the
+holes in its own edge.
 
 **And the jitter is a TOWN's own and not a suburb's.** `plot` moved a
 lot by `SUBURB_SETBACK` everywhere, which is a suburban house standing
@@ -2359,6 +2361,88 @@ port on lavapipe: **82.3 ms a chunk before any of this, 542 with the
 bigger cities, and 23.7 on the chunk's own planet**, three and a half
 times faster than the terrain ever meshed.
 
+## A city is a PERCOLATION FRONT, and the oval was its own outline
+
+The owner asked for a city with a more fractal shape than an oval,
+and the grain had been built for exactly that and measured 1.17 on the
+box count. What the map showed was an oval anyway, and the reason is
+one number: the grain bit only where its noise stood OVER its own
+mean, so a block just inside the outline was built whenever the noise
+stood under it, which is half of them. Measured on a 1,611 m city, the
+outer twentieth of the outline was **60% built**: the lobed ellipse
+`edge` draws was the line an eye traced round every town, and the grain
+only speckled the inside of it.
+
+**So a town is a GRADIENT PERCOLATION** (`town/shape.rs`: `FRONT`,
+`FADE`, `CAP`), which is Sapoval, Rosso and Gouyet's diffusion front
+and the model Makse, Havlin and Stanley fitted to real urban growth in
+1995: ground is built where a CORRELATED noise stands under a
+threshold that falls steadily from the middle of a town to its
+outline, `want * FADE / FRONT - FADE` of the grain's own deviations. At
+`FRONT` (0.35) of the demand half the ground is built, which is where a
+city frays into bays, fingers and outlying pieces; by the outline the
+threshold stands `FADE` (2.6) deviations under the noise, so there is
+almost nothing left for the ellipse to show. How far under the
+threshold the grain stands is a point's MARGIN, and the demand is the
+outline's own `want` scaled by it up to `EASE` (one deviation) and no
+further, so the outline, the density and the skyline are still three
+readings of one number. The grain is capped at `CAP` (3) deviations,
+which keeps the inner quarter of every bearing solid by arithmetic.
+
+**The first cut SUBTRACTED the grain everywhere, and downtown turned
+to suburb in patches.** A block facing the square in the middle of a
+city read as suburb wherever the noise stood high and still carried a
+six storey office, because facing the square builds big whatever the
+zone; `a_town_has_towers_in_the_middle_and_suburbs_outside` found it.
+Scaled by the margin instead, a block comfortably inside the front
+reads the outline's own smooth demand and only the band along the front
+shades toward suburb, which is where a real town's suburbs are.
+
+**A lot is asked the same question as a block**, at its own place,
+where the old grain threw a hash against a bite; the parks stay `OPEN`
+on the block's own hash, and the block a town STANDS on is never one of
+them, because the smallest settlement on the body is 64 m and the front
+leaves one that size little more than its middle block.
+
+Measured on four seeds (`town::fractal`), at the harness's own 1,611 m:
+the outline's outer twentieth **60.3% built against 2.5%**; the HULL,
+the outline the country sees with the holes left out, **1.192 against
+1.270** on the box count; and 7 pieces of a block or more, with 2.7% of
+the town standing apart from its main body. At 537 m it is 60.2%
+against 2.5% and 1.173 against 1.253. The sweep (`sweep_the_front`)
+runs from 1.155 at a front of 0.20 to 1.302 at 0.45, and 0.35 was
+picked off pictures of the whole sweep on two seeds rather than off
+the number, since past it a town loses ground faster than it gains
+any edge.
+
+**What it COST is the ground a town covers**, which is arithmetic and
+is reported rather than compensated for: the frame the plan fills goes
+from 16.5% to 9.5%, and inside the same outline a 537 m city lays
+**1,160 lots against 1,935**, a 250 m town 252 against 478 and a 150 m
+village 65 against 142. The outline is what the grading follows and
+what the atlas was accepted against, so growing it back is a re-bake
+and not a constant. And the front only ever takes demand AWAY, which is
+why this one needed none: `Site::level_r`, the grade, the skirt,
+`WOBBLE` and the planet's own slope bound are exactly what they were.
+It moved the zones' mix the grain's way, the fringe it takes being one
+storey houses (41.8% tall at the old 0.55), and `TOWN_AT` was re-swept
+to 0.67 with `CORE_AT` at 0.85 for the owner's quarter: **26.2% tall at
+537 m and 25.4% at 1,611 m**.
+
+**And a lot's own number was two towns' in a big city.** `Lot::id`
+packed its block as `i + 64` in thirteen bits, which is a town of
+sixty four blocks either way; the 1,815 m port reaches seventy seven,
+and a block past sixty four wrapped into another's number and put the
+same building on both. It is eleven bits a side now (`plot::lot_id`).
+
+**What is MISSING, named rather than hidden: ARMS.** A real city is
+star shaped because it runs out along its roads, which is what the
+approved city-blocks page drew, and the front has made the room for
+it: built ground now stops well inside the outline, so an arm down a
+highway's own bearing can reach out to the outline and no further
+without a re-bake. What it wants is the bearings of the roads arriving
+at a town handed to `lay`, which the atlas has.
+
 ## A city is BLOCKS of four by four lots, and a settlement has a TIER
 
 `docs/mockups/city-blocks.html` is the record and `town/plot.rs` is it
@@ -2390,7 +2474,7 @@ it always was; then:
   `Frame::turned` is the one place a frame is turned. A building drawn
   with its door on its own south wall would otherwise open onto the
   courtyard on three sides of every block.
-- **And the GRAIN thins the ring lot by lot** (`shape::bite` at the
+- **And the FRONT is asked again lot by lot** (`shape::demand` at the
   lot's own place), so a town's edge is ragged at the scale of the
   thing that is laid. `grain_octaves` is keyed to the LOT now and not
   the block: keyed to a 48.5 m block a 537 m city fell from six octaves
