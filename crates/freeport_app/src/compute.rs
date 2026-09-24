@@ -119,7 +119,7 @@ impl Point {
 
 /// The planet as this chunk sees it: the same body with only the town
 /// sites whose levelling can reach into it.
-fn local_planet(planet: &Planet, lat: &Lattice, id: ChunkId) -> Planet {
+pub(crate) fn local_planet(planet: &Planet, lat: &Lattice, id: ChunkId) -> Planet {
     let (lo, hi) = id.bounds(lat, MARGIN);
     let centre = (lo + hi) * 0.5;
     let radius = centre.length();

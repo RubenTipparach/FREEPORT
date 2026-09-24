@@ -2348,6 +2348,17 @@ it visits towns nearest first now, and all three of the startup's
 ground and road reports run on a thread of their own, because they are
 log lines and nothing waits on them.
 
+**And the CPU mesher contoured every chunk against the WHOLE BODY.**
+The GPU's own input was built on `compute::local_planet`, the chunk's
+planet with only the sites that reach into it, and the CPU path never
+was: every sample walked a latitude band of the site index as wide as
+the widest site on the body, which is 42.7 us a sample in the port
+against 2.5 on the local planet, and cities three times the size made
+that band three and a half times wider. Measured from 5 km over the
+port on lavapipe: **82.3 ms a chunk before any of this, 542 with the
+bigger cities, and 23.7 on the chunk's own planet**, three and a half
+times faster than the terrain ever meshed.
+
 ## A city is BLOCKS of four by four lots, and a settlement has a TIER
 
 `docs/mockups/city-blocks.html` is the record and `town/plot.rs` is it
