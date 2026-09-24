@@ -4542,6 +4542,22 @@ threads the caller hands in:
   is the page's region and a real plan the moment there are pixels for
   one. `a_map_draws_a_towns_plan_and_its_roads_where_they_are` holds
   the town's pixels to between 0.8 and 1.3 of what its own plan covers.
+- **And a town too fine to draw is drawn as its BUILT-UP AREA**, which
+  is how a real map generalises a city as it zooms out. The map opens
+  at forty eight metres a pixel, where a lot is a fifth of a pixel and a
+  street a sixth, so laid on by their own area the port's lots came out
+  as a faint grey smudge twelve pixels across and the owner asked
+  whether a road grid like a city was supposed to be there. It was, and
+  it was under a pixel. `map::built_up` lays every built block's own
+  cell, the block and half the street round it, in the town's colour,
+  wholly while a lot is under half a pixel and not at all past a pixel
+  and a half, and the plan is drawn over it. Each pixel asks where it
+  stands in the TOWN's frame, four samples a pixel, rather than a
+  quadrilateral being laid a cell at a time, because the cells tile the
+  ground and two laid one after the other leave a seam wherever they
+  share a pixel. `a_town_too_fine_to_draw_is_drawn_as_its_built_up_area`
+  holds the fixture town at 12 m a pixel to 321 pixels changed against
+  278 of its own cells.
 
 **It is drawn on a THREAD and never in the frame**, `map/raster.rs`,
 the sky's own rule: one answer and no queue, a `JoinHandle` and
@@ -5106,7 +5122,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 221, the core, about 100 s
+cargo test -p freeport_core                       # 222, the core, about 100 s
 cargo test -p freeport_app                        # 61, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100

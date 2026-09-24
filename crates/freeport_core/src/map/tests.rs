@@ -181,6 +181,52 @@ fn a_map_draws_a_towns_plan_and_its_roads_where_they_are() {
     assert!(hit * 10 >= asked * 9, "a road is drawn where it runs");
 }
 
+/// Far out, a town whose lots are under a pixel is drawn as its
+/// BUILT-UP AREA: every built block's cell in the town's own colour, so
+/// what the picture shows is where the town is and how big, and not a
+/// grey smudge of lots each a fifth of a pixel. Close in there is none of
+/// it, and the courtyards between the lots are the ground.
+#[test]
+fn a_town_too_fine_to_draw_is_drawn_as_its_built_up_area() {
+    assert_eq!(built_up(48.0), 1.0);
+    assert_eq!(built_up(4.0), 0.0);
+    let (planet, sea, towns, _) = world();
+    let bare = planet.bare();
+    let scene = Scene {
+        planet: &bare,
+        sea,
+        roads: &[],
+        towns: &towns,
+    };
+    let first = &towns[0];
+    let view = View::new(first.dir, planet.radius, 12.0);
+    let (w, h) = (160, 160);
+    let pic = draw(&scene, &view, w, h, 4);
+    let empty = Scene {
+        towns: &[],
+        ..scene
+    };
+    let bare_pic = draw(&empty, &view, w, h, 4);
+    let changed = (0..w * h)
+        .filter(|i| (0..3).any(|c| pic.rgba[i * 4 + c].abs_diff(bare_pic.rgba[i * 4 + c]) > 10))
+        .count();
+    let cells = blocks_of(first).len() as f64 * (PITCH / view.scale).powi(2);
+    println!(
+        "town 0 at {} m a pixel changed {changed} pixels against {cells:.0} of built-up area",
+        view.scale
+    );
+    assert!(changed as f64 > 0.85 * cells, "the town's area is drawn");
+    assert!((changed as f64) < 1.25 * cells, "and nothing past it");
+    // Its middle reads as the town and not as the ground.
+    let mid = paint::at(view.to_px(first.dir).expect("in view"), w, h);
+    let c = pic.pixel(mid.x as usize, mid.y as usize);
+    let want = paint::building(Tier::of(first.radius));
+    assert!(
+        (0..3).all(|i| (c[i] as i32 - want[i] as i32).abs() < 60),
+        "{c:?} against {want:?}"
+    );
+}
+
 /// A road is drawn at its own width once the map is close enough to
 /// show it, and never thinner than two pixels.
 #[test]

@@ -237,7 +237,7 @@ impl Picture {
     }
 
     /// Lay a colour over a pixel by a share of it.
-    fn blend(&mut self, x: i64, y: i64, colour: Colour, alpha: f64) {
+    pub(super) fn blend(&mut self, x: i64, y: i64, colour: Colour, alpha: f64) {
         if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height || alpha <= 0.0 {
             return;
         }

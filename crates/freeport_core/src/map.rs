@@ -14,8 +14,9 @@
 //! disagree about where they are.
 
 use crate::field::Planet;
-use crate::town::{frame_at, Tier, Town, OUTLINE};
+use crate::town::{frame_at, Tier, Town, LOT, OUTLINE, PITCH};
 use glam::{DVec2, DVec3};
+use std::collections::BTreeSet;
 
 mod paint;
 pub use paint::{contour, mark, Picture};
@@ -107,6 +108,12 @@ const MARGIN: f64 = 2_000.0;
 /// How much of a lot a building is drawn over, so two buildings side by
 /// side read as two when there are pixels enough to show it.
 const BUILT: f64 = 0.9;
+/// How big a LOT is on the picture, pixels, when a town is drawn wholly
+/// as its built-up area, and when not at all: a lot under half a pixel is
+/// a lace no eye can read, and past a pixel and a half the lots are the
+/// picture.
+const BUILT_UP_SOLID: f64 = 0.5;
+const BUILT_UP_CLEAR: f64 = 1.5;
 
 /// The map of a scene in a view, `width` by `height` pixels, on up to
 /// `threads` threads: the ground, then the roads over it, then the towns
@@ -171,6 +178,7 @@ fn draw_towns(pic: &mut Picture, scene: &Scene, view: &View) {
             }
             continue;
         }
+        draw_built_up(pic, town, view, colour, built_up(view.scale));
         let (w, h) = (pic.width, pic.height);
         let corner = |x: f64, z: f64| {
             let dir = (town.dir + town.east * (x / view.radius) + town.north * (z / view.radius))
@@ -200,6 +208,82 @@ fn draw_towns(pic: &mut Picture, scene: &Scene, view: &View) {
             if let Some(q) = quad(lot.x, lot.z, w, w) {
                 pic.fill(q, colour);
             }
+        }
+    }
+}
+
+/// How much of a town is laid down as its BUILT-UP AREA at a scale,
+/// nought to one: all of it while a lot is under `BUILT_UP_SOLID` pixels
+/// and none once it is past `BUILT_UP_CLEAR`, which is how a real map
+/// generalises a city as it zooms out.
+///
+/// The map the owner asked about opens at forty eight metres a pixel,
+/// where a lot is a fifth of a pixel and a street a sixth: laid on by
+/// its own area the port's plan came out as a faint grey smudge twelve
+/// pixels across in the middle of its plain, and the owner asked whether
+/// a road grid like a city was supposed to be there. It was, and it was
+/// under a pixel.
+pub fn built_up(scale: f64) -> f64 {
+    let lot = LOT / scale.max(1e-9);
+    ((BUILT_UP_CLEAR - lot) / (BUILT_UP_CLEAR - BUILT_UP_SOLID)).clamp(0.0, 1.0)
+}
+
+/// The cells of a town's grid that carry a building, each a `PITCH` a
+/// side on its block's own middle: the block and half the street round
+/// it, so two built blocks side by side are one area with their street
+/// in it and a lone one keeps its own frontage.
+fn blocks_of(town: &Town) -> BTreeSet<(i64, i64)> {
+    town.lots
+        .iter()
+        .map(|l| ((l.x / PITCH).round() as i64, (l.z / PITCH).round() as i64))
+        .collect()
+}
+
+/// A town's built-up area, laid on by `alpha` in its own colour. Each
+/// pixel asks where it stands in the TOWN's frame and whether that is a
+/// built cell, four samples a pixel: the cells tile the ground, so there
+/// is no seam where two of them share a pixel, which a quadrilateral a
+/// cell laid on one after the other would leave.
+fn draw_built_up(pic: &mut Picture, town: &Town, view: &View, colour: paint::Colour, alpha: f64) {
+    if alpha <= 0.0 {
+        return;
+    }
+    let Some(mid) = view.to_px(town.dir) else {
+        return;
+    };
+    let cells = blocks_of(town);
+    let reach = (town.radius * OUTLINE + PITCH) / view.scale;
+    let (w, h) = (pic.width as f64, pic.height as f64);
+    let at = paint::at(mid, pic.width, pic.height);
+    let (x0, x1) = (
+        (at.x - reach).floor().max(0.0),
+        (at.x + reach).ceil().min(w - 1.0),
+    );
+    let (y0, y1) = (
+        (at.y - reach).floor().max(0.0),
+        (at.y + reach).ceil().min(h - 1.0),
+    );
+    if x0 > x1 || y0 > y1 {
+        return;
+    }
+    let built = |col: f64, row: f64| {
+        let dir = view.to_dir(DVec2::new(col - w * 0.5, h * 0.5 - row));
+        let along = dir.dot(town.dir);
+        if along <= 0.0 {
+            return false;
+        }
+        let x = view.radius * dir.dot(town.east) / along;
+        let z = view.radius * dir.dot(town.north) / along;
+        cells.contains(&((x / PITCH).round() as i64, (z / PITCH).round() as i64))
+    };
+    for row in y0 as i64..=y1 as i64 {
+        for col in x0 as i64..=x1 as i64 {
+            let hits = [0.25, 0.75]
+                .iter()
+                .flat_map(|dy| [0.25, 0.75].map(|dx| (col as f64 + dx, row as f64 + dy)))
+                .filter(|&(c, r)| built(c, r))
+                .count();
+            pic.blend(col, row, colour, alpha * hits as f64 / 4.0);
         }
     }
 }
