@@ -27,6 +27,48 @@ fn spiral(n: usize) -> Vec<DVec3> {
         .collect()
 }
 
+/// The hills are never CLIPPED: `soft` is the stretch out to its knee,
+/// leaves it with the same slope, climbs for ever after and never reaches
+/// its ceiling, so the deepest basin on the body keeps some of its own
+/// small hills. What it replaces pinned 2.00% of the harness body at the
+/// hills' exact amplitude, seven kilometres of it dead flat round the
+/// port.
+#[test]
+fn the_hills_are_never_clipped_flat() {
+    let span = FBM_SD * FBM_REACH;
+    let (mut last, mut worst_step) = (f64::MIN, f64::MAX);
+    for k in 0..=10_000 {
+        let v = k as f64 / 10_000.0;
+        let (s, y) = ((v - FBM_MEAN) / span, soft(v));
+        if s.abs() <= KNEE {
+            assert_eq!(y, s, "the identity inside the knee at {v}");
+        }
+        assert!(y.abs() < CEILING, "past the ceiling at {v}: {y}");
+        worst_step = worst_step.min(y - last);
+        last = y;
+    }
+    assert!(worst_step > 0.0, "not rising everywhere: {worst_step}");
+    // One slope either side of the knee, so no crease runs round a hill.
+    let at = FBM_MEAN + KNEE * span;
+    let d = 1e-7;
+    let (inside, outside) = ((soft(at) - soft(at - d)) / d, (soft(at + d) - soft(at)) / d);
+    assert!(
+        (inside - outside).abs() < 1e-3 * inside,
+        "{inside} and {outside}"
+    );
+    // And nowhere on the harness body is a hill held at one height.
+    let s = world();
+    let amp = s.relief * 0.5 * share::HILLS;
+    let pinned = spiral(20_000)
+        .iter()
+        .filter(|&&d| (s.hills(d).abs() - amp).abs() < 1e-6)
+        .count();
+    assert_eq!(
+        pinned, 0,
+        "{pinned} of 20000 directions pinned at the clamp"
+    );
+}
+
 /// A planet is not one hillside. The relief has to put a real share of
 /// itself under the sea, hold a real share of land, and push some of that
 /// land far enough up that it is a mountain rather than a swell: the

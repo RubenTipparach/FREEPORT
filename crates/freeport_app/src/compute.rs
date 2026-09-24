@@ -26,7 +26,7 @@ pub fn init_compute(
     tuning: Res<crate::tuning::Tuning>,
 ) {
     let supported = device.limits().max_compute_workgroups_per_dimension > 0
-        && device.limits().max_storage_buffer_binding_size as usize >= BATCH * POINTS * 64
+        && device.limits().max_storage_buffer_binding_size as usize >= BATCH * POINTS * POINT_BYTES
         && device.limits().max_storage_buffers_per_shader_stage >= 2;
     let enabled = supported && !args.cpu_terrain && format!("{:?}", adapter.device_type) != "Cpu";
     info!(
@@ -41,11 +41,12 @@ pub fn init_compute(
 }
 
 /// The relief's constants as the sampler's uniform reads them: five
-/// `vec4<f32>`, three `vec4<u32>` and the shelf's own `vec4<f32>` last,
-/// which is the order `sampling.wgsl` declares them in. The core cannot
+/// `vec4<f32>`, three `vec4<u32>`, then the shelf's own `vec4<f32>` and
+/// the hills' knee last, which is the order `sampling.wgsl` declares
+/// them in. The core cannot
 /// hand these over as bytes, because it depends on nothing but `std` and
 /// `glam`, so the one place they are laid out is here.
-const SHAPE_WORDS: usize = 36;
+const SHAPE_WORDS: usize = 40;
 
 fn shape_words(g: &biome::Gpu) -> [u32; SHAPE_WORDS] {
     let mut w = [0u32; SHAPE_WORDS];
@@ -56,7 +57,7 @@ fn shape_words(g: &biome::Gpu) -> [u32; SHAPE_WORDS] {
     w[20..24].copy_from_slice(&g.octaves);
     w[24..28].copy_from_slice(&g.salts);
     w[28..32].copy_from_slice(&g.hills);
-    for (i, v) in g.shelf.iter().enumerate() {
+    for (i, v) in g.shelf.iter().chain(&g.knee).enumerate() {
         w[32 + i] = v.to_bits();
     }
     w
@@ -69,7 +70,14 @@ struct Point {
     relief_lo: [f32; 4],
     carve_hi: [f32; 4],
     carve_lo: [f32; 4],
+    /// The sites' own level, and how much of the levelling may only CUT,
+    /// which is a town's and not a road's: `Planet::surface`'s min needs
+    /// both, and the shader cannot ask the core for them.
+    level: [f32; 4],
 }
+
+/// One point's bytes, which is what the buffers are sized by.
+const POINT_BYTES: usize = std::mem::size_of::<Point>();
 
 fn split(p: DVec3, hi_w: f64, lo_w: f64) -> ([f32; 4], [f32; 4]) {
     let hi = p.as_vec3();
@@ -88,7 +96,7 @@ impl Point {
             return point;
         }
         let dir = p / r;
-        let (bias, keep) = planet.surface_blend(dir);
+        let (bias, keep, fill) = planet.levelling(dir);
         // The low lane carries KEEP rather than an amplitude now: the
         // sampler works the relief's own terms out itself, and every one
         // of them is scaled by how much of the relief this direction has
@@ -104,6 +112,7 @@ impl Point {
             relief_lo,
             carve_hi,
             carve_lo,
+            level: [bias as f32, (1.0 - fill) as f32, 0.0, 0.0],
         }
     }
 }
@@ -171,7 +180,7 @@ impl Sampler {
         let count = (BATCH * POINTS) as u64;
         let input = buffer(
             "density points",
-            count * 64,
+            count * POINT_BYTES as u64,
             BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
         let output = buffer(

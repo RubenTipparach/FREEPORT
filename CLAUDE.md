@@ -526,8 +526,71 @@ function and every constant in it arrives in a uniform (`biome::Gpu`), so
 a threshold cannot be tuned on one side and left stale on the other. The
 landform and the cut are evaluated in full, because they are few octaves
 each and there is nothing worth stopping early for; the HILLS keep the
-sampler's own octave interval, and `signed` is monotone, so an interval
+sampler's own octave interval, and `soft` is monotone, so an interval
 on the partial sum is still an interval on the height.
+
+## The hills are never CLIPPED, and the GPU cuts where the CPU does
+
+The owner looked at the map and asked why the port was all flat. It was,
+and it was not the port's own levelling: seven kilometres of plain round
+it stood DEAD flat, with a knife edge where the relief switched back on
+and a coast running as one straight line. The hills term there read
+exactly -440.00 m across the middle four kilometres.
+
+**`signed` CLAMPS, and past the clamp every octave of the hills goes
+together.** A stretch to minus one through one is right for a term that
+goes through a smoothstep of its own afterwards, the shelf and the belt,
+and wrong for the hills, which are the finest term and the ground under a
+walker's feet: on the top and bottom hundredth of the body the whole sum
+is pinned at its amplitude, which is a plateau or a basin with no detail
+in it at all. The comment on `FBM_REACH` called that no part of a picture
+anybody looks at twice. The port is the LOWEST ground on the body
+(`town::in_order`), so it stands in one of those basins by construction,
+and it is the one place everybody looks at: measured, the port's basin
+runs 23 to 32% past the clamp (a stretched value of -1.23 to -1.32), and
+2.00% of the whole body is pinned.
+
+**`biome::soft` is the hills' own stretch**: the identity out to `KNEE`
+(0.75), then `KNEE + (CEILING - KNEE) u / (1 + u)`, which leaves the
+identity with the same slope and eases toward `CEILING` (1.3) without
+reaching it, so the deepest basin keeps a share of its small hills rather
+than none. A rational and not a `tanh`, because the field is add,
+multiply, divide and compare, bit for bit the same on every client.
+`band` carries the ceiling; the slope bound needs nothing, because the
+curve never rises faster than the stretch. Only the hills take it: the
+continent and the belt still clamp, since their flat ends are the abyssal
+plain and the plateau and a smoothstep follows them anyway.
+
+Measured on the harness body, before and after: **2.00% of the body
+pinned at the clamp against nought; the port's middle four kilometres
+0.00 m of hills against 23.01 m; the water 57.85% against 57.84%; and
+land that rises under five centimetres over twenty metres 4.81% against
+4.60%**. `the_hills_are_never_clipped_flat` holds the curve's own shape
+and finds nought of 20,000 directions pinned, against 391 on the clamp.
+It moved the bare ground, so the ATLAS was re-baked:
+**786 settlements and 369 roads over 55,452 km joining 157 of the 160
+cities, planned in 472.7 s**, against 832, 365, 60,651 km and 153. The
+port is the same town on the same site, 6 km from the sea.
+
+**And the GPU sampler never took the min that makes a town CUT.**
+`Planet::surface` is `min(graded, bare)` with a road's `fill` blended
+over it, which is this file's rule that a city flattens ground and never
+adds any; `sampling.wgsl` added `bias + bare * keep` and never took the
+min, and skipped the relief outright wherever `keep` was nought. So on a
+real GPU, where the compute sampler is on by default, a town filled every
+dip in its plateau and stood on its old pedestal down its downhill skirt,
+drawn where the walker and the car, which collide against the CPU's
+field, found nothing: ground drawn in the air. It never showed here,
+because lavapipe samples on the CPU, and
+`gpu_preserves_cpu_signs_and_lod_seams` is ignored for want of a device
+and passed by luck, since no dip fell in its chunks. The new hills put
+one there: the site's level 1392.82 m against the bare 1390.77, the GPU
+calling rock (1.81) where the CPU has air (-0.25). The shader
+transcribes the rule now (`levelled`, which rises in the bare ground
+whatever the site does, so the octave loop's interval still bounds it),
+a point carries `[bias, 1 - fill]` in a fifth lane, and the relief is
+skipped only on a road's own flat. Measured on lavapipe: identical signs
+and mesh geometry over 74,088 samples, 22.75 ms against the CPU's 75.18.
 
 ## A planet from orbit is a CHART, not a colour a vertex
 
@@ -5043,7 +5106,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 220, the core, about 100 s
+cargo test -p freeport_core                       # 221, the core, about 100 s
 cargo test -p freeport_app                        # 61, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100

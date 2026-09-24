@@ -151,15 +151,50 @@ const FBM_MEAN: f64 = 0.498;
 const FBM_SD: f64 = 0.106;
 
 /// How many standard deviations are stretched to the full range. At two
-/// and a quarter the top and bottom hundredth of the planet flattens into
-/// a plateau or a basin, which is a thing real ground has and no part of
-/// a picture anybody looks at twice.
+/// and a quarter the top and bottom hundredth of the planet is past it,
+/// which a term with a smoothstep after it takes as a plateau or a
+/// basin; the HILLS take it through `soft` instead, for the reason on
+/// `KNEE`.
 const FBM_REACH: f64 = 2.25;
 
 /// A noise stretched to minus one through one, so a term written as a
 /// share of the relief is worth that share.
 fn signed(v: f64) -> f64 {
     ((v - FBM_MEAN) / (FBM_SD * FBM_REACH)).clamp(-1.0, 1.0)
+}
+
+/// Where the HILLS' stretch stops being the identity, and the most it
+/// ever reaches past it. The two numbers `soft` is made of.
+///
+/// The clamp in `signed` is right for a term that goes through a
+/// smoothstep of its own afterwards and wrong for the hills, which are
+/// the FINEST term and the ground under a walker's feet: past the clamp
+/// every octave of them is thrown away together, so the top and bottom
+/// hundredth of the body came out as a plateau or a basin DEAD flat, at
+/// exactly the hills' own amplitude, with a knife edge where the noise
+/// came back. The doc on `FBM_REACH` called that no part of a picture
+/// anybody looks at twice, and the port is the LOWEST ground on the body
+/// (`town::in_order`), so it stands in one of those basins by
+/// construction and it is the one place everybody looks at: seven
+/// kilometres round it read 0.00 m of hills over its middle four, and
+/// the owner asked why the port was all flat.
+const KNEE: f64 = 0.75;
+const CEILING: f64 = 1.3;
+
+/// The hills' stretch: `signed` out to `KNEE`, and past it a curve that
+/// leaves the identity with the same slope and eases toward `CEILING`
+/// without reaching it, so the deepest basin keeps a share of its own
+/// small hills rather than none. `u / (1 + u)` rather than a `tanh`,
+/// because this is the field and the field is add, multiply, divide and
+/// compare, bit for bit the same on every client.
+fn soft(v: f64) -> f64 {
+    let s = (v - FBM_MEAN) / (FBM_SD * FBM_REACH);
+    let a = s.abs();
+    if a <= KNEE {
+        return s;
+    }
+    let u = (a - KNEE) / (CEILING - KNEE);
+    (KNEE + (CEILING - KNEE) * u / (1.0 + u)).copysign(s)
 }
 
 /// The slope a stretch multiplies by, which the bound has to carry.
@@ -330,7 +365,7 @@ impl Shape {
     /// the ground under a walker's feet, so it keeps the planet's own
     /// octave count.
     pub fn hills(&self, dir: DVec3) -> f64 {
-        signed(layer(
+        soft(layer(
             dir,
             self.lumps * freq::HILLS,
             self.seed,
@@ -480,10 +515,12 @@ impl Shape {
     /// worst cases and the band is wider than the ground ever is: the cost
     /// is chunks that are sampled and found empty, never a hole.
     pub fn band(&self) -> (f64, f64) {
+        // The hills reach `CEILING` of their share and not one, because
+        // `soft` eases toward it rather than stopping at one.
         let half = self.relief * 0.5 * self.gain();
-        let up = half * (share::CONTINENT + share::MOUNTAIN + share::HILLS);
-        let down =
-            half * (share::CONTINENT + share::HILLS + share::VALLEY) + self.gorge() * self.gain();
+        let hills = share::HILLS * CEILING;
+        let up = half * (share::CONTINENT + share::MOUNTAIN + hills);
+        let down = half * (share::CONTINENT + hills + share::VALLEY) + self.gorge() * self.gain();
         (self.radius - down, self.radius + up)
     }
 }
@@ -520,6 +557,9 @@ pub struct Gpu {
     /// The continental shelf: where its margin falls, how wide it is, how
     /// much of the continent term it takes, and one spare.
     pub shelf: [f32; 4],
+    /// The hills' own stretch past its knee (`soft`): the knee, the
+    /// ceiling, and two spare.
+    pub knee: [f32; 4],
 }
 
 impl Shape {
@@ -566,6 +606,7 @@ impl Shape {
             salts: [salt::CONTINENT, salt::BELT, salt::RIDGE, salt::CHANNEL],
             hills: [salt::HILLS, self.octaves.max(1), 0, 0],
             shelf: [SHELF_AT as f32, SHELF_WIDE as f32, SHELF_SHARE as f32, 0.0],
+            knee: [KNEE as f32, CEILING as f32, 0.0, 0.0],
         }
     }
 }

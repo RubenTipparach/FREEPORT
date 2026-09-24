@@ -4,9 +4,10 @@
 // highest octaves on a thousand kilometre planet.
 struct Point {
     relief_hi: vec4<f32>, // xyz noise coordinate, w radial density + site bias
-    relief_lo: vec4<f32>, // xyz low part, w relief amplitude after site blend
+    relief_lo: vec4<f32>, // xyz low part, w how much of the relief is kept
     carve_hi: vec4<f32>,  // xyz noise coordinate, w carve amplitude
     carve_lo: vec4<f32>,
+    level: vec4<f32>,     // the sites' own level, and how much of it may only cut
 }
 @group(0) @binding(0) var<storage, read> points: array<Point>;
 @group(0) @binding(1) var<storage, read_write> densities: array<f32>;
@@ -60,6 +61,7 @@ struct Shape {
     salts: vec4<u32>,    // the seeds those four are salted with
     hills: vec4<u32>,    // the hills term's salt and octaves
     shelf: vec4<f32>,    // the shelf's centre, half width and share
+    knee: vec4<f32>,     // the hills' knee and ceiling
 }
 @group(0) @binding(3) var<uniform> shape: Shape;
 
@@ -84,6 +86,21 @@ fn fbm(hi: vec3<f32>, lo: vec3<f32>, base: f32, seed: u32, octaves: u32) -> f32 
 // core's function is `signed` and this is its transcription.
 fn stretch(v: f32) -> f32 {
     return clamp((v - shape.fbm.x) / shape.fbm.y, -1.0, 1.0);
+}
+
+// `biome::soft`: the hills' stretch, the identity out to the knee and
+// easing toward the ceiling past it, so a basin keeps a share of its
+// own hills rather than none. Monotone, like `stretch`, which is what
+// lets the octave loop below bound the height by an interval.
+fn soften(v: f32) -> f32 {
+    let s = (v - shape.fbm.x) / shape.fbm.y;
+    let a = abs(s);
+    if a <= shape.knee.x {
+        return s;
+    }
+    let span = shape.knee.y - shape.knee.x;
+    let u = (a - shape.knee.x) / span;
+    return sign(s) * (shape.knee.x + span * u / (1.0 + u));
 }
 
 // `biome::shelf`: the continent term with its own continental margin in
@@ -130,6 +147,14 @@ fn cut(hi: vec3<f32>, lo: vec3<f32>, standing: f32) -> f32 {
     return (broad + shape.channel.z * c) * reach;
 }
 
+// `field::Planet::surface` as a density: `base` is the radial term with
+// the sites' bias in it, `bare` the relief with no site applied. Rising
+// in `bare` whatever the other three are, which the octave loop's
+// interval relies on.
+fn levelled(base: f32, bare: f32, keep: f32, bias: f32, cuts: f32) -> f32 {
+    return base + bare * keep + cuts * min(0.0, bare * (1.0 - keep) - bias);
+}
+
 @compute @workgroup_size(64)
 fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let i = invocation.x;
@@ -140,11 +165,17 @@ fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
         density += (noise(p.carve_hi.xyz, p.carve_lo.xyz, settings.x + 0x9E37u) - 0.5)
             * p.carve_hi.w;
     }
-    // How much of the relief this direction keeps: nought right across a
-    // levelled town site, where the ground is the site's own height and
-    // the noise is not asked at all.
+    // `field::Planet::surface`, transcribed. The sites' levelling is
+    // `bias + bare * keep`, and a TOWN may only cut: where that stands
+    // over the bare ground the ground is the bare ground, so the density
+    // is `bias + bare * keep` plus `cuts * min(0, bare * (1 - keep) -
+    // bias)`, with `cuts` the share of the levelling that is a town's
+    // rather than a road's (one less `fill`). Nought of either is a
+    // road's own flat, the one place the relief is not asked at all.
     let keep = p.relief_lo.w;
-    if keep != 0.0 {
+    let bias = p.level.x;
+    let cuts = p.level.y;
+    if keep != 0.0 || cuts != 0.0 {
         let hi = p.relief_hi.xyz;
         let lo = p.relief_lo.xyz;
         let gain = shape.fbm.w;
@@ -152,14 +183,15 @@ fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
         // are the terms a planet is READ by, and they are few octaves
         // each, so there is nothing here worth stopping early for.
         let form = landform(hi, lo);
-        density += (form - cut(hi, lo, form)) * gain * keep;
+        let fixed = (form - cut(hi, lo, form)) * gain;
         // The hills, which are the ground under a walker's feet and carry
         // the body's whole octave count. Contouring uses only the SIGN of
         // this, so the remaining octaves need not be evaluated once they
         // cannot reach nought: an octave contributes between nought and
-        // its own amplitude, and `signed` is monotone, so an interval on
-        // the partial sum is an interval on the height.
-        let amp = shape.fbm.z * shape.shares.z * gain * keep;
+        // its own amplitude, `soft` is monotone and so is the levelling
+        // in the bare ground, so an interval on the partial sum is an
+        // interval on the density.
+        let amp = shape.fbm.z * shape.shares.z * gain;
         let count = shape.hills.y;
         let seed = settings.x + shape.hills.x;
         let norm = 2.0 - exp2(1.0 - f32(count));
@@ -169,8 +201,14 @@ fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
         var remaining = norm;
         var frequency = shape.freqs.w;
         for (var octave = 0u; octave < count; octave++) {
-            let low = density + stretch(total / norm) * amp;
-            let high = density + stretch((total + remaining) / norm) * amp;
+            let low = levelled(density, fixed + soften(total / norm) * amp, keep, bias, cuts);
+            let high = levelled(
+                density,
+                fixed + soften((total + remaining) / norm) * amp,
+                keep,
+                bias,
+                cuts,
+            );
             let middle = 0.5 * (low + high);
             let reach = 0.5 * abs(high - low);
             if abs(middle) > reach + error {
@@ -182,7 +220,7 @@ fn sample(@builtin(global_invocation_id) invocation: vec3<u32>) {
             octave_amp *= 0.5;
             frequency *= 2.0;
         }
-        density += stretch(total / norm) * amp;
+        density = levelled(density, fixed + soften(total / norm) * amp, keep, bias, cuts);
     }
     densities[i] = density;
 }

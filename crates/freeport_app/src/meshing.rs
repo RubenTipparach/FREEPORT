@@ -37,8 +37,11 @@ pub struct Done {
 }
 
 impl Job {
-    /// A fully levelled site has no procedural noise to offload. Those
-    /// chunks go straight to the CPU workers and can overlap a GPU batch.
+    /// A chunk wholly inside a levelled site goes straight to the CPU
+    /// workers, where it can overlap a GPU batch. It is not free there:
+    /// a town only CUTS, so the bare relief is still asked for the min
+    /// `Planet::surface` takes, which is why this is a routing choice
+    /// and not a skip.
     fn needs_gpu(&self) -> bool {
         if self.cancelled.load(Ordering::Relaxed) {
             return false;
