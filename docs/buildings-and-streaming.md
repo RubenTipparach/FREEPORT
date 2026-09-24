@@ -67,8 +67,9 @@ of pending jobs limits both in-flight memory and wasted work. A readback failure
 switches subsequent jobs to CPU sampling. Software adapters and unsupported
 compute limits select CPU automatically; `--cpu-terrain` explicitly selects it.
 Conservative local field bounds skip whole air/rock chunks before dispatch.
-Fully levelled town chunks have no noise to evaluate and bypass the compute
-dispatch, so their CPU work can overlap GPU batches for the surrounding terrain.
+Fully levelled town chunks (a town's ground is graded to the country,
+`town::Grade`, and inside the town it is that grade outright) have no noise
+to evaluate and bypass the compute dispatch, so their CPU work can overlap GPU batches for the surrounding terrain.
 
 Layout culling, seam signatures and distance ordering run on a separate planner
 thread. The frame thread consumes an already ordered queue. Terrain rings drop

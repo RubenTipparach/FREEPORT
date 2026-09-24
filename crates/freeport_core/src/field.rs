@@ -507,11 +507,12 @@ impl Planet {
                 // a constant and the relief is never steeper than the
                 // relief, and a level site carves nothing (`keep` is
                 // nought there, so `at` adds no overhang).
-                // The HIGHER end of the arc, which is the upper bound
-                // on the surface all along it: a lower one would call a
-                // box air that the corridor's own ramp still reaches.
+                // The HIGHEST it levels anything to where this box is,
+                // which is the upper bound on the surface under it: the
+                // higher end of a road's ramp, and the highest a town's
+                // graded ground reaches near the box.
                 if let Some(false) = (Sphere {
-                    radius: self.radius + site.h.max(site.to_h),
+                    radius: self.radius + site.top_near(dir, span * self.radius),
                 })
                 .solid(lo, hi)
                 {
@@ -559,7 +560,7 @@ impl Planet {
                 let (_, outer) = site_band(site);
                 (dir - site.nearest(dir).0).length() - span <= outer / self.radius
             })
-            .copied()
+            .cloned()
             .collect();
         Planet {
             sites: Sites::new(kept),

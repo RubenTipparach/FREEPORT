@@ -63,6 +63,7 @@ fn frame_on(radius: f64) -> Frame {
         east,
         north,
         base: radius,
+        lean: glam::DVec2::ZERO,
     }
 }
 
@@ -553,10 +554,13 @@ fn a_walker_walks_a_street_and_is_stopped_by_a_wall() {
         "two and a half seconds up the street went {gone:.2} m"
     );
     assert!(w.on_ground, "the walker is airborne on a street");
-    let over = w.foot - (planet.radius + town.h);
+    // Off the town's own GROUND where the walker got to, which climbs
+    // with the grade.
+    let level = town::site_of(&town).nearest(w.dir).1;
+    let over = w.foot - (planet.radius + level);
     assert!(
         (-0.2..0.6).contains(&over),
-        "the feet stand {over:.2} m off the town's own level"
+        "the feet stand {over:.2} m off the town's own ground"
     );
     // And a lot's wall stops a body: three metres east of a lot's own east
     // face, walking west into it, the walker gets no further than the face

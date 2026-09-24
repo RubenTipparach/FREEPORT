@@ -20,7 +20,7 @@
 //! its towns, so the bake and the game get the same network.
 
 use crate::field::Planet;
-use crate::town::{surface_radius, Town};
+use crate::town::{surface_radius, Town, OUTLINE};
 use glam::DVec3;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -545,10 +545,10 @@ pub fn waysides(
             let index = towns.len() + placed.len();
             let radius = crate::town::size_of(biggest, shore.distance(dir), planet, index, seed)
                 * crate::town::WAYSIDE;
-            if taken
-                .iter()
-                .any(|(d, r)| d.dot(dir) > ((r + radius + crate::town::BETWEEN) / big_r).cos())
-            {
+            // Apart by OUTLINES, `town::plan`'s rule: by radii a village
+            // stood inside a city, where two levellings meet at a cliff.
+            let apart = |r: f64| ((r + radius) * OUTLINE + crate::town::BETWEEN) / big_r;
+            if taken.iter().any(|(d, r)| d.dot(dir) > apart(*r).cos()) {
                 continue;
             }
             // Filtered to the sites this ONE direction can reach, which
@@ -564,7 +564,7 @@ pub fn waysides(
             placed.push(p);
         }
     }
-    crate::town::lay_all_from(&placed, big_r, sea, seed, towns.len())
+    crate::town::lay_all_from(&placed, planet, sea, seed, towns.len())
 }
 
 mod align;

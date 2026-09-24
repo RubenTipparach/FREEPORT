@@ -1506,6 +1506,13 @@ level is the lowest of them; a dip between two neighbouring samples is
 the only ground a site can still fill, and how deep that can be is
 bounded by the `LEVEL` fall the site had to pass to be accepted.
 
+**That one level is GONE, and the section on graded ground below is
+what replaced it.** A town's ground follows the country now, cut and
+never filled, and `LEVEL` went with the flat pad it limited: what is
+left to limit is the cut, which is `CUT`. The paragraphs from here to
+that section are the record of the flat pad, and every rule in them
+about cutting and never filling still holds.
+
 **A CITY IS TEN TIMES BIGGER now and that made a QUARRY of every one of
 them, which is the constant's own doc condemning itself.** `TOWN_RADIUS`
 is 537 m rather than 170, the square root of ten on the radius for ten
@@ -1582,6 +1589,7 @@ all, and each had to be given a level that cuts before it tested
 anything again.
 
 **The ground under a town is LEVELLED and that is the field's job**
+(GRADED now, which is the same job: the section below)
 (`Planet.sites`: one right across the town and nought past an `APRON` of
 12 m, the relief the site's height and the noise not asked), so a plateau
 has a smooth skirt cut by the same field, and every building stands plumb
@@ -2235,6 +2243,110 @@ world of identical towns while carrying a city two and a half times the
 area of any of them. A chunk near the port is 17 ms on lavapipe against
 12 before, which is what a site that cuts costs: `surface` can no longer
 return a level without asking the relief what was under it.
+
+## A city's ground is GRADED to the country, and that is what let it grow
+
+The owner asked why the city is so small, and the answer was not the
+constant: it was the flat pad. A town levelled its ground to ONE height
+right across its outline, and a site was accepted only where the
+natural ground fell no more than `CUT` (15 m) across the whole of it.
+`examples/town_ground.rs` measures that over 240 land candidates on the
+harness body: at a 537 m town the median fall across its outline is
+99 m and not one candidate in 240 falls under fifteen, so the 130
+cities the atlas found were the rare plains out of twenty thousand
+directions; at three times the radius the median fall is 282 m and a
+flat pad six and a half kilometres across is not a thing this planet
+has at all.
+
+**So a town's ground FOLLOWS the country** (`town::Grade`, in
+`town/grade.rs`). It is surveyed on a grid of `STEP` (50 m), each node
+the lowest bare ground over its own cell at half a step; lowered until
+no two neighbours differ by more than `GRADE` (8%) over the run
+between them, which is a chamfer distance transform with the heights
+as its seeds and only ever lowers, so a town still only ever CUTS; sunk
+`DIP` (0.75 m) more; and drawn between nodes as a quadratic B-spline.
+Graded at 8%, a third of land candidates take a city three times the
+size with no cut deeper than fifteen metres anywhere, and 58% over four
+fifths of it. `docs/civil-engineering.md` has the grade's row: eight
+per cent is an urban collector on rolling ground, and every street runs
+along one of the two axes it is held on.
+
+**A B-SPLINE, because a street is laid on this in straight pieces.** A
+bilinear grid creases along every node line, and at eight per cent
+either side of a ridge a 2.8 m piece spanning one is buried 11 cm in
+its middle. The spline's slope along an axis is a linear blend of node
+steps, so it never passes `GRADE`, and its curvature is bounded by
+`2 GRADE / STEP`, which holds the same piece within three millimetres.
+
+**`DIP` is measured, not chosen.** A node is the lowest of nine samples
+over its cell and the spline is an average, so a dip narrower than the
+samples can stand under the grade: a street or a floor hanging over a
+hollow. At five metres over twelve accepted big towns the worst is
+0.38 to 0.71 m on under 0.6% of the ground, and it does not grow with
+finer sampling, so the whole ground is cut 0.75 m deeper rather than
+left hanging anywhere. `a_graded_ground_only_ever_cuts` holds it at
+under five centimetres off the grid.
+
+**Only what the town READS is held**, and the SEA is a floor. A survey
+that held every node out to a margin round the town dragged a coastal
+city's waterfront under the water off the sea floor beside it, which
+refused exactly the coastal sites the size law wants biggest: the test
+ball's towns shrank to 86 to 101 m and moved inland. A node is held now
+only when a point the town reaches (its levelling and its skirt) is
+within a step and a half of it, which is what the spline reads, and
+every node is floored at the habitable window over the sea: the ground
+is the LOWER of the grade and the country, so a grade standing over the
+sea floor offshore changes nothing there.
+
+**A site is accepted on how deep its grade CUTS** (`settle`), surveyed
+over the town's whole band because a town's lobes are drawn off its
+rank and the rank is not known yet, and graded again along its own
+outline once it is (`grade_of`), which cuts no deeper: fewer nodes are
+held, and a node held by nothing below it stands at least as high. The
+grade is DERIVED at load rather than stored, off the bare analytic
+surface the probe already guarantees is the baked body's, and `GRADE`
+is in the atlas's fingerprint so a file baked at another grade is
+refused.
+
+**A building stands over ALL its ground, on a plinth.** `lot_stand`
+puts a building at the highest the ground reaches under its footprint,
+asked at nine points because the spline can bulge 16 cm between two
+corners of a twenty metre lot, so no room has earth in it; a concrete
+plinth goes down to under the lowest and on `BURY` (0.3 m) more, solid
+because a body walking round it is stopped by it. The port's deepest is
+2.29 m. `a_building_on_graded_ground_stands_on_a_plinth`.
+
+**A street is DRAPED, and the square is laid in tiles.** A piece of
+street is written flat in its own frame; `fabric_part` lifts every
+vertex and lamp by the ground at its own point and turns every box to
+the slope at its own middle (`Frame::lean`, which shears a point and
+turns an axis so the two agree to a third of a millimetre on a kerb).
+A market square is ONE piece up to 137 m across and one plane cannot lie
+on a curving grade, so its paving is cut into eight metre tiles.
+`a_street_is_laid_on_its_graded_ground` measures every vertex of every
+piece of the port against where it belongs: 7.9 mm at worst.
+
+**And the cities GREW.** `TOWN_RADIUS` is 1,611 m rather than 537, and
+the atlas re-baked on graded ground: **the median city is 948 m of
+radius against 209, 73 of the 160 are over a kilometre against none,
+and the port is 1,815 m against 517**, so the median city covers about
+twenty times the ground it did. `WAYSIDE` fell by the same three so a
+village is the size a village was (a median of 120 m). From 5 km over
+the port the city fills the frame, 4,206 tiles of solid blocks at
+672,924 triangles for the eight built towns. The bake is 877.9 s
+against 472.7, most of it grading the candidates it looks at, and at
+load every town is graded again off the bare planet on every core.
+
+**Two things the bigger cities found that were always wrong.** A
+roadside village kept apart from other towns by their RADII while
+cities kept apart by their OUTLINES, so a village could stand inside a
+city's outline, where two levellings meet at a cliff: a slip laid
+across one fell 61 m over 2.8 m. And the harness's census of where
+tarmac stops walked every piece of street of every town for each of
+3,512 mouths, which was 294 s of startup once a city was 60,000 pieces;
+it visits towns nearest first now, and all three of the startup's
+ground and road reports run on a thread of their own, because they are
+log lines and nothing waits on them.
 
 ## A city is BLOCKS of four by four lots, and a settlement has a TIER
 
@@ -5179,7 +5291,7 @@ time it was broken.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 227, the core, about 100 s
+cargo test -p freeport_core                       # 234, the core, about 100 s
 cargo test -p freeport_app                        # 63, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100

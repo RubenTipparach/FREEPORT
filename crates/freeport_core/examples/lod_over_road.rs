@@ -133,6 +133,7 @@ fn lay(
             r: corridor,
             fills: true,
             outline: None,
+            grade: None,
         })
         .collect();
     (line, run, sites)

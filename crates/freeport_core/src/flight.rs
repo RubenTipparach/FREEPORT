@@ -64,7 +64,12 @@ pub fn sweep_planet(planet: &Planet, from: DVec3, to: DVec3, clearance: f64) -> 
         let (inner, _) = site_band(site);
         let inside = 2.0 * (inner / (2.0 * planet.radius)).sin();
         let separation = (first - site.dir).length();
-        if !earlier_site && separation + span < inside {
+        // Only a LEVEL disc is a sphere inside itself. A town on graded
+        // ground climbs across itself, a town's outline levels less than
+        // its band's widest along most bearings, and a road's arc ramps,
+        // so each of those is swept against its own field below.
+        let level = site.grade.is_none() && site.outline.is_none() && site.h == site.to_h;
+        if level && !earlier_site && separation + span < inside {
             return sweep(
                 &Sphere {
                     radius: planet.radius + site.h,

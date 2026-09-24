@@ -15,6 +15,7 @@
 use crate::field::{hash3, Density, Planet};
 use crate::model::Kind;
 use glam::{DVec2, DVec3};
+use std::sync::Arc;
 
 /// A lot: where on the town's grid, metres east and north of its middle,
 /// how big, how tall, and what kind of building stands on it.
@@ -55,6 +56,31 @@ pub struct Town {
     /// The town's OWN seed, `town_seed` of the world's and its index:
     /// what its lobes, its plazas and its skins are drawn off.
     pub seed: u32,
+    /// The ground it stands on, GRADED to the country it was built in
+    /// (`Grade`). None on a town laid with no planet under it, which is
+    /// level at `h`.
+    pub grade: Option<Arc<Grade>>,
+}
+
+impl Town {
+    /// The ground at a point of the town's grid, metres east and north of
+    /// its middle, in metres over the mean radius.
+    pub fn ground(&self, x: f64, z: f64) -> f64 {
+        self.grade.as_ref().map_or(self.h, |g| g.at(x, z))
+    }
+
+    /// How steeply that ground climbs there, east and north.
+    pub fn slope(&self, x: f64, z: f64) -> DVec2 {
+        self.grade.as_ref().map_or(DVec2::ZERO, |g| g.slope(x, z))
+    }
+
+    /// This town on graded ground, its level the grade's at its middle,
+    /// which is what anything wanting one height for a town reads.
+    pub fn graded(mut self, grade: Grade) -> Town {
+        self.h = grade.at(0.0, 0.0);
+        self.grade = Some(Arc::new(grade));
+        self
+    }
 }
 
 /// A frame on the sphere: a direction, east and north there, and the
@@ -65,18 +91,50 @@ pub struct Frame {
     pub east: DVec3,
     pub north: DVec3,
     pub base: f64,
+    /// How steeply the ground the frame is laid on climbs, east and
+    /// north: nought for a building, which stands plumb, and the grade's
+    /// own slope for a piece of street, which lies on it.
+    ///
+    /// A point is SHEARED onto that slope rather than turned, so a piece
+    /// of street keeps its own length across the ground and meets the
+    /// next one without a crack, and a box is turned so its top lies in
+    /// that same plane (`axis`): the two agree to a third of a millimetre
+    /// on a kerb at the grade.
+    pub lean: DVec2,
 }
 
 impl Frame {
     /// A world point in the frame: east, north, up from the ground.
     pub fn local(&self, p: DVec3) -> DVec3 {
         let d = p - self.dir * self.base;
-        DVec3::new(d.dot(self.east), d.dot(self.north), d.dot(self.dir))
+        let (e, n) = (d.dot(self.east), d.dot(self.north));
+        DVec3::new(e, n, d.dot(self.dir) - self.lean.dot(DVec2::new(e, n)))
     }
 
     /// A frame point, east, north and up, in the world.
     pub fn world(&self, l: DVec3) -> DVec3 {
-        self.dir * self.base + self.east * l.x + self.north * l.y + self.dir * l.z
+        let up = l.z + self.lean.dot(DVec2::new(l.x, l.y));
+        self.dir * self.base + self.east * l.x + self.north * l.y + self.dir * up
+    }
+
+    /// A rigid DIRECTION in the frame, in the world: the axis of a box,
+    /// turned so its up is the ground's own.
+    pub fn axis(&self, v: DVec3) -> DVec3 {
+        let v = if self.lean == DVec2::ZERO {
+            v
+        } else {
+            let up = DVec3::new(-self.lean.x, -self.lean.y, 1.0).normalize();
+            glam::DQuat::from_rotation_arc(DVec3::Z, up) * v
+        };
+        self.east * v.x + self.north * v.y + self.dir * v.z
+    }
+
+    /// A surface NORMAL in the frame, in the world, through the shear
+    /// `world` applies: unnormalised.
+    pub fn normal(&self, v: DVec3) -> DVec3 {
+        self.east * (v.x - self.lean.x * v.z)
+            + self.north * (v.y - self.lean.y * v.z)
+            + self.dir * v.z
     }
 
     /// The same frame turned `yaw` radians about its own up, anticlockwise
@@ -89,6 +147,10 @@ impl Frame {
             east: (self.east * c + self.north * s).normalize_or(self.east),
             north: (self.north * c - self.east * s).normalize_or(self.north),
             base: self.base,
+            lean: DVec2::new(
+                self.lean.x * c + self.lean.y * s,
+                self.lean.y * c - self.lean.x * s,
+            ),
         }
     }
 }
@@ -140,44 +202,38 @@ const SMALLEST: f64 = 0.32;
 /// How far a town's own hash moves its size either way, so two towns on
 /// one shore are not twins.
 const SIZE_JITTER: f64 = 0.16;
-/// How far a site may FALL across itself, as a share of the town's own
-/// radius. It is what the grading has to cut away, and every metre of it
-/// is a step down at the town's rim: at a tenth a hundred and fifty metre
-/// city is cut fifteen metres into its own hill, which reads as a
-/// terrace, and much more than that reads as a quarry.
-const LEVEL: f64 = 0.10;
-/// And the DEEPEST a site may cut whatever its size, metres.
+/// The DEEPEST a town's graded ground may cut into the country, metres.
 ///
-/// `LEVEL` is a share of the town's own radius, so it says the cut
-/// grows with the town, and its own doc says what that is for: "at a
-/// tenth a hundred and fifty metre city is cut fifteen metres into its
-/// own hill, which reads as a terrace, and much more than that reads as
-/// a quarry". A city is 537 m of radius now rather than 170, so that
-/// share is a 105 m cut at the worst and 18 m at the mean, measured on
-/// this body: the constant's own doc condemned it seven times over the
-/// day the towns grew.
+/// It was a limit on how far a site could FALL across itself, because a
+/// town was levelled to one height and the fall was what the grading cut
+/// away. The ground follows the country now (`Grade`), so what is left to
+/// limit is the cut itself: where the country climbs faster than
+/// `GRADE`, the grade stands further and further under it, and this is
+/// how far that may go before the site is refused.
 ///
 /// A cut is one number a share cannot express, because what says
 /// terrace or quarry is the WALL in metres against the buildings beside
 /// it: fifteen metres is five storeys and is a retaining wall a town
-/// has, and a hundred is a cliff nothing built explains. It is a
-/// maximum rather than a minimum, so a body whose towns are small never
-/// meets it: on a two kilometre ball with twelve metres of relief the
-/// share binds first and this never does.
+/// has, and a hundred is a cliff nothing built explains.
 ///
 /// It is what makes a town's own apron CLIMBABLE, which is the other
 /// half. `field::site_skirt` ramps the cut over 24.6 m and a smoothstep
 /// climbs at one and a half its average, so a 15 m cut is an apron of
 /// 0.91 against `walker::STAND`'s own 1.19: a walker gets up it and so
 /// does a car, which is this game's own rule that the two are one
-/// answer. At 105 m it was 6.41, which is a wall.
-const CUT: f64 = 15.0;
+/// answer.
+pub(crate) const CUT: f64 = 15.0;
 
 /// How much of its own size a settlement dropped on a ROAD gets. A place
 /// that grew because the road goes past it is a village whatever its
 /// shore, so the coastal law still shapes it and this is what keeps it
 /// from competing with the cities the road joins.
-pub(crate) const WAYSIDE: f64 = 0.42;
+///
+/// It was 0.42 of a 537 m city, and it is a third of that against a city
+/// three times the size, so a village is the size a village was: what
+/// the owner asked to grow was the CITY, and a village is not a small
+/// city but a different thing (`Tier`).
+pub(crate) const WAYSIDE: f64 = 0.14;
 
 /// East and north at a direction on the sphere.
 pub fn frame_at(dir: DVec3) -> (DVec3, DVec3) {
@@ -246,7 +302,8 @@ pub fn surface_radius_from(planet: &Planet, dir: DVec3, top: f64) -> f64 {
 }
 
 /// A lot's own frame on the sphere: its centre direction, east and north
-/// there keeping the town's heading, and the town's level as its base.
+/// there keeping the town's heading, and the town's ground there as its
+/// base.
 pub fn lot_frame(planet_radius: f64, town: &Town, x: f64, z: f64) -> Frame {
     let dir =
         (town.dir + town.east * (x / planet_radius) + town.north * (z / planet_radius)).normalize();
@@ -256,8 +313,38 @@ pub fn lot_frame(planet_radius: f64, town: &Town, x: f64, z: f64) -> Frame {
         dir,
         east,
         north,
-        base: planet_radius + town.h,
+        base: planet_radius + town.ground(x, z),
+        lean: DVec2::ZERO,
     }
+}
+
+/// How far a building's plinth goes on under the lowest ground round it,
+/// metres, so a coarse chunk far off never shows sky under its downhill
+/// corner.
+const BURY: f64 = 0.3;
+
+/// A LOT's own frame, standing on its own ground, turned to face its
+/// street, and how deep a PLINTH it stands on.
+///
+/// On graded ground the footprint is not level, so the building stands
+/// at the HIGHEST the ground reaches under it, which keeps the ground
+/// out of its rooms, and a plinth goes down to the lowest and on under
+/// it. Nine points and not four corners, because the spline can bulge
+/// between two corners: over a twenty metre lot by up to 16 cm, and
+/// between nine points by a quarter of that.
+pub fn lot_stand(planet_radius: f64, town: &Town, lot: &Lot) -> (Frame, f64) {
+    let mut frame = lot_frame(planet_radius, town, lot.x, lot.z);
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for dz in [-0.5, 0.0, 0.5] {
+        for dx in [-0.5, 0.0, 0.5] {
+            let g = town.ground(lot.x + dx * lot.w, lot.z + dz * lot.w);
+            lo = lo.min(g);
+            hi = hi.max(g);
+        }
+    }
+    frame.base = planet_radius + hi;
+    let plinth = if hi > lo { hi - lo + BURY } else { 0.0 };
+    (frame.turned(lot.yaw), plinth)
 }
 
 /// The site a town levels: the ground it stands on, right across its own
@@ -270,7 +357,63 @@ pub fn lot_frame(planet_radius: f64, town: &Town, x: f64, z: f64) -> Frame {
 /// apron covers the half block and half street a lot's own corner stands
 /// past its centre.
 pub fn site_of(town: &Town) -> Site {
-    Site::town(town.dir, town.h, town.radius, town.along, town.seed)
+    Site::town(town.dir, town.h, town.radius, town.along, town.seed).graded(town.grade.clone())
+}
+
+/// The lowest a town's graded ground may stand, metres over the mean
+/// radius: the bottom of the habitable window over the sea (`sea` is a
+/// radius). One function, because the survey that accepts a site and the
+/// one that grades the town on it have to hold its nodes to one floor.
+pub(crate) fn floor(planet: &Planet, sea: f64) -> f64 {
+    sea - planet.radius + window(planet).0
+}
+
+/// A town's ground graded off the BARE planet, along the town's own
+/// outline: the constrained region is where the town reaches, so a hill
+/// past its squeezed side does not drag its ground down.
+pub fn grade_of(bare: &Planet, sea: f64, town: &Town) -> Graded {
+    let site = Site::town(town.dir, town.h, town.radius, town.along, town.seed);
+    let skirt = crate::field::site_skirt(&site);
+    Grade::survey(bare, town.dir, site.r, skirt, floor(bare, sea), &|d| {
+        site.level_r(d)
+    })
+}
+
+/// Every town graded, on as many threads as the machine has: a big city
+/// is a hundred thousand samples of the bare planet and a body is eight
+/// hundred towns.
+pub fn grade_all(planet: &Planet, sea: f64, towns: Vec<Town>) -> Vec<Town> {
+    let bare = planet.bare();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let per = towns.len().div_ceil(threads.max(1)).max(1);
+    let mut chunks: Vec<Vec<Town>> = Vec::new();
+    let mut rest = towns;
+    while !rest.is_empty() {
+        let tail = rest.split_off(per.min(rest.len()));
+        chunks.push(rest);
+        rest = tail;
+    }
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = chunks
+            .into_iter()
+            .map(|chunk| {
+                let bare = &bare;
+                scope.spawn(move || {
+                    chunk
+                        .into_iter()
+                        .map(|t| {
+                            let g = grade_of(bare, sea, &t).grade;
+                            t.graded(g)
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("a grading thread"))
+            .collect()
+    })
 }
 
 /// The order qualifying sites are taken in: the PORT first, which is the
@@ -346,8 +489,6 @@ pub fn size_of(biggest: f64, shore: f64, planet: &Planet, index: usize, seed: u3
 
 /// What the natural ground does across a town's own site.
 struct Ground {
-    /// The LOWEST it reaches, metres over the sea.
-    low: f64,
     /// How far it falls from end to end.
     fall: f64,
     /// Which way it falls, in the site's own east and north: downhill,
@@ -400,7 +541,6 @@ fn site_ground(planet: &Planet, sea: f64, dir: DVec3, h: f64, radius: f64) -> Gr
         }
     }
     Ground {
-        low: lo,
         fall: hi - lo,
         down: down.normalize_or_zero(),
     }
@@ -484,7 +624,7 @@ pub fn plan(planet: &Planet, sea: f64, biggest: f64, count: usize, seed: u32) ->
     // carries is its rank. It is a sort rather than the acceptance order
     // because size is now a fact about the SITE and the order is a hash.
     placed.sort_by(|a, b| b.radius.total_cmp(&a.radius));
-    lay_all(&placed, big_r, sea, seed)
+    lay_all(&placed, planet, sea, seed)
 }
 
 /// A site that has been accepted: where it is, how big, how the ground
@@ -498,16 +638,23 @@ pub(crate) struct Placement {
     pub along: DVec2,
 }
 
-/// Accept a site if the ground across it is level enough, and answer
-/// where its town would stand and which way it would grow.
+/// Accept a site if its town can be GRADED onto it, and answer where it
+/// would stand and which way it would grow.
 ///
-/// **The level is the LOWEST ground across the site and never the height
-/// at its middle.** A site blends the relief TOWARD its own height
-/// (`Planet::surface_blend`), so a level taken at the middle of a sloping
-/// site raises the downhill half: the town then stands on a pedestal with
-/// its own skirt hanging over the land, which is a city that ADDED
-/// ground rather than one that flattened it. Cut to the lowest and the
-/// site can only ever take ground away, which is what grading is.
+/// **What is tested is how deep the grading CUTS, not how far the ground
+/// falls.** A town levelled to one height had to find ground falling no
+/// more than `CUT` across its whole outline, which on this body is not
+/// one land candidate in 240 at a city's size. A town graded to the
+/// country (`Grade`) only has to find ground its grade can follow within
+/// `CUT`: at three times the size, a third of land candidates.
+///
+/// The survey here is over the town's WHOLE band, the furthest its
+/// outline can reach on any bearing, because the outline's lobes are
+/// drawn off the town's own index and that is not known until the towns
+/// are ranked. The town is graded again along its own outline once it
+/// is (`grade_of`), and that grade cuts no deeper than this one: fewer
+/// nodes are held to it, and a node held by nothing below it stands at
+/// least as high.
 pub(crate) fn settle(
     planet: &Planet,
     sea: f64,
@@ -516,24 +663,30 @@ pub(crate) fn settle(
     radius: f64,
 ) -> Option<Placement> {
     let ground = site_ground(planet, sea, dir, h, radius);
-    // The bound is a SLOPE across whatever the survey walked, so
-    // widening the rings to the town's own outline asks for the same
-    // steepness over more ground rather than silently asking for a
-    // flatter world. `LEVEL` was a fall over the old 1.05 radii.
-    if ground.fall > (radius * OUTLINE * (LEVEL / 1.05)).min(CUT) {
+    let far = radius * OUTLINE + APRON;
+    // A cheap refusal first, off forty nine marches: ground that falls
+    // further across the town than its grade can climb on a diagonal and
+    // its cut can take is ground no grade fits, and the survey is a
+    // hundred thousand samples.
+    let most = 2.0 * far * GRADE * std::f64::consts::SQRT_2 + CUT + planet.overhang;
+    if ground.fall > most {
         return None;
     }
-    // And the level it will actually STAND at has to be inside the
-    // window too. `plan` tests the candidate's own direction and this
-    // takes the LOWEST of forty nine marches round it, which is a
-    // different number by up to the `LEVEL` fall the site just passed:
-    // a candidate accepted at the window's floor could settle under the
-    // sea, and what would be built there is a levelled plateau with
-    // water over it. The window is asked here rather than passed in
-    // because `plan` and `road::waysides` both call this and a floor
-    // handed in twice is a floor one caller gets wrong.
+    let skirt = crate::field::ARC_SKIRT * WOBBLE.hypot(1.0);
+    let graded = Grade::survey(&planet.bare(), dir, far, skirt, floor(planet, sea), &|_| {
+        far
+    });
+    if graded.cut > CUT {
+        return None;
+    }
+    // And the lowest it stands has to be inside the window: a town
+    // whose ground is cut under the sea is a levelled plateau with water
+    // over it. The window is asked here rather than passed in because
+    // `plan` and `road::waysides` both call this and a floor handed in
+    // twice is a floor one caller gets wrong.
+    let over_sea = |h: f64| h + planet.radius - sea;
     let (low, _) = window(planet);
-    if ground.low < low {
+    if over_sea(graded.low) < low - 1e-6 {
         return None;
     }
     // A town grows ALONG the shore, which is across the way the land
@@ -542,15 +695,16 @@ pub(crate) fn settle(
     let along = DVec2::new(-ground.down.y, ground.down.x);
     Some(Placement {
         dir,
-        over_sea: ground.low,
+        over_sea: over_sea(graded.grade.at(0.0, 0.0)),
         radius,
         along,
     })
 }
 
-/// The towns of a list of placements, in the order given.
-pub(crate) fn lay_all(placed: &[Placement], big_r: f64, sea: f64, seed: u32) -> Vec<Town> {
-    lay_all_from(placed, big_r, sea, seed, 0)
+/// The towns of a list of placements, in the order given, each graded
+/// onto the planet along its own outline.
+pub(crate) fn lay_all(placed: &[Placement], planet: &Planet, sea: f64, seed: u32) -> Vec<Town> {
+    lay_all_from(placed, planet, sea, seed, 0)
 }
 
 /// The same, with the first one's index given: a settlement's index is
@@ -558,25 +712,26 @@ pub(crate) fn lay_all(placed: &[Placement], big_r: f64, sea: f64, seed: u32) -> 
 /// rather than starting again at nought and being their twins.
 pub(crate) fn lay_all_from(
     placed: &[Placement],
-    big_r: f64,
+    planet: &Planet,
     sea: f64,
     seed: u32,
     first: usize,
 ) -> Vec<Town> {
-    placed
+    let towns = placed
         .iter()
         .enumerate()
         .map(|(i, p)| {
             lay(
                 p.dir,
-                p.over_sea + sea - big_r,
+                p.over_sea + sea - planet.radius,
                 p.radius,
                 p.along,
                 first + i,
                 seed,
             )
         })
-        .collect()
+        .collect();
+    grade_all(planet, sea, towns)
 }
 
 /// A town's own seed, off the body's and its index: one function, so
@@ -608,6 +763,7 @@ pub fn lay(dir: DVec3, h: f64, radius: f64, along: DVec2, index: usize, seed: u3
         pieces,
         index,
         seed,
+        grade: None,
     }
 }
 
@@ -647,6 +803,9 @@ pub use shore::*;
 
 mod site;
 pub use site::*;
+
+mod grade;
+pub use grade::{Grade, Graded, DIP, GRADE};
 
 mod street;
 pub use street::*;

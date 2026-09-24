@@ -91,6 +91,7 @@ fn grid(n: i32) -> Town {
         pieces,
         index: 0,
         seed: 0,
+        grade: None,
     }
 }
 

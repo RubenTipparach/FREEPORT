@@ -155,8 +155,10 @@ fn a_map_draws_a_towns_plan_and_its_roads_where_they_are() {
     let near =
         |c: [u8; 4], d: paint::Colour| (0..3).all(|i| (c[i] as i32 - d[i] as i32).abs() < 24);
     // A road's own points out in the country, a few kilometres from any
-    // town, are drawn in the road's colour.
-    let wide = View::new(first.dir, planet.radius, 30.0);
+    // town, are drawn in the road's colour: a view on the middle of the
+    // longest road, which is country wherever the towns came out.
+    let longest = lines.iter().max_by_key(|l| l.len()).expect("a road");
+    let wide = View::new(longest[longest.len() / 2], planet.radius, 30.0);
     let pic = draw(&scene, &wide, w, h, 4);
     let (mut asked, mut hit) = (0, 0);
     for line in &lines {
@@ -210,15 +212,39 @@ fn a_town_too_fine_to_draw_is_drawn_as_its_built_up_area() {
     let changed = (0..w * h)
         .filter(|i| (0..3).any(|c| pic.rgba[i * 4 + c].abs_diff(bare_pic.rgba[i * 4 + c]) > 10))
         .count();
-    let cells = blocks_of(first).len() as f64 * (PITCH / view.scale).powi(2);
+    let built = blocks_of(first);
+    let side = PITCH / view.scale;
+    let cells = built.len() as f64 * side * side;
+    // Where a cell has no built neighbour, the street round it and the
+    // pixels the edge only partly covers make a ring a pixel or so wide:
+    // what "nothing past it" can honestly allow, and it grows with how
+    // ragged the town is rather than with its area.
+    let open = built
+        .iter()
+        .map(|&(x, z)| {
+            [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                .iter()
+                .filter(|(dx, dz)| !built.contains(&(x + dx, z + dz)))
+                .count()
+        })
+        .sum::<usize>() as f64;
+    let ring = open * side * 1.5;
     println!(
-        "town 0 at {} m a pixel changed {changed} pixels against {cells:.0} of built-up area",
+        "town 0 at {} m a pixel changed {changed} pixels against {cells:.0} of built-up area \
+         and a ring of {ring:.0} round its {open} open edges",
         view.scale
     );
     assert!(changed as f64 > 0.85 * cells, "the town's area is drawn");
-    assert!((changed as f64) < 1.25 * cells, "and nothing past it");
-    // Its middle reads as the town and not as the ground.
-    let mid = paint::at(view.to_px(first.dir).expect("in view"), w, h);
+    assert!((changed as f64) < cells + ring, "and nothing past it");
+    // Its built middle reads as the town and not as the ground: the
+    // built block nearest its middle, because the middle itself is its
+    // market square wherever the town is big enough to have one.
+    let &(bx, bz) = built
+        .iter()
+        .min_by_key(|(x, z)| x * x + z * z)
+        .expect("a built block");
+    let at = town::lot_frame(planet.radius, first, bx as f64 * PITCH, bz as f64 * PITCH).dir;
+    let mid = paint::at(view.to_px(at).expect("in view"), w, h);
     let c = pic.pixel(mid.x as usize, mid.y as usize);
     let want = paint::building(Tier::of(first.radius));
     assert!(

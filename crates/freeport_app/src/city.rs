@@ -53,9 +53,15 @@ pub fn worst_cut(world: &crate::world::World) -> (f64, f64, f64) {
         for k in 0..12 {
             let a = std::f64::consts::TAU * k as f64 / 12.0;
             let out = (town.east * a.cos() + town.north * a.sin()).normalize();
-            let edge = site.level_r(town.dir);
+            // At THIS bearing's own edge. It read `level_r` at the town's
+            // middle, which is the widest the town reaches on any bearing,
+            // so on every other bearing it measured ground the town never
+            // levelled: harmless while a town was one height, and on
+            // graded ground a node past what the town reads, which is
+            // never held, reported a 192 m cut.
+            let edge = site.level_r((town.dir * radius + out).normalize());
             let dir = (town.dir * radius + out * edge).normalize();
-            worst = worst.max(bare.surface(dir).0 - site.h);
+            worst = worst.max(bare.surface(dir).0 - site.nearest(dir).1);
         }
         deep = deep.max(worst);
         // A smoothstep climbs at one and a half times its own average.

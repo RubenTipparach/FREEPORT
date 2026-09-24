@@ -210,6 +210,7 @@ fn a_wall_stops_a_car_and_a_kerb_is_driven_up() {
         east: DVec3::X,
         north: DVec3::Z,
         base: R,
+        lean: glam::DVec2::ZERO,
     };
     let block = |along: f64, half: DVec3| {
         crate::model::Solid {
@@ -415,6 +416,7 @@ fn a_car_that_has_met_a_wall_can_back_off_it_again() {
         east: DVec3::X,
         north: DVec3::Z,
         base: R,
+        lean: glam::DVec2::ZERO,
     };
     let slab = |centre: DVec3, half: DVec3| {
         crate::model::Solid {
@@ -721,6 +723,7 @@ fn wall_at(along: f64, half: DVec3) -> Block {
         east,
         north: east.cross(dir).normalize(),
         base: R,
+        lean: glam::DVec2::ZERO,
     };
     crate::model::Solid {
         centre: DVec3::new(0.0, 0.0, half.z),

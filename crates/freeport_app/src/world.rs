@@ -453,7 +453,7 @@ pub(crate) fn build(args: &Args) -> World {
     // nobody has baked still runs and says so.
     let baked = crate::atlas::load(HOME, &planet, SEA, TOWN_RADIUS);
     let (towns, roads, runs) = match &baked {
-        Some(a) => (a.towns(), a.roads(), a.runs()),
+        Some(a) => (a.towns(&planet, SEA), a.roads(), a.runs()),
         None => {
             warn!(
                 "no atlas for {HOME}: planning it here, which takes seconds.                  `--bake-atlas` writes one and this becomes a file read."
@@ -474,7 +474,7 @@ pub(crate) fn build(args: &Args) -> World {
     // villages it grew, and inside a town's levelling the ground is the
     // town's to hold and its streets are the town's to pave.
     let discs: freeport_core::field::Sites = towns.iter().map(town::site_of).collect();
-    let mut sites: Vec<_> = discs.iter().copied().collect();
+    let mut sites: Vec<_> = discs.iter().cloned().collect();
     let mut routes = lay_routes(&roads, &runs, planet.radius, &discs, &mut sites);
     let corridors = sites.len() - towns.len();
     planet.sites = sites.into();

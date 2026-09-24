@@ -744,23 +744,35 @@ pub fn dead_ends(world: &World) -> (usize, usize, f64, usize) {
 
 /// How far a direction stands from the nearest paving ANY town laid,
 /// metres: nought where it is already on a street.
+///
+/// Nearest town FIRST, and a town is not looked into at all once its
+/// middle less the furthest its paving can reach is further than the
+/// best already found. Walking every piece of every town for every mouth
+/// was nine seconds of startup while a city was 1,800 pieces of street,
+/// and 294 once cities three times the size were 60,000 of them.
 fn to_paving(world: &World, at: DVec3, radius: f64) -> f64 {
-    world
+    let mut order: Vec<(f64, &freeport_core::town::Town)> = world
         .towns
         .iter()
-        .map(|town| {
-            let here = at * radius - town.dir * radius;
-            let (x, z) = (here.dot(town.east), here.dot(town.north));
-            town.pieces
-                .iter()
-                .map(|p| {
-                    ((p.x - x).abs() - p.w * 0.5)
-                        .max(0.0)
-                        .hypot(((p.z - z).abs() - p.d * 0.5).max(0.0))
-                })
-                .fold(f64::INFINITY, f64::min)
-        })
-        .fold(f64::INFINITY, f64::min)
+        .map(|t| (t.dir.angle_between(at) * radius, t))
+        .collect();
+    order.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut best = f64::INFINITY;
+    for (centre, town) in order {
+        let reach = town.radius * freeport_core::town::OUTLINE + freeport_core::town::PITCH;
+        if centre - reach >= best {
+            break;
+        }
+        let here = at * radius - town.dir * radius;
+        let (x, z) = (here.dot(town.east), here.dot(town.north));
+        for p in &town.pieces {
+            let d = ((p.x - x).abs() - p.w * 0.5)
+                .max(0.0)
+                .hypot(((p.z - z).abs() - p.d * 0.5).max(0.0));
+            best = best.min(d);
+        }
+    }
+    best
 }
 
 /// How far the ground a COARSE chunk draws stands over a road's own

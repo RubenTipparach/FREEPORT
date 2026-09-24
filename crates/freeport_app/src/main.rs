@@ -144,7 +144,17 @@ const TOWNS: usize = 160;
 /// ground it covers: 170 m becomes 537 and a town of 176 lots becomes
 /// one of 1,580. What that costs is the built set, because a town is
 /// its own triangles and `TOWNS_BUILT` of them are standing at once.
-const TOWN_RADIUS: f64 = 537.0;
+///
+/// And THREE TIMES that again, which is the owner's second ask ("why is
+/// the city so small?"), and it took two things this constant could not
+/// buy on its own. A city is drawn a BLOCK at a time now, the far ones
+/// as solid blocks (`city::tiles`), so nine times the buildings is not
+/// nine times the triangles; and its ground is GRADED to the country
+/// rather than levelled to one height (`town::Grade`), because one flat
+/// pad six and a half kilometres across is not a thing this planet has:
+/// of 240 land candidates the median fall across that outline is 282 m,
+/// and not one falls under the fifteen a site may cut.
+const TOWN_RADIUS: f64 = 1_611.0;
 
 /// How many of the planned towns are BUILT, nearest to where the world
 /// starts first.
@@ -478,12 +488,13 @@ fn spawn_world(
     // The towns are BUILT by `city::stream`, one at a time, following
     // the eye. Nothing is raised here.
     commands.insert_resource(city::stream::Library(Arc::new(buildings::Library::load())));
+    let world = Arc::new(world);
     say_roads(&mut commands, &world);
     commands.insert_resource(city::Glazing::new(&mut standard));
     commands.insert_resource(kit);
     commands.init_resource::<world::Fabric>();
     commands.init_resource::<city::stream::Building>();
-    let mut planets = planets::Planets::load(Arc::new(world));
+    let mut planets = planets::Planets::load(world);
     planets.bodies[0].material = material;
     planets.bodies[0].water = sheet;
     planet_view::spawn(
@@ -519,11 +530,28 @@ fn spawn_world(
     commands.insert_resource(planets);
 }
 
+/// How the ground and the roads came out: whether the terrain a coarse
+/// chunk draws covers the tarmac, how deep a town cuts at its edge, and
+/// the roads' own census. Measurements for the log, off the frame.
+fn measure_ground(world: &World) {
+    if let Some((worst, median, roads)) = roads::ground_over_tarmac(world) {
+        info!(
+            "the ground a coarse chunk draws stands {worst:.2} m over the tarmac of {roads} roads at its worst and {median:.2} m at its median"
+        );
+    }
+    let (deep, steep, mean) = city::worst_cut(world);
+    info!(
+        "a town CUTS up to {deep:.0} m at its own edge ({mean:.0} m on the mean), which its skirt ramps at up to {:.0}%",
+        steep * 100.0
+    );
+    roads::report(world);
+}
+
 /// The body's road network, and a line saying how much tarmac there is.
 /// Every stretch of it is known from the first frame and the ones near
 /// the eye are laid as it moves, which is `city::stream`'s own rule for
 /// a town.
-fn say_roads(commands: &mut Commands, world: &World) {
+fn say_roads(commands: &mut Commands, world: &Arc<World>) {
     let network = roads::Network::of(world);
     // How far the LIGHTING reaches out of a town, measured on the road
     // out of the port rather than restated from `road::LIT_NEAR`: what
@@ -543,18 +571,11 @@ fn say_roads(commands: &mut Commands, world: &World) {
         )
     });
     // Whether the highway JOINS the city it leaves, which is a number
-    // and not a thing to squint at a picture for.
-    if let Some((worst, median, roads)) = roads::ground_over_tarmac(world) {
-        info!(
-            "the ground a coarse chunk draws stands {worst:.2} m over the tarmac of {roads} roads at its worst and {median:.2} m at its median"
-        );
-    }
-    let (deep, steep, mean) = city::worst_cut(world);
-    bevy::log::info!(
-        "a town CUTS up to {deep:.0} m at its own edge ({mean:.0} m on the mean), which its skirt ramps at up to {:.0}%",
-        steep * 100.0
-    );
-    roads::report(world);
+    // and not a thing to squint at a picture for. On a thread of its own,
+    // because it is log lines and nothing waits on them: in the frame it
+    // was two minutes of every launch before cities grew, and seven after.
+    let measured = world.clone();
+    std::thread::spawn(move || measure_ground(&measured));
     let (nodes, steps) = network.graph().size();
     info!(
         "{} roads are {} stretches of tarmac with {} gas stations on them, and a graph of {nodes} waypoints and {steps} steps to route over; the ones within {:.0} km of the eye are laid{}",

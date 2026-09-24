@@ -300,6 +300,7 @@ mod tests {
                 east: DVec3::X,
                 north: DVec3::Y,
                 base: 0.0,
+                lean: bevy::math::DVec2::ZERO,
             };
             let blocks = models[0].blocks(&frame);
             // The front door is clear from outside to the middle of the room.

@@ -90,6 +90,16 @@ pub(crate) struct Atlas {
     /// a car can follow, and no ground under any of it.
     #[serde(default)]
     pub curve: f64,
+    /// The steepest a town's own ground is GRADED to (`town::GRADE`).
+    ///
+    /// A site was accepted because its town could be graded onto it
+    /// within `town::CUT` at this grade, and the grade itself is derived
+    /// again at load rather than stored, so a file baked at another
+    /// grade is a set of towns cutting deeper than any site was allowed
+    /// to, with nothing else here to say so. An atlas from before towns
+    /// were graded parses as nought and is refused.
+    #[serde(default)]
+    pub grade: f64,
     /// The sea this plan was made against. A town qualifies on how high
     /// it stands over the sea and a road is refused into it, so a plan
     /// made at one level is a set of cities underwater at another.
@@ -207,6 +217,7 @@ impl Atlas {
             embank: road::EMBANK,
             steepest: road::STEEPEST,
             curve: road::CURVE,
+            grade: town::GRADE,
             sea,
             probe: probe(planet),
             towns: towns
@@ -241,14 +252,21 @@ impl Atlas {
         }
     }
 
-    /// The towns this atlas holds, laid out again from their placements.
+    /// The towns this atlas holds, laid out again from their placements
+    /// and graded onto the planet.
     ///
     /// The lots and the streets come back off `town::lay`, which is the
     /// same function that made them when the atlas was baked: the file
     /// carries the decision and the code carries the consequence, so a
-    /// change to what a building looks like needs no rebake.
-    pub fn towns(&self) -> Vec<Town> {
-        self.towns
+    /// change to what a building looks like needs no rebake. The GROUND
+    /// comes back the same way, off `town::grade_all` over the bare
+    /// planet, which the probe says is the body the plan was made on:
+    /// a grade is a hundred thousand samples of the analytic surface for
+    /// the biggest city and a second for the whole body on four threads,
+    /// against twenty thousand numbers a city written into this file.
+    pub fn towns(&self, planet: &Planet, sea: f64) -> Vec<Town> {
+        let laid = self
+            .towns
             .iter()
             .enumerate()
             .map(|(i, p)| {
@@ -261,7 +279,8 @@ impl Atlas {
                     self.seed,
                 )
             })
-            .collect()
+            .collect();
+        town::grade_all(planet, sea, laid)
     }
 
     /// The roads this atlas holds.
@@ -304,6 +323,7 @@ impl Atlas {
             // fingerprint field that refuses nothing.
             && (self.embank - road::EMBANK).abs() < 1e-6
             && (self.curve - road::CURVE).abs() < 1e-3
+            && (self.grade - town::GRADE).abs() < 1e-9
             && self.probe.len() == PROBES
             && self
                 .probe

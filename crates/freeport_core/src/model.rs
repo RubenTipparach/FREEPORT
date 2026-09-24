@@ -24,7 +24,7 @@ use crate::field::{
     hash3, Block, BRICK, CONCRETE, CURTAIN, GLASS, LAMP, LIT, MARBLE, PLATE, STONE, VINYL, WOOD,
 };
 use crate::town::{lot_frame, Frame, Town};
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 
 /// How tall a storey stands, metres.
 pub const STOREY: f64 = 3.2;
@@ -87,11 +87,10 @@ impl Solid {
     /// The same box in the world, through the frame it was written in.
     pub fn block(&self, frame: &Frame) -> Block {
         let a = self.axes();
-        let out = |v: DVec3| frame.east * v.x + frame.north * v.y + frame.dir * v.z;
         Block {
             centre: frame.world(self.centre),
             half: self.half,
-            axes: [out(a[0]), out(a[1]), out(a[2])],
+            axes: [frame.axis(a[0]), frame.axis(a[1]), frame.axis(a[2])],
             material: self.material,
         }
     }
@@ -738,26 +737,105 @@ pub fn fabric_part(
     let mut out = Fabric::default();
     let middle = lot_frame(radius, town, 0.0, 0.0);
     for lot in part.lots.iter().filter_map(|&k| town.lots.get(k)) {
-        // Turned so the door faces the street the lot fronts.
-        let frame = lot_frame(radius, town, lot.x, lot.z).turned(lot.yaw);
-        weld(&mut out, &model(lot), &frame, &middle, part);
+        // Standing on its own ground, turned so the door faces the street
+        // the lot fronts, and on a plinth where the ground falls under it.
+        let (frame, plinth) = crate::town::lot_stand(radius, town, lot);
+        let mut m = model(lot);
+        if plinth > 0.0 {
+            footing(&mut m, lot.w * lot.kind.covers(), plinth);
+        }
+        weld(&mut out, &m, &frame, &middle, part);
         out.buildings += 1;
     }
     for p in part.pieces.iter().filter_map(|&k| town.pieces.get(k)) {
+        // LAID on its ground rather than standing level on it: every
+        // point of it at the ground's own height where it is.
         let frame = lot_frame(radius, town, p.x, p.z);
-        weld(&mut out, &piece(p), &frame, &middle, part);
+        let under = town.ground(p.x, p.z);
+        let drape = |e: f64, n: f64| {
+            (
+                town.ground(p.x + e, p.z + n) - under,
+                town.slope(p.x + e, p.z + n),
+            )
+        };
+        weld_on(&mut out, &piece(p), &frame, &middle, part, Some(&drape));
         out.pieces += 1;
     }
     out
 }
 
+/// How far a plinth stands in from the walls of the building it carries,
+/// metres, so its sides are never in the plane of the walls' own and the
+/// two never fight for a pixel.
+const INSET: f64 = 0.02;
+
+/// A PLINTH under a building standing on falling ground: a solid of poured
+/// concrete from under its floor down `deep` metres, which is to under the
+/// lowest ground round it. Solid and not trim, because it is a wall a
+/// body walking round the building is stopped by like any other.
+fn footing(m: &mut Model, w: f64, deep: f64) {
+    let half = (w * 0.5 - INSET).max(0.1);
+    m.solid(
+        DVec3::new(0.0, 0.0, -deep * 0.5),
+        DVec3::new(half, half, deep * 0.5),
+        0.0,
+        CONCRETE,
+    );
+}
+
+/// How a model is laid ON the ground rather than standing level on it:
+/// at a point of its own frame, how far the ground there stands over the
+/// ground at its middle, and how steeply it climbs there.
+type Drape<'a> = &'a dyn Fn(f64, f64) -> (f64, DVec2);
+
 /// One model welded into a town's fabric: its triangles carried from its
 /// own frame into the town's, in `f64` and then cast, and its boxes and
 /// its lamps carried into the world, as far as `part` asks for each.
 fn weld(out: &mut Fabric, m: &Model, frame: &Frame, middle: &Frame, part: &Part) {
+    weld_on(out, m, frame, middle, part, None);
+}
+
+/// The same, DRAPED: every vertex and every lamp lifted by the ground at
+/// its own point, and every box lifted at its middle and leant to the
+/// ground's slope there, so the paving is on the ground at every corner
+/// of it and a box's top is the plane its own mesh is drawn in.
+fn weld_on(
+    out: &mut Fabric,
+    m: &Model,
+    frame: &Frame,
+    middle: &Frame,
+    part: &Part,
+    drape: Option<Drape>,
+) {
+    let lift = |p: DVec3| match drape {
+        Some(d) => {
+            let (up, slope) = d(p.x, p.y);
+            (p + DVec3::Z * up, slope)
+        }
+        None => (p, DVec2::ZERO),
+    };
     if part.solids {
-        out.blocks.extend(m.blocks(frame));
-        out.lamps.extend(m.lights(frame));
+        if drape.is_some() {
+            for s in &m.solids {
+                let (c, slope) = lift(s.centre);
+                let leant = Frame {
+                    lean: slope,
+                    ..*frame
+                };
+                // `world` shears by the lean, so the middle is handed in
+                // with that taken back out.
+                let centre = c - DVec3::Z * slope.dot(DVec2::new(c.x, c.y));
+                out.blocks.push(Solid { centre, ..*s }.block(&leant));
+            }
+            out.lamps.extend(
+                m.lamps
+                    .iter()
+                    .map(|&p| (frame.world(lift(p).0), LAMP_REACH)),
+            );
+        } else {
+            out.blocks.extend(m.blocks(frame));
+            out.lamps.extend(m.lights(frame));
+        }
     }
     if !part.mesh {
         return;
@@ -765,17 +843,24 @@ fn weld(out: &mut Fabric, m: &Model, frame: &Frame, middle: &Frame, part: &Part)
     let base = out.mesh.positions.len() as u32;
     // A direction from one frame to the other: out through the lot's axes
     // and back in through the town's, which is a rotation and never the
-    // position's translation.
-    let turn = |v: [f32; 3]| {
-        let w = frame.east * v[0] as f64 + frame.north * v[1] as f64 + frame.dir * v[2] as f64;
+    // position's translation, and through the drape's shear where there
+    // is one.
+    let turn = |v: [f32; 3], slope: DVec2| {
+        let v = DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64);
+        let w = Frame {
+            lean: slope,
+            ..*frame
+        }
+        .normal(v);
         DVec3::new(w.dot(middle.east), w.dot(middle.north), w.dot(middle.dir))
     };
     for (p, n) in m.mesh.positions.iter().zip(&m.mesh.normals) {
-        let here = middle.local(frame.world(DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64)));
+        let (at, slope) = lift(DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64));
+        let here = middle.local(frame.world(at));
         out.mesh.positions.push(here.as_vec3().to_array());
         out.mesh
             .normals
-            .push(turn(*n).normalize_or(DVec3::Z).as_vec3().to_array());
+            .push(turn(*n, slope).normalize_or(DVec3::Z).as_vec3().to_array());
         out.mesh.levels.push(0);
     }
     out.mesh

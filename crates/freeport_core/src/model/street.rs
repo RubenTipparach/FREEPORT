@@ -190,7 +190,9 @@ fn flat(piece: &Piece) -> Model {
     let top = LIFT + KERB;
     if piece.square() {
         let h = DVec2::new(piece.w, piece.d) * 0.5;
-        panel(&mut m, -h, h, top, CONCRETE);
+        for (lo, hi) in tiles(-h, h, SQUARE_FAR_TILE) {
+            panel(&mut m, lo, hi, top, CONCRETE);
+        }
         return m;
     }
     if piece.run() {
@@ -230,11 +232,43 @@ fn slab(piece: &Piece) -> Model {
     let mut m = Model::new();
     let h = DVec2::new(piece.w, piece.d) * 0.5;
     if piece.square() {
-        panel(&mut m, -h, h, LIFT + KERB, CONCRETE);
+        for (lo, hi) in tiles(-h, h, SQUARE_FAR_TILE) {
+            panel(&mut m, lo, hi, LIFT + KERB, CONCRETE);
+        }
     } else {
         panel(&mut m, -h, h, LIFT, STREET);
     }
     m
+}
+
+/// How wide a square's paving is laid in one piece, metres, and how wide
+/// once its kerbs are not worth drawing.
+///
+/// A square is one PIECE, up to 137 m across in a city, and on graded
+/// ground one piece is one plane: laid whole it stood 0.74 m off the
+/// ground the town is graded to at its worst. In tiles every tile corner
+/// is laid on the ground at its own point, and between two corners the
+/// ground bends by the grade's own curvature, `2 GRADE / STEP`, over at
+/// most a tile: two centimetres at eight metres.
+const SQUARE_TILE: f64 = 8.0;
+const SQUARE_FAR_TILE: f64 = 16.0;
+
+/// A rectangle cut into tiles no wider than `most` either way.
+fn tiles(lo: DVec2, hi: DVec2, most: f64) -> Vec<(DVec2, DVec2)> {
+    let size = hi - lo;
+    let (nx, ny) = (
+        (size.x / most).ceil().max(1.0) as usize,
+        (size.y / most).ceil().max(1.0) as usize,
+    );
+    let step = DVec2::new(size.x / nx as f64, size.y / ny as f64);
+    let mut out = Vec::with_capacity(nx * ny);
+    for j in 0..ny {
+        for i in 0..nx {
+            let a = lo + step * DVec2::new(i as f64, j as f64);
+            out.push((a, a + step));
+        }
+    }
+    out
 }
 
 /// How wide the plinth in the middle of a square is and how high it
@@ -251,7 +285,9 @@ const SQUARE_LAMP_H: f64 = 5.0;
 fn square(w: f64, d: f64) -> Model {
     let mut m = Model::new();
     let (hw, hd) = (w * 0.5, d * 0.5);
-    kerb(&mut m, DVec2::new(-hw, -hd), DVec2::new(hw, hd));
+    for (lo, hi) in tiles(DVec2::new(-hw, -hd), DVec2::new(hw, hd), SQUARE_TILE) {
+        kerb(&mut m, lo, hi);
+    }
     let top = LIFT + KERB;
     m.solid(
         DVec3::new(0.0, 0.0, top + PLINTH_H * 0.5),

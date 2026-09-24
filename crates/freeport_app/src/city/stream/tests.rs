@@ -77,7 +77,7 @@ fn measure_the_port_by_tile() {
     let planet = crate::world::home_planet(crate::OCTAVES);
     let atlas = crate::atlas::load(crate::world::HOME, &planet, crate::SEA, crate::TOWN_RADIUS)
         .expect("the harness body's atlas");
-    let towns = atlas.towns();
+    let towns = atlas.towns(&planet, crate::SEA);
     let library = crate::buildings::Library::load();
     let town = &towns[0];
     let t0 = std::time::Instant::now();

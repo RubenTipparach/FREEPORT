@@ -332,22 +332,22 @@ fn a_levelled_site_flattens_the_ground_to_the_towns_height() {
         mid - planet.radius,
         t.h
     );
-    // The level is the LOWEST the survey found, so it stands under the
-    // middle's own ground by at most the fall the site was allowed.
-    let fall = (t.radius * OUTLINE * (LEVEL / 1.05)).min(CUT) + 0.01;
+    // The ground is CUT and never filled, and no deeper than the site
+    // was allowed.
     assert!(
-        (before - mid).abs() <= fall,
-        "the level is {:.2} m from the ground that was there, past the {fall:.2} the site may fall",
+        before - mid >= -0.01 && before - mid <= CUT + 0.01,
+        "the ground is {:.2} m under the ground that was there, past the {CUT} a site may cut",
         before - mid
     );
-    // Right across the town the ground is at the level; well outside it
-    // the ground is its own.
+    // Right across the town the ground is the town's own; well outside
+    // it the ground is its own.
     let f = lot_frame(planet.radius, t, t.radius * 0.8, 0.0);
     let edge = ground_at(&planet, f.dir, 950.0, 1050.0);
     assert!(
-        (edge - (planet.radius + t.h)).abs() < 0.05,
-        "the edge at {}",
-        edge - planet.radius
+        (edge - f.base).abs() < 0.05,
+        "the edge at {} against the town's ground {}",
+        edge - planet.radius,
+        f.base - planet.radius
     );
     // Past the outline, the apron AND the skirt the blend ramps over,
     // which is where the site stops saying anything at all.

@@ -523,9 +523,21 @@ fn pose(town: &Town, radius: f64, traffic: &Traffic, agent: usize, time: f64) ->
     // Right is the heading turned a quarter CLOCKWISE, which in a frame
     // with east and north is `east * sin - north * cos`, and the three
     // are right handed, so a box wound out of the mesh stays wound out.
-    let fwd = frame.east * cos + frame.north * sin;
-    let right = frame.east * sin - frame.north * cos;
-    let basis = Mat3::from_cols(right.as_vec3(), fwd.as_vec3(), frame.dir.as_vec3());
+    //
+    // A person stands PLUMB whatever the street does; a car lies ON it,
+    // turned to the grade's own slope under it by the same rotation a
+    // kerb box is (`Frame::axis`), or on a street at the town's grade its
+    // nose is in the tarmac and its tail in the air.
+    let lie = match traffic.agents[agent].kind {
+        Kind::Car => freeport_core::town::Frame {
+            lean: town.slope(spot.at.x, spot.at.y),
+            ..frame
+        },
+        Kind::Foot => frame,
+    };
+    let fwd = lie.axis(DVec3::new(cos, sin, 0.0));
+    let right = lie.axis(DVec3::new(sin, -cos, 0.0));
+    let basis = Mat3::from_cols(right.as_vec3(), fwd.as_vec3(), lie.axis(DVec3::Z).as_vec3());
     // What it stands ON: a car the carriageway, a person the pavement,
     // which is a kerb higher except where he crosses a street. Asked of
     // the same nine cells the crossing's mesh is paved from, so a foot

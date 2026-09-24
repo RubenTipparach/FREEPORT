@@ -361,7 +361,7 @@ fn a_corridor_levels_the_ground_along_its_whole_length() {
     let site = crate::town::Site::arc((a, -60.0), (b, -20.0), 8.0);
     let (inner, outer) = site_band(&site);
     let planet = Planet {
-        sites: vec![site].into(),
+        sites: vec![site.clone()].into(),
         ..bare.clone()
     };
     for k in 0..40 {
@@ -633,7 +633,7 @@ fn a_sites_weight_is_one_across_it_and_nought_past_its_apron() {
         sites: vec![crate::town::Site::round(DVec3::Y, 0.0, 200.0)].into(),
         ..Planet::default()
     };
-    let site = planet.sites[0];
+    let site = planet.sites[0].clone();
     let (inner, outer) = site_band(&site);
     let (east, _) = crate::town::frame_at(DVec3::Y);
     let at = |m: f64| planet.site_weight(&site, (DVec3::Y * planet.radius + east * m).normalize());

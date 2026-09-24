@@ -514,6 +514,7 @@ pub fn frame(line: &[DVec3], run: &[f64], radius: f64) -> Frame {
         east,
         north,
         base,
+        lean: glam::DVec2::ZERO,
     }
 }
 

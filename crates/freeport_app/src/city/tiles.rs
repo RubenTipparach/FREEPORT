@@ -42,6 +42,10 @@ pub const MASS: usize = 3;
 /// lot is planned with, metres: what the plan's own bound is widened by
 /// before a tile has been built and measured.
 const ROOF: f64 = 4.0;
+/// And how far under the ground at a lot's middle anything of it goes,
+/// metres: a plinth on graded ground, down to under the lowest corner of
+/// a twenty metre lot at the diagonal of the town's grade.
+const FOOT: f64 = 2.0;
 
 /// One block of a town: the lots and pieces of street in it, by their
 /// places in the town's own lists, and roughly where it stands in the
@@ -99,7 +103,10 @@ pub fn tiles_of(town: &Town, radius: f64) -> Vec<Tile> {
         let c = at(lot.x, lot.z);
         let half = DVec3::new(lot.w, lot.w, 0.0) * 0.75;
         let high = lot.storeys as f64 * STOREY + ROOF;
-        let (lo, hi) = (c - half - DVec3::Z, c + half + DVec3::Z * high);
+        let (lo, hi) = (
+            c - half - DVec3::Z * FOOT,
+            c + half + DVec3::Z * (high + FOOT),
+        );
         grow(&mut out, key(lot.x, lot.z), lo, hi).lots.push(i);
     }
     for (i, piece) in town.pieces.iter().enumerate() {
