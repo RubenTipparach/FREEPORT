@@ -2480,17 +2480,27 @@ Three answers, each asked of the one thing it can see:
   for shadow passes a few lines from where it wires this up), so it is
   off the light until a picture says otherwise on real silicon.
 - **A tile past its nearest bake casts its shadow from its BLOCK**
-  (`cull::casts`, `PROXY_FROM`): its detail meshes carry
-  `NotShadowCaster` and its block, which is the same massing a far tile
-  is drawn as, is moved to `SHADOW_ONLY`, a render layer the sun sees
-  and the camera does not. From eighty metres a tile's shadow is a
+  (`cull::casts`, `cull::ShadowOnly`, `shadow_only.wgsl`): its detail
+  meshes carry `NotShadowCaster` and its block stays up wearing a
+  material with NO prepass and a main pass vertex shader that puts
+  every corner on one point, so the sun draws a box to the eaves and
+  the camera draws nothing. From eighty metres a tile's shadow is a
   footprint and an eave, and those are exactly what the block is
-  (`model::massing`, off the model's own solids). The far cascade goes
-  from **2.42 to 0.51 million vertices** and the four together from
-  3.72 to 1.35, with shadow GPU time from 488 ms to 221. What it costs
-  is a window's own reveal: a recessed pane on a tile past eighty
-  metres sits inside the block's face and is shaded as if the wall
-  had no opening, which at that range is under a pixel.
+  (`model::massing`, off the model's own solids). What it costs is a
+  window's own reveal: a recessed pane past eighty metres sits inside
+  the block's face and is shaded as if the wall had no opening, which
+  at that range is under a pixel.
+- **The first cut of that cast NOTHING, and the numbers said it was a
+  triumph.** It put the block on a render layer only the sun sees, and
+  the benchmark read a far cascade of 0.51 million vertices against
+  2.42. A picture from 300 m over the port at nine in the morning then
+  had no building shadow in it anywhere, the blocks' included: Bevy
+  0.18's `queue_shadows` skips a mesh whose layers miss the CAMERA's,
+  so a mesh the camera cannot see casts no shadow whatever the light's
+  own layers say. Against the picture before any of this, the layer
+  version moved 24.9% of the frame and the material moves 1.6%, which
+  is the edge of a shadow cast by a block rather than by its detail. A
+  number that falls that far is a thing to photograph before believing.
 - **A far city is DISTRICTS** (`city/district.rs`): four by four tiles,
   194 m square, as ONE mesh while every tile in it is a block and none
   is showing detail, and its tiles' own blocks when any of them is. The
@@ -2501,11 +2511,8 @@ Three answers, each asked of the one thing it can see:
   It costs mesh memory, because a tile keeps its own block for when the
   district splits: the allocator's slabs went from 480 MB to 558.
 
-Measured together on the same route: **vertex invocations 10.08
-million a frame against 7.22, and a frame of 2,630 ms against 2,923**
-on lavapipe, where the main pass's fragments are most of a frame and
-no culling touches them. Both switches are `render.json` booleans
-(`occlusion_culling`, `shadow_proxies`), so the A/B is one line.
+Both switches are `render.json` booleans (`occlusion_culling`,
+`shadow_proxies`), so the A/B is one line.
 
 ## A city is BLOCKS of four by four lots, and a settlement has a TIER
 

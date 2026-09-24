@@ -1,5 +1,5 @@
 //! What a view is SPARED drawing: the GPU's own occlusion culling on the
-//! camera, and the layer a town's tile casts its shadow from when what
+//! camera, and the block a town's tile casts its shadow from when what
 //! the camera sees is its detail.
 //!
 //! A city is where both bite. On a street of the port the buildings
@@ -11,29 +11,64 @@
 //! silhouette.
 
 use crate::tuning::Tuning;
-use bevy::camera::visibility::RenderLayers;
+use bevy::asset::embedded_asset;
 use bevy::prelude::*;
 use bevy::render::experimental::occlusion_culling::OcclusionCulling;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
 
-/// The render layer only the SUN sees: a tile's solid block stands on it
-/// while the camera is shown the tile's detail, so the shadow is cast
-/// from a box to the eaves rather than from every window reveal. Layer 1
-/// is the LOD wireframe's and 2 the map's.
-pub const SHADOW_ONLY: usize = 3;
+/// What a tile's block wears while it stands in for the tile's detail in
+/// the sun's cascades: drawn into every shadow map as the box it is, and
+/// into the camera's main pass as nothing (`shadow_only.wgsl`). It has
+/// no prepass, so the camera's depth never holds it.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct ShadowOnly {}
+
+impl Material for ShadowOnly {
+    fn vertex_shader() -> ShaderRef {
+        "embedded://freeport_app/shadow_only.wgsl".into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        "embedded://freeport_app/shadow_only.wgsl".into()
+    }
+
+    /// Out of the camera's depth prepass, which would otherwise stand a
+    /// box in front of every recessed pane of the detail it hides in.
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        true
+    }
+}
+
+/// The one `ShadowOnly` every proxy block shares.
+#[derive(Resource)]
+pub struct Proxy(pub Handle<ShadowOnly>);
+
+pub struct CullPlugin;
+
+impl Plugin for CullPlugin {
+    fn build(&self, app: &mut App) {
+        embedded_asset!(app, "shadow_only.wgsl");
+        app.add_plugins(MaterialPlugin::<ShadowOnly>::default());
+        let proxy = app
+            .world_mut()
+            .resource_mut::<Assets<ShadowOnly>>()
+            .add(ShadowOnly {});
+        app.insert_resource(Proxy(proxy));
+    }
+}
 
 /// The first grade whose shadow is its block's. The nearest bake keeps its
 /// own, because that is the grade a walker stands INSIDE, and a block
 /// round a room puts the whole room in shadow whatever its windows say.
 pub const PROXY_FROM: usize = 1;
 
-/// Every layer the sun casts from: the world's, the wireframe's (so the
-/// LOD view keeps its shadows) and the blocks standing in for detail.
-pub fn sun_layers() -> RenderLayers {
-    RenderLayers::from_layers(&[0, 1, SHADOW_ONLY])
-}
-
 /// Whether a tile drawn at `grade` casts its own shadow, or leaves it to
-/// its block on `SHADOW_ONLY`.
+/// its block wearing `ShadowOnly`.
 pub fn casts(grade: usize, tuning: &Tuning) -> bool {
     !tuning.shadow_proxies || grade < PROXY_FROM
 }
@@ -77,16 +112,10 @@ mod tests {
         assert!(casts(1, &tuning) && casts(2, &tuning));
     }
 
-    /// The sun sees the world, the wireframe and the shadow layer; the
-    /// camera, on the default layer, sees none of the shadow layer.
+    /// The proxy is out of the camera's depth and in the sun's.
     #[test]
-    fn the_sun_sees_the_shadow_layer_and_the_camera_does_not() {
-        let shadow = RenderLayers::layer(SHADOW_ONLY);
-        let sun = sun_layers();
-        assert!(sun.intersects(&shadow));
-        assert!(sun.intersects(&RenderLayers::default()));
-        assert!(sun.intersects(&RenderLayers::layer(1)));
-        assert!(!RenderLayers::default().intersects(&shadow));
-        assert!(!RenderLayers::layer(1).intersects(&shadow));
+    fn a_proxy_casts_a_shadow_and_holds_no_depth() {
+        assert!(!ShadowOnly::enable_prepass());
+        assert!(ShadowOnly::enable_shadows());
     }
 }

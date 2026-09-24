@@ -16,11 +16,11 @@ use super::Glazing;
 use crate::cull;
 use crate::flight_bench::Urban;
 use crate::stream::Frame as RenderFrame;
-use crate::terrain::Ground3d;
+use crate::terrain::{Ground3d, TerrainMaterial};
 use crate::tuning::Tuning;
 use crate::world::{Fabric, Raised};
 use crate::{Eye, Ground};
-use bevy::camera::visibility::{NoAutoAabb, RenderLayers};
+use bevy::camera::visibility::NoAutoAabb;
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::tasks::{futures::check_ready, AsyncComputeTaskPool, Task};
@@ -90,6 +90,7 @@ pub struct Kit<'w> {
     pub material: Res<'w, Ground3d>,
     pub meshes: ResMut<'w, Assets<Mesh>>,
     pub tuning: Res<'w, Tuning>,
+    pub proxy: Res<'w, cull::Proxy>,
 }
 
 /// One frame of it: land what has been built, work out what every tile
@@ -124,7 +125,7 @@ pub fn stream_tiles(
             let d = raised.tiles[k].distance(here);
             state.grade = tiles::grade(state.grade, d, edges, margin);
             if state.grade == MASS && state.shown.is_some() {
-                show(&mut commands, state, None, true);
+                show(&mut commands, &kit, state, None, true);
             }
             if d > STOPS_FAR && state.stops.is_some() {
                 state.stops = None;
@@ -240,7 +241,7 @@ fn land(commands: &mut Commands, kit: &mut Kit, parent: Entity, state: &mut Tile
                 let tris = drawn.triangles;
                 let casts = cull::casts(g, &kit.tuning);
                 let entities = spawn(commands, kit, parent, drawn, casts);
-                show(commands, state, Some((g, entities)), casts);
+                show(commands, kit, state, Some((g, entities)), casts);
                 state.shown_tris = tris;
             }
         }
@@ -250,9 +251,11 @@ fn land(commands: &mut Commands, kit: &mut Kit, parent: Entity, state: &mut Tile
 
 /// Draw a tile as a grade, or as its block with `None`, and take down what
 /// it was drawn as before. A grade that does not cast its own shadow
-/// leaves its block standing where only the sun can see it.
+/// leaves its block standing in `ShadowOnly`, which the sun draws and
+/// the camera does not.
 fn show(
     commands: &mut Commands,
+    kit: &Kit,
     state: &mut TileState,
     now: Option<(usize, Vec<Entity>)>,
     casts: bool,
@@ -265,11 +268,13 @@ fn show(
     if let Some(mass) = state.mass {
         let mut block = commands.entity(mass);
         match (&now, casts) {
-            (None, _) => block.insert((Visibility::Inherited, RenderLayers::default())),
-            (Some(_), false) => block.insert((
+            (None, _) => block.remove::<MeshMaterial3d<cull::ShadowOnly>>().insert((
                 Visibility::Inherited,
-                RenderLayers::layer(cull::SHADOW_ONLY),
+                MeshMaterial3d(kit.material.ground.clone()),
             )),
+            (Some(_), false) => block
+                .remove::<MeshMaterial3d<TerrainMaterial>>()
+                .insert((Visibility::Inherited, MeshMaterial3d(kit.proxy.0.clone()))),
             (Some(_), true) => block.insert(Visibility::Hidden),
         };
     }

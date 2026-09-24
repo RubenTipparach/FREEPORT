@@ -252,6 +252,7 @@ fn main() {
         distant::DistantPlugin,
         WaterPlugin,
         sky::SkyPlugin,
+        cull::CullPlugin,
     ))
     .insert_resource(WireframeConfig {
         global: args.wire && !args.lod_wire,
@@ -690,7 +691,7 @@ fn spawn_light(commands: &mut Commands, sun: DVec3) {
             shadows_enabled: true,
             ..default()
         },
-        cull::sun_layers(),
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
         CascadeShadowConfigBuilder {
             num_cascades: 4,
             first_cascade_far_bound: 12.0,

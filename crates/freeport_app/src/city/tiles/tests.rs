@@ -164,6 +164,7 @@ fn app_with(radius: f64) -> App {
         .insert_resource(RenderFrame(Origin { at: DVec3::Y * R }))
         .insert_resource(crate::city::stream::Library(Arc::new(Library::default())))
         .insert_resource(Glazing(Handle::default()))
+        .insert_resource(crate::cull::Proxy(Handle::default()))
         .insert_resource(Ground3d {
             ground: Handle::default(),
             tarmac: Handle::default(),
@@ -249,13 +250,13 @@ fn the_tiles_near_the_eye_are_drawn_and_walked_and_the_far_ones_are_blocks() {
 }
 
 /// A tile drawn past its nearest bake casts its shadow from its block,
-/// which only the sun sees; a tile at the nearest bake casts its own and
-/// its block is hidden; and a tile drawn as its block is the camera's.
+/// which wears `ShadowOnly` so the sun draws it and the camera does not;
+/// a tile at the nearest bake casts its own and its block is hidden; and
+/// a tile drawn as its block wears the ground's own material.
 #[test]
 fn a_detailed_tile_casts_its_shadow_from_its_block() {
-    use crate::cull::{casts, SHADOW_ONLY};
+    use crate::cull::{casts, ShadowOnly};
     use crate::terrain::TerrainMaterial;
-    use bevy::camera::visibility::RenderLayers;
     use bevy::light::NotShadowCaster;
     let mut app = app_with(300.0);
     settle(&mut app, 4000);
@@ -267,21 +268,21 @@ fn a_detailed_tile_casts_its_shadow_from_its_block() {
         let Some(block) = state.mass else {
             continue;
         };
-        let layers = world
-            .get::<RenderLayers>(block)
-            .cloned()
-            .unwrap_or_default();
+        let ground = world
+            .get::<MeshMaterial3d<TerrainMaterial>>(block)
+            .is_some();
+        let proxy = world.get::<MeshMaterial3d<ShadowOnly>>(block).is_some();
         let shown = world.get::<Visibility>(block) != Some(&Visibility::Hidden);
         // A tile drawn as its block is the camera's; whether it is drawn
         // or its district is, is `districts_hold`'s question.
         let Some((grade, drawn)) = &state.shown else {
-            assert_eq!(layers, RenderLayers::default());
+            assert!(ground && !proxy, "a block drawn as itself");
             continue;
         };
         let own = casts(*grade, tuning);
         assert_eq!(shown, !own, "the block of a tile at grade {grade}");
         if !own {
-            assert_eq!(layers, RenderLayers::layer(SHADOW_ONLY));
+            assert!(proxy && !ground, "the block standing in for grade {grade}");
         }
         for &e in drawn {
             if world.get::<MeshMaterial3d<TerrainMaterial>>(e).is_some() {
