@@ -125,9 +125,18 @@ def wall(name, run, reach, yaw, storeys, door, dims, target, root):
             window_rects.append(rect)
             box(f"{name}_window_{floor}_{i}", point(x, z), (w/2, thickness, h/2), yaw, CONCRETE, windows, root, "cutter")
             frame = dims["frame"]
+            # The frame stands 2.5 cm proud of the ROOM side and 1 cm
+            # SHY of the street side, so nothing of it leaves the lot. A
+            # building is as wide as its lot and has windows on all four
+            # walls, so on a terrace every window of a party wall is
+            # back to back with the neighbour's own at the same place; a
+            # frame proud of both faces put the two frames' sides in one
+            # plane for the 5 cm they overlapped, and that was 4,563
+            # fights over the port (`baked_buildings_meet_their_neighbours_in_no_plane`).
+            deep, inward = (thickness + 0.025 - 0.01)/2, -(0.025 + 0.01)/2
             for side in [-1, 1]:
-                box("Window jamb", point(x+side*(w-frame)/2, z), (frame/2, thickness/2+0.025, h/2), yaw, PLATE, target, root, "frame")
-                box("Window sill", point(x, z+side*(h-frame)/2), ((w-2*frame)/2, thickness/2+0.025, frame/2), yaw, PLATE, target, root, "frame")
+                box("Window jamb", point(x+side*(w-frame)/2, z, inward), (frame/2, deep, h/2), yaw, PLATE, target, root, "frame")
+                box("Window sill", point(x, z+side*(h-frame)/2, inward), ((w-2*frame)/2, deep, frame/2), yaw, PLATE, target, root, "frame")
             box("Glazing", point(x, z), (w/2-frame, 0.008, h/2-frame), yaw, GLASS, target, root, "glass")
     if door:
         w, h = dims["door_width"], dims["door_height"]
@@ -167,9 +176,12 @@ def roof(kind, width, depth, height, dims, target, root):
         axis, reach = 1, width/2-0.02
     else:
         # Sprung 2 cm inside the walls, or the vault's own thickness at its
-        # foot lies in the ceiling slab's side plane.
+        # foot lies in the ceiling slab's side plane. And its ENDS 3 cm in,
+        # not the gable's 2: a hangar turned a quarter from the house on
+        # the next lot of its column puts its end caps in the plane of the
+        # house's, and the house's eave reaches over the line to meet them.
         section = [(-(width/2-0.02)*math.cos(math.pi*k/12), height+0.25+width*0.275*math.sin(math.pi*k/12)) for k in range(13)]
-        axis, reach = 0, depth/2-0.02
+        axis, reach = 0, depth/2-0.03
     # A closed solid roof shell, with thickness and end caps, not one-sided quads.
     outer = section
     inner = [(x, z-dims["slab"]) for x, z in reversed(section)]

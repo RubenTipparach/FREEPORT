@@ -16,6 +16,7 @@ pub mod day;
 pub mod dc;
 pub mod driver;
 pub mod field;
+pub mod fights;
 pub mod figure;
 pub mod flight;
 pub mod fuel;

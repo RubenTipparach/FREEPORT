@@ -323,4 +323,91 @@ mod tests {
             }
         }
     }
+
+    /// The BAKES where two buildings meet: the harness body's port laid
+    /// with the committed library at each of its three grades, every
+    /// piece of street at the grade drawn with it, has no two faces in one
+    /// plane where they overlap and can be seen (`fights::in_town`). The
+    /// core holds its parametric kinds to the same in
+    /// `no_two_faces_of_a_town_fight_for_one_plane`; most lots in the game
+    /// are bakes, so that test alone says nothing about what is drawn.
+    #[test]
+    fn baked_buildings_meet_their_neighbours_in_no_plane() {
+        use freeport_core::model::{fabric_part, street_graded, Part};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/buildings");
+        let library = Library::from_dir(&root).expect("committed Blender library must load");
+        let p = freeport_core::field::Planet {
+            radius: 1_000_000.0,
+            relief: 8_000.0,
+            lumps: 12.0,
+            octaves: 18,
+            overhang: 3.0,
+            ledge: 12.0,
+            seed: 7,
+            sites: vec![].into(),
+        };
+        let t = freeport_core::town::plan(&p, p.radius + 1_100.0, 537.0, 1, 7)
+            .into_iter()
+            .next()
+            .expect("a port on the harness body");
+        let middle = freeport_core::town::lot_frame(p.radius, &t, 0.0, 0.0);
+        let lots: Vec<usize> = (0..t.lots.len()).collect();
+        let pieces: Vec<usize> = (0..t.pieces.len()).collect();
+        for grade in 0..3 {
+            let lay = |lots: &[usize], pieces: &[usize]| {
+                let part = Part {
+                    lots,
+                    pieces,
+                    mesh: true,
+                    solids: true,
+                };
+                fabric_part(
+                    &t,
+                    p.radius,
+                    &part,
+                    |lot| library.model(lot, grade, 7),
+                    |piece| street_graded(piece, grade),
+                )
+            };
+            let f = lay(&lots, &pieces);
+            let found = freeport_core::fights::in_town(&f, &middle);
+            let area = found.iter().fold(0.0, |a, x| a + x.area);
+            // Which lot a triangle came from: the lots are welded first, in
+            // order, so each lot's own count says where it ends.
+            let ends: Vec<usize> = lots
+                .iter()
+                .scan(0, |at, &k| {
+                    *at += lay(&[k], &[]).mesh.indices.len() / 3;
+                    Some(*at)
+                })
+                .collect();
+            let owner = |tri: usize| ends.partition_point(|&e| e <= tri);
+            let mut pairs: std::collections::BTreeMap<String, usize> = Default::default();
+            for x in &found {
+                let name = |k: usize| {
+                    t.lots
+                        .get(k)
+                        .map_or("street".into(), |l| format!("{:?} {:.2}", l.kind, l.yaw))
+                };
+                *pairs
+                    .entry(format!("{} and {}", name(owner(x.a)), name(owner(x.b))))
+                    .or_default() += 1;
+            }
+            println!(
+                "grade {grade}: {} lots, {} triangles, {} fights over {area:.3} m^2: {pairs:?}",
+                f.buildings,
+                f.mesh.indices.len() / 3,
+                found.len()
+            );
+            if let Some(x) = found.first() {
+                for tri in [x.a, x.b] {
+                    let v: Vec<[f32; 3]> = (0..3)
+                        .map(|c| f.mesh.positions[f.mesh.indices[tri * 3 + c] as usize])
+                        .collect();
+                    println!("  triangle {tri} of lot {}: {v:?}", owner(tri));
+                }
+            }
+            assert!(found.is_empty(), "{} fights at grade {grade}", found.len());
+        }
+    }
 }

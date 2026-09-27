@@ -35,18 +35,12 @@ pub const DOOR_W: f64 = 1.6;
 pub const DOOR_H: f64 = 2.3;
 /// A floor slab and a roof slab, metres thick.
 const SLAB: f64 = 0.25;
-/// The parapet round a flat roof: how high it stands over the slab and how
-/// thick it is, metres.
-const PARAPET: f64 = 0.7;
-const PARAPET_T: f64 = 0.22;
 /// A window: how wide and how high, how far over its own floor the sill
 /// is, and how far apart the panes are along a wall, metres.
 const PANE_W: f64 = 1.2;
 const PANE_H: f64 = 1.5;
 const SILL: f64 = 1.0;
 const PANE_PITCH: f64 = 2.6;
-/// How far a pitched roof's eaves overhang the walls under them, metres.
-const EAVE: f64 = 0.3;
 /// How far proud of the wall a pane sits, metres: enough that no depth
 /// test can put the wall in front of it, and under anything an eye reads
 /// as a ledge.
@@ -58,8 +52,6 @@ const LAMP_R: f64 = 0.22;
 pub const LAMP_REACH: f64 = 9.0;
 /// How many sides a round tower is drawn and collided with.
 const SIDES: usize = 12;
-/// How many pieces a barrel vault's arc is cut into.
-const ARCH: usize = 9;
 
 /// An oriented box in the model's own frame: what is DRAWN and what a body
 /// is stopped by, from one set of numbers.
@@ -575,88 +567,6 @@ fn round(m: &mut Model, r: f64, h: f64, seed: u32, skin: u8) {
     }
 }
 
-/// A flat roof: a slab and a parapet round it.
-fn flat_roof(m: &mut Model, w: f64, d: f64, h: f64) {
-    let (hw, hd) = (w * 0.5, d * 0.5);
-    m.solid(
-        DVec3::new(0.0, 0.0, h + SLAB * 0.5),
-        DVec3::new(hw, hd, SLAB * 0.5),
-        0.0,
-        CONCRETE,
-    );
-    let z = h + SLAB + PARAPET * 0.5;
-    let t = PARAPET_T * 0.5;
-    for side in [-1.0, 1.0] {
-        m.trim(
-            DVec3::new(0.0, side * (hd - t), z),
-            DVec3::new(hw, t, PARAPET * 0.5),
-            0.0,
-            PLATE,
-        );
-        m.trim(
-            DVec3::new(side * (hw - t), 0.0, z),
-            DVec3::new(t, hd - PARAPET_T, PARAPET * 0.5),
-            0.0,
-            PLATE,
-        );
-    }
-}
-
-/// A gable: two pitched faces to a ridge along the lot's east axis, and a
-/// triangle closing each end.
-///
-/// The eaves overhang by `EAVE` and the gable ends not at all: terraced
-/// neighbours share a height and a pitch, so a roof past its own lot lay
-/// in the next one's plane, a strip of z-fighting at every party wall.
-fn gable(m: &mut Model, w: f64, d: f64, h: f64, skin: u8) {
-    let (hw, hd) = (w * 0.5, d * 0.5 + EAVE);
-    let ridge = h + d * 0.35;
-    for side in [-1.0, 1.0] {
-        let eave = DVec3::new(0.0, side * hd, h);
-        let a = eave - DVec3::X * hw;
-        let b = eave + DVec3::X * hw;
-        let c = DVec3::new(hw, 0.0, ridge);
-        let e = DVec3::new(-hw, 0.0, ridge);
-        if side < 0.0 {
-            m.quad(a, b, c, e, skin);
-        } else {
-            m.quad(b, a, e, c, skin);
-        }
-    }
-    for side in [-1.0, 1.0] {
-        let x = side * hw;
-        let a = DVec3::new(x, -hd, h);
-        let b = DVec3::new(x, hd, h);
-        let c = DVec3::new(x, 0.0, ridge);
-        if side < 0.0 {
-            m.tri(a, c, b, skin);
-        } else {
-            m.tri(a, b, c, skin);
-        }
-    }
-}
-
-/// A barrel vault: an arc of quads over the lot's north axis, with the
-/// ends left open, which is what a hangar looks like.
-fn vault(m: &mut Model, w: f64, d: f64, h: f64) {
-    let r = w * 0.5;
-    let hd = d * 0.5;
-    let at = |k: usize| {
-        let a = std::f64::consts::PI * k as f64 / ARCH as f64;
-        DVec3::new(-r * a.cos(), 0.0, h + r * a.sin() * 0.55)
-    };
-    for k in 0..ARCH {
-        let (p, q) = (at(k), at(k + 1));
-        m.quad(
-            p - DVec3::Y * hd,
-            q - DVec3::Y * hd,
-            q + DVec3::Y * hd,
-            p + DVec3::Y * hd,
-            PLATE,
-        );
-    }
-}
-
 /// Plate pillars at the corners of a block, which is what stops a tower
 /// reading as one poured shape.
 ///
@@ -889,6 +799,10 @@ fn weld_on(
 /// A piece of STREET as a model: a run, a crossing or the square.
 mod street;
 pub use street::{street, street_graded};
+
+/// A building's roof: flat, gabled or vaulted.
+mod roof;
+use roof::{flat_roof, gable, vault};
 
 /// A building as a solid block, for the ranges its detail is not worth.
 mod massing;

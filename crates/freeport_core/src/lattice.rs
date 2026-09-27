@@ -600,7 +600,7 @@ mod tests {
         let lat = Lattice::new(DVec3::splat(-0.25), 0.5);
         let reach = |level| lat.cell(level) * CH as f64 * HALF as f64;
         let top = crate::driver::TOP;
-        let mut level = |build: f64| {
+        let level = |build: f64| {
             let mut rings = Rings::around(&lat, DVec3::Y * 1_000_000.0, 14);
             rings.adapt(&lat, 0.0, top, build);
             rings.min_level

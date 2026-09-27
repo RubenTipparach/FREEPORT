@@ -3020,6 +3020,56 @@ a three metre tile; the first cut put five cells across the whole map,
 which is a 600 mm knot, and the wall came back blotched like scorched
 plywood.
 
+## No two faces FIGHT for one plane, and a town is where they meet
+
+The owner saw z-fighting on the buildings, their details and the
+pavements, and it was not precision: two kilometres from the floating
+origin an `f32` holds a quarter of a millimetre. It was faces that really
+lie in one plane where they overlap, and `fights::fights` is that
+measured on a mesh: triangles facing one way within a millimetre of one
+plane, overlapping by more than a square centimetre, where the caller
+does not say the overlap is hidden. It bins every triangle by its plane
+first, so a whole laid town of 800,000 triangles is checked in a
+second, and `fights::in_town` is the one rule for a town (a face turned
+down is under a slab and the ground sees it; a face with a box of the
+town standing on it is inside a wall, the boxes asked in the planet's
+frame they are kept in).
+
+**A model on its own was the first half, and the easy one.** A floor
+slab's sides lay in the walls' planes, a block's pillars were flush with
+its walls, a gable's ends overhung into the next roof, and in the bakes a
+gable and a vault reached exactly to the walls: 63 to 98 fights in every
+baked variant but the towers. Each is a rule now (`INSET`, `PROUD`,
+`EAVE`), `no_two_faces_of_a_building_fight_for_one_plane` holds every
+parametric kind and `tools/coplanar.py` every bake at every LOD.
+
+**A TOWN is the other half, because a building is as wide as its lot.**
+Anything proud of an outer wall is over the next lot, and on a terrace
+the next lot holds the same building. The bakes framed every window on
+all four walls, 2.5 cm proud of both faces, so every window on a party
+wall stood back to back with the neighbour's own and their frames' sides
+shared a plane for the 5 cm they overlapped: **4,563 fights over
+90.5 m^2 in the harness port**, which is the flicker along every terrace.
+A frame is 1 cm SHY of the street face now and 2.5 cm proud of the room's,
+so nothing of it leaves its lot; a vault's ends stand 3 cm in where a
+gable's stand 2, because a hangar turned a quarter from the house beside
+it in its column put the two end caps in one plane; and a parametric
+gable's eave wedges stand `INSET` behind its end, because past the wall
+they are over the lot behind. And the paving: a road marking was 4 mm
+over a carriageway, which was a hundred times what a LEVEL town is flat
+to and is not on graded ground, where every triangle is a chord of the
+grade and the middles stand 4.6 to 5.5 cm over it against the 5 laid:
+**113 markings within a millimetre of their own tarmac**. `PAINT_UP` is
+1.5 cm. `no_two_faces_of_a_town_fight_for_one_plane` holds the
+parametric port and `baked_buildings_meet_their_neighbours_in_no_plane`
+the baked one at all three grades, **nought fights either way**.
+
+What was tried and taken OUT: splitting a baked gable's roof shell at the
+wall line, for two houses built back to back. It put a face of the shell
+in the wall's own plane, where the ceiling slab's side already is, and
+took the port to 5,896 fights over 509 m^2. Back to back is rare, since a
+block's ring fronts its streets.
+
 ## A town is INHABITED, and a townsman is on rails
 
 `traffic.rs` in the core says who is out on a town's streets and where
@@ -5679,8 +5729,8 @@ up, and the replacement is run again after any update.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 242, the core, about 45 s on an i9-11900H
-cargo test -p freeport_app                        # 69, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 244, the core, about 45 s on an i9-11900H
+cargo test -p freeport_app                        # 70, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
