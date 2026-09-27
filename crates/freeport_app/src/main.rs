@@ -30,6 +30,7 @@
 mod aim;
 mod args;
 mod atlas;
+mod bot;
 mod buildings;
 mod city;
 mod clock;
@@ -228,7 +229,7 @@ fn main() {
         frozen: false,
     };
     let mut app = App::new();
-    let present_mode = if args.benchmark.is_some() {
+    let present_mode = if args.measuring() {
         bevy::window::PresentMode::AutoNoVsync
     } else {
         default()
@@ -240,7 +241,7 @@ fn main() {
         }),
         ..default()
     }));
-    if args.benchmark.is_some() {
+    if args.measuring() {
         app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
     if args.profile_render {
@@ -253,6 +254,7 @@ fn main() {
         WaterPlugin,
         sky::SkyPlugin,
         cull::CullPlugin,
+        bot::BotPlugin,
     ))
     .insert_resource(WireframeConfig {
         global: args.wire && !args.lod_wire,
@@ -837,7 +839,7 @@ fn place_eye(
 /// it is off under `--shot`, where a headless run wants every frame it
 /// can get.
 fn hold_frame(args: Res<Args>, mut due: Local<Option<Instant>>) {
-    if args.fps <= 0.0 || args.shot.is_some() || args.benchmark.is_some() {
+    if args.fps <= 0.0 || args.shot.is_some() || args.measuring() {
         return;
     }
     let frame = std::time::Duration::from_secs_f64(1.0 / args.fps);

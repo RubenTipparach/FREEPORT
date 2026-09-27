@@ -86,7 +86,8 @@ fn knock_off(
     now: f64,
 ) -> Theft {
     let field = here.underfoot(at, 8.0);
-    let mut car = Driver::board(&field, bounds, at.normalize(), fwd);
+    // Where the rails had it, which is on its town's own ground.
+    let mut car = Driver::board(&field, &bounds.near(at.length()), at.normalize(), fwd);
     car.speed = vel.dot(car.fwd);
     let (a, b) = who.index();
     car.tank = Tank::part(hash3(a as i64, b as i64, 0x7A, 0x9A5));

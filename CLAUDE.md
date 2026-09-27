@@ -5502,11 +5502,117 @@ time it was broken.
   yaw and pitch against the live basis every frame after guessed angles
   stared at empty sky for a week.
 
+## The BOT is a player nobody is playing, and a frame is measured doing what the game is FOR
+
+The owner's framing, which is the reason for all of it: FREEPORT is about
+driving a car from one town to another and doing jobs when you get there,
+washing dishes, serving food, cooking, deliveries and rides, and not about
+flight. So what is measured is not a camera flown along a rail, it is a
+player, and the owner's own words for it were a bot that walks round the
+city, gets in a car and drives to another city. `bot.rs` is that, and
+`docs/bot-and-bench.md` is its long form.
+
+**It goes through the player's own code at every step, or it measures a
+different game.** It walks with the walker's own `Input` and is stopped by
+the same walls; it takes a car through `drive::board` at `driver::REACH`, so
+it has to catch one; and it drives with the scripted drive along the route
+the map plans. `Autopilot` (`drive/script.rs`) is the one switch the
+scripted drive asks whether it is on, set by `--drive` and by the bot, so
+the two cannot disagree about it. Where the bot gets stuck is where a
+player would, and what its frames cost is what a player's cost.
+
+**Two runs are one errand, which is what makes a comparison mean
+anything.** Measured (`--bot-report`), it keeps the flight benchmark's own
+rules through `Args::measuring` (no frame cap, the window drawing
+unfocused, the keys and the mouse taken away), steps the whole world's
+clock a sixtieth a frame, and HOLDS that clock while the world comes up:
+the settle is a different number of frames every run, and a clock that ran
+through it put every car the bot walked to somewhere else. Held, two traced
+runs hit the same five hitches at the same frames counted from the walk,
+and an A/B's six rounds drive the same 739 m on both binaries.
+
+**`tools/bench.py` is what a performance commit is measured with now.** It
+runs errands for rounds and gives medians with their spread; `ab`
+interleaves two binaries ABBA so a laptop warming up charges both alike; a
+change is `better` or `worse` only past both sides' own spread. It refuses
+a second game, a screen recorder and (unless forced) a compiler, and says
+rather than refuses: battery power, a busy CPU, a run on the integrated GPU
+of a machine with a discrete one, rounds that ended apart or differently,
+and a streamer still behind at the end. `tools/trace.py` reads a
+`bevy/trace_chrome` build's trace a line at a time and says which SYSTEM a
+slow frame was spent on.
+
+**What the first errand found, and it was not the city.** The port's
+street errand on an RTX 3060 laptop had main thread hitches of 230 to 435
+ms, and the trace named them: `drive::board` when the bot took its car and
+`ram::ram_cars` every time a car was knocked off the rails, both through
+`Driver::board`, whose `walker::ground` with no feet known marches down
+from the top of the relief band a half metre a step. Six thousand samples
+of an eighteen octave field for every car taken, knocked or got out of.
+`Bounds::near` starts that march twenty metres over a radius the caller
+already has (the rails' own place, the car's own foot).
+
+**Measured, before and after**, three rounds of the `town` errand each,
+ABBA: the worst frame **259 ms to 41.2** (-84.1%), the p95 24.00 to 23.36,
+frames over 33.3 ms 50 to 37, and the median (13.12 to 13.11 ms), the p99
+and the update all within noise, on the same 739 m errand in all six
+rounds. The march for unknown feet starts ON the long march's own half
+metre grid, so the ground it finds is the same to the bit
+(`a_body_known_to_be_near_its_ground_finds_it_in_forty_samples_and_not_six_thousand`
+holds it): started twenty metres up exactly, it was a few millimetres off,
+and ninety seconds of driving later the two binaries were driving 563 m
+and 478 m, which the tool's own distance check said in capitals. What is
+left is the frame itself, 13 ms at the median with 12 of it the update: on
+this laptop the main thread IS the frame.
+
+**And the bot found a bug of its OWN plumbing.** `drive_car` steered the
+scripted drive only when a frame had more than one sub step, which is true
+of `--drive`'s second a frame and false of the bot's sixtieth, so in real
+time the car held full throttle dead ahead: out of the port the wrong way
+and down the highway at 160 km/h AWAY from its goal, 11.1 km off when it
+boarded and 20.7 km seven minutes later. `pedals` now says whether the
+script is driving (`None` for the input) and the wheel reads that.
+
+**And the TRIP arrives, which took five rules in the scripted drive, each
+found by a picture.** From deep in the 1,815 m port the drive steered at
+each crossing's middle, so it drove the centreline into every car coming
+the other way (`kept_right` puts it in its own lane); it turned for the
+next crossing from halfway down a block, a line through the corner
+building (the crossing ahead is steered for until the car is in it); it
+rammed everything in its path and every car it knocked stayed in the
+street as a wall (`Auto::room` keeps its speed to the clear road in its
+lane, against where the rails will have the traffic over the next two
+seconds); it did 93 km/h between two crossings (`TOWN_SPEED`, 50); and it
+drove on past a village it had reached (arrival is the town's OUTLINE,
+and the bot pulls up there, `Autopilot::park`). Measured, the whole errand
+in real time: a car taken at 25.6 s, the port's streets, the highway at
+160 km/h, and **arrived** in town 160 at 471 s, 13.0 km driven, frames
+p50 14.5 ms and p99 23.9. The cars on the rails still drive into it,
+because a closed form cannot know it is there, and at 160 km/h the
+streamed terrain falls behind the road.
+
+**What was tried first and measured WORSE, which is worth keeping.**
+Sphere tracing that march on the field's slope bound, `town::surface_radius`'s
+own rule, took the hitches from about 250 ms to about 400: the bound is
+ISOTROPIC and the planet's is in the hundreds now that road skirts are in
+it, while straight down the field changes at about one a metre, so the
+trace crawled. The lesson this file already wrote for `surface_radius` is
+the one that held: start from where the answer is.
+
+**What is MISSING, named rather than hidden.** The missions: each becomes
+an errand the day it exists. Two runs are not QUITE one errand: one round
+in six parted after a ram, most likely because the boxes a car meets in a
+town come from tiles built under a frame budget, so a frame's timing can
+decide whether a wall is there yet. `ram::ram_cars` is the costliest
+system on the main thread over a whole errand, about 4 ms a traced frame
+without its knocks, and nobody has looked at why. The bot walks a
+street's middle rather than its pavement.
+
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 234, the core, about 100 s
-cargo test -p freeport_app                        # 67, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 239, the core, about 45 s on an i9-11900H
+cargo test -p freeport_app                        # 69, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
@@ -5519,6 +5625,10 @@ python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, again
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
 ./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, E steals a car, M the map, G gas, H the time menu, T the torch, Tab wires, Esc frees the mouse
 ./run.sh --test                                   # the core suite and the shape check, then the build and the window; run.bat is the Windows twin, --shot out.png takes a picture with no display
+./target/release/freeport_app --bot               # the BOT: walks the port, takes a car, drives to the next town (docs/bot-and-bench.md)
+python3 tools/bench.py run                        # the bot measured, three rounds of each errand, medians and spread in target/bench
+python3 tools/bench.py ab --base old.exe --head target/release/freeport_app.exe   # two binaries, interleaved ABBA
+python3 tools/trace.py trace-<stamp>.json --worst 5   # which system a slow frame was spent on, off a bevy/trace_chrome build
 # Every headless run below is under xvfb-run with
 # VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json, and `--octaves` is
 # what a picture on a software rasteriser is bought down with, since the

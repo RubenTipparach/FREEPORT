@@ -5,11 +5,12 @@
 
 use super::{Driver, Streets, Thefts, SUB_STEPS};
 use crate::route::{ahead_on, bend_limit, off_tarmac, tarmac_after, Look, Planned};
-use crate::{Args, Controls};
+use crate::Controls;
 use bevy::ecs::system::SystemParam;
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use freeport_core::driver::{bend_speed, Drive, TOP};
+use freeport_core::figure::{CAR_LONG, CAR_WIDE};
 use freeport_core::town::{self, lot_frame};
 use freeport_core::{field, road};
 
@@ -29,21 +30,32 @@ use freeport_core::{field, road};
 /// frame covers 480 m in half an hour of rendering and the nearest
 /// settlement is nine kilometres off: the flag could photograph a car
 /// and never a JOURNEY.
-pub(super) fn pedals(controls: &Controls, script: &Script, auto: &mut Auto) -> (Drive, f64, usize) {
+///
+/// NOTHING for the input is the script driving, which is the one thing
+/// that says so: the scripted drive steers when it is on and never on a
+/// count of sub steps, because the bot's drive is on at ONE a frame and a
+/// wheel keyed on `steps > 1` left it holding full throttle dead ahead,
+/// out of the port the wrong way and down the highway away from its goal.
+pub(super) fn pedals(
+    controls: &Controls,
+    script: &Script,
+    auto: &mut Auto,
+) -> (Option<Drive>, f64, usize) {
     let keys = &controls.keys;
     let axis =
         |neg: KeyCode, pos: KeyCode| (keys.pressed(pos) as i32 - keys.pressed(neg) as i32) as f64;
-    let run = auto.left.get_or_insert(script.args.drive);
+    let pilot = &script.autopilot;
+    if pilot.park {
+        let halt = Drive {
+            brake: true,
+            ..Default::default()
+        };
+        return (Some(halt), 1.0 / 60.0, 1);
+    }
+    let run = auto.left.get_or_insert(pilot.frames);
     if *run > 0 {
         *run -= 1;
-        return (
-            Drive {
-                throttle: 1.0,
-                ..Default::default()
-            },
-            1.0 / 60.0,
-            SUB_STEPS,
-        );
+        return (None, 1.0 / 60.0, if pilot.realtime { 1 } else { SUB_STEPS });
     }
     let input = Drive {
         throttle: axis(KeyCode::KeyS, KeyCode::KeyW),
@@ -53,7 +65,7 @@ pub(super) fn pedals(controls: &Controls, script: &Script, auto: &mut Auto) -> (
         steer: axis(KeyCode::KeyD, KeyCode::KeyA),
         brake: keys.pressed(KeyCode::Space),
     };
-    (input, controls.time.delta_secs_f64(), 1)
+    (Some(input), controls.time.delta_secs_f64(), 1)
 }
 
 /// How long a scripted car has to have made no ground before it is
@@ -85,6 +97,13 @@ const CREEP: f64 = 2.0;
 /// brakes, metres a second, so it is not on and off the pedals every
 /// sub step.
 const SLACK: f64 = 1.0;
+/// The fastest a scripted car goes on a TOWN's own streets, metres a
+/// second: 50 km/h, which is the limit on most of the world's town
+/// streets. With none, the drive out of the 1,815 m port reached 93 km/h
+/// between two crossings and rammed fifteen cars in two minutes, and a car
+/// knocked off the rails stays in the street as a box the drive has no
+/// way round: it wedged there for good (`docs/bot-and-bench.md`).
+const TOWN_SPEED: f64 = 13.9;
 
 /// What a SCRIPTED drive is doing: how much of it is left to run, and
 /// what the car is doing about whatever it has driven into.
@@ -114,7 +133,7 @@ pub struct Auto {
     /// How far it has come over the ground, metres, and for how many
     /// scripted seconds, so a drive says whether it is a JOURNEY.
     gone: f64,
-    ticks: u32,
+    seconds: f64,
     /// The streets of the town it is getting OUT of, and which town that
     /// is. Kept because the graph is a sort of a thousand edges and the
     /// answer only changes when the car leaves the town; dropped by
@@ -134,6 +153,14 @@ pub struct Auto {
     /// Whether the car has reached the route's tarmac, and not strayed
     /// `STRAYED` off it since. See `along`.
     joined: bool,
+    /// Whether this sub step's aim came off a town's own STREETS, which
+    /// is where `TOWN_SPEED` holds.
+    in_town: bool,
+    /// Where the other cars are and where the rails will have them, for
+    /// this frame (`drive::coming`), and how long the car has been held
+    /// up behind one, seconds.
+    pub(super) traffic: Vec<DVec3>,
+    waiting: f64,
 }
 
 impl Auto {
@@ -143,16 +170,27 @@ impl Auto {
     /// number that says which is the GROUND made. The speedometer is not
     /// that number: the car that wedged itself out of the port read
     /// 4 km/h while making nought metres for two minutes.
-    pub(super) fn say(&mut self, car: &Driver, was: DVec3, goal: Option<DVec3>, radius: f64) {
+    ///
+    /// `dt` is the driving this call covered, a second in the fast drive
+    /// and a sixtieth in real time, so the half minute is DRIVING and not
+    /// a count of calls.
+    pub(super) fn say(
+        &mut self,
+        car: &Driver,
+        (was, dt): (DVec3, f64),
+        goal: Option<DVec3>,
+        radius: f64,
+    ) {
         self.gone += was.angle_between(car.dir) * radius;
-        self.ticks += 1;
-        if !self.ticks.is_multiple_of(30) {
+        let before = self.seconds;
+        self.seconds += dt;
+        if (self.seconds / 30.0).floor() == (before / 30.0).floor() {
             return;
         }
         info!(
-            "driven {:.0} m in {} s at {:.0} km/h, {:.2} km to go{}",
+            "driven {:.0} m in {:.0} s at {:.0} km/h, {:.2} km to go{}",
             self.gone,
-            self.ticks,
+            self.seconds,
             car.speed.abs() * 3.6,
             goal.map_or(0.0, |g| car.dir.angle_between(g) * radius / 1000.0),
             if self.backing > 0.0 {
@@ -186,6 +224,7 @@ impl Auto {
         let world = here.world();
         let (goal, radius) = (script.goal.0?, world.planet.radius);
         self.limit = None;
+        self.in_town = false;
         let (what, at) = match self.along(script, world, car) {
             Some(found) => found,
             None => self.alone(script, world, car, goal),
@@ -338,7 +377,9 @@ impl Auto {
         // way in, and the one after it is across whatever stands between.
         let first = route.first()?;
         if (from - *first).length() > town::PITCH * ENTER {
-            return Some(frame.world(DVec3::new(first.x, first.y, 0.0)));
+            self.in_town = true;
+            let at = kept_right(from, *first);
+            return Some(frame.world(DVec3::new(at.x, at.y, 0.0)));
         }
         // The NEXT crossing, and never one beyond it. A route is a chain
         // of crossings joined by streets the town laid, so the straight
@@ -353,8 +394,23 @@ impl Auto {
         //
         // None when there is no next one, which means the car is at the
         // town's own exit; what it wants then is the tarmac.
+        //
+        // And the nearest crossing is steered FOR until the car is in its
+        // square or past it, and only then the one after it. The nearest
+        // crossing is the one ahead from halfway down a block, and turning
+        // for the next one from there is a line across the corner: the
+        // bot's own pictures had the car scraping along the corner
+        // building of a left turn and then buried in its wall.
         let next = route.get(1)?;
-        Some(frame.world(DVec3::new(next.x, next.y, 0.0)))
+        self.in_town = true;
+        let past = (from - *first).dot(*next - *first) > 0.0;
+        let inside = (from - *first).length() < freeport_core::traffic::HALF_STREET;
+        let at = if past || inside {
+            kept_right(*first, *next)
+        } else {
+            kept_right(from, *first)
+        };
+        Some(frame.world(DVec3::new(at.x, at.y, 0.0)))
     }
 
     /// The pedals and the wheel for one sub step.
@@ -380,7 +436,17 @@ impl Auto {
                 brake: false,
             };
         }
-        if made < CRAWL * dt {
+        // Held up behind a car is not WEDGED, for a while: a car on the
+        // rails goes on its way. One that does not is a car off them,
+        // standing in the street, and then the car backs off and goes
+        // round it the way it goes round anything.
+        let room = self.room(car);
+        if room < HELD {
+            self.waiting += dt;
+        } else {
+            self.waiting = 0.0;
+        }
+        if made < CRAWL * dt && (room >= HELD || self.waiting > WAIT) {
             self.wedged += dt;
         } else {
             self.wedged = 0.0;
@@ -389,7 +455,7 @@ impl Auto {
             self.wedged = 0.0;
             self.backing = BACK_OFF;
         }
-        let (throttle, brake) = self.pace(car, goal, radius);
+        let (throttle, brake) = self.pace(car, goal, radius, room);
         Drive {
             throttle,
             steer: want,
@@ -409,8 +475,11 @@ impl Auto {
     /// round and round there for two minutes at the same 51.40 km from
     /// its goal. Never under `CREEP`, or a car braking for a corner reads
     /// as a car wedged against a wall and backs off it.
-    fn pace(&self, car: &Driver, goal: Option<DVec3>, radius: f64) -> (f64, bool) {
+    fn pace(&self, car: &Driver, goal: Option<DVec3>, radius: f64, room: f64) -> (f64, bool) {
         let mut most = self.limit.unwrap_or(TOP);
+        if self.in_town {
+            most = most.min(TOWN_SPEED);
+        }
         if let Some(g) = goal {
             let to = (g - car.dir * g.dot(car.dir)).normalize_or_zero();
             let off = to.dot(-car.right()).atan2(to.dot(car.fwd)).abs();
@@ -418,7 +487,10 @@ impl Auto {
             let arc = 2.0 * off.min(std::f64::consts::FRAC_PI_2).sin() / reach;
             most = most.min(bend_speed(arc));
         }
-        let most = most.max(CREEP);
+        // And no faster than it can stop in the clear road ahead of it,
+        // which may be nought: under `CREEP`, because a car stopped for
+        // traffic is stopped.
+        let most = most.max(CREEP).min((2.0 * BRAKING * room).sqrt());
         if car.speed > most + SLACK {
             (0.0, true)
         } else if car.speed < most {
@@ -429,12 +501,78 @@ impl Auto {
     }
 }
 
+/// A crossing to steer for, taken half a lane to the RIGHT of the way the
+/// car comes at it from, in the town's own metres (east, north): the
+/// middle of ITS lane (`traffic::CAR_LANE`), which is where the town's own
+/// cars ride. Steered at the crossing's own middle, a scripted car drove
+/// down the centreline, so every car coming the other way was in its path:
+/// it rammed them, and when it learned to stop for them it stopped for
+/// every one and got nowhere.
+fn kept_right(from: bevy::math::DVec2, to: bevy::math::DVec2) -> bevy::math::DVec2 {
+    let d = (to - from).normalize_or_zero();
+    to + bevy::math::DVec2::new(d.y, -d.x) * freeport_core::traffic::CAR_LANE
+}
+
+/// How much clear road a car has to have ahead of it to be going anywhere,
+/// metres, and how long it waits behind a car before it takes it for one
+/// that is not moving, seconds.
+const HELD: f64 = 0.5;
+const WAIT: f64 = 4.0;
+/// The gap a scripted car leaves to the car ahead, bumper to bumper,
+/// metres.
+const GAP: f64 = 2.5;
+/// How far either side of its own line a car counts as IN the way,
+/// metres: two half widths and a hand, so the car in the next lane going
+/// the other way is not.
+const IN_LANE: f64 = CAR_WIDE + 0.3;
+/// How far down its lane a car looks, metres.
+const LOOK_AHEAD: f64 = 60.0;
+
+impl Auto {
+    /// The clear road ahead of the car in its own lane, metres: to the gap
+    /// it leaves behind the nearest car that is, or will be within
+    /// `drive::FORESEE`, in it. Infinite with nobody there.
+    fn room(&self, car: &Driver) -> f64 {
+        let at = car.dir * car.foot;
+        let right = car.right();
+        self.traffic
+            .iter()
+            .filter_map(|p| {
+                let d = *p - at;
+                let d = d - car.dir * d.dot(car.dir);
+                let (along, side) = (d.dot(car.fwd), d.dot(right));
+                (along > 0.0 && along < LOOK_AHEAD && side.abs() < IN_LANE)
+                    .then_some(along - CAR_LONG - GAP)
+            })
+            .fold(f64::INFINITY, f64::min)
+            .max(0.0)
+    }
+}
+
+/// Who drives when nobody is at the keys: `--drive`, which is a flag and
+/// a frame count, or the bot, which boards a car it walked to and hands
+/// it over here (`bot.rs`). One switch, so the scripted drive has one
+/// question to ask about whether it is on and cannot be on for one of
+/// them and off for the other.
+#[derive(Resource, Default)]
+pub struct Autopilot {
+    /// How many rendered frames it holds the throttle for; nought is the
+    /// keys.
+    pub frames: u32,
+    /// A SIXTIETH of driving a frame rather than a second: the drive at
+    /// the pace a player sees it, which is what a frame is measured at.
+    pub realtime: bool,
+    /// PULL UP: the brake and nothing else, which is how a drive that has
+    /// got where it was going stops rather than driving on past it.
+    pub park: bool,
+}
+
 /// What a SCRIPTED drive is: the flags it was given and where it is
 /// headed. One thing, because they are one question and asking it as
 /// two took `drive_car` over Bevy's own parameter limit.
 #[derive(SystemParam)]
 pub struct Script<'w> {
-    pub(super) args: Res<'w, Args>,
+    pub(super) autopilot: Res<'w, Autopilot>,
     pub(super) goal: Res<'w, Goal>,
     /// The tarmac, so a scripted drive FOLLOWS the road to its town
     /// rather than aiming through whatever stands between.
@@ -488,13 +626,13 @@ pub struct Goal(pub Option<DVec3>, pub String);
 /// headless run has no pointer to do: the compass strip's tick and the
 /// map's first leg are then in the picture.
 pub fn aim_drive(
-    args: Res<Args>,
+    pilot: Res<Autopilot>,
     here: crate::world::Surface,
     thefts: Res<Thefts>,
     mut goal: ResMut<Goal>,
     mut markers: ResMut<crate::map::Markers>,
 ) {
-    if args.drive == 0 || goal.0.is_some() {
+    if pilot.frames == 0 || goal.0.is_some() {
         return;
     }
     let Some(car) = thefts.driving() else { return };

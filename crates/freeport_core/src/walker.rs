@@ -57,6 +57,43 @@ pub struct Bounds {
     pub sea: f64,
 }
 
+/// How far over a radius a body is KNOWN to stand near the march for its
+/// feet starts, metres (`Bounds::near`): a street's own kerbs and grades
+/// are a metre or two, and this is ten times that.
+const NEAR: f64 = 20.0;
+/// The step of the march for feet that are not known, metres.
+const MARCH: f64 = 0.5;
+
+impl Bounds {
+    /// These bounds for a body KNOWN to stand near `radius`: a car taken
+    /// off the rails where the rails had it, a walker let out beside the
+    /// car it was in.
+    ///
+    /// Where the feet are not known, `ground` marches down from `top` a
+    /// half metre at a time, and on a planet `top` is the top of the
+    /// relief band: kilometres of air, six thousand samples of an
+    /// eighteen octave field, and a quarter of a second on the main thread
+    /// every time a car was taken, knocked off the rails or got out of,
+    /// which the bot's own trace named. From `NEAR` over a radius the
+    /// caller already has, it is forty samples. Sphere tracing the march
+    /// on the field's slope bound was tried first and measured SLOWER:
+    /// the bound is isotropic and the planet's is in the hundreds, while
+    /// straight down it changes at about one a metre.
+    ///
+    /// It starts ON the march's own grid from `top`, so the samples it
+    /// takes are exactly the ones the long march took from there down and
+    /// the ground it finds is the same to the bit: started anywhere else it
+    /// was a few millimetres off, and ninety seconds of driving later the
+    /// A/B had two different errands, 563 m against 478.
+    pub fn near(&self, radius: f64) -> Bounds {
+        let skip = ((self.top - radius - NEAR) / MARCH).floor().max(0.0);
+        Bounds {
+            top: self.top - skip * MARCH,
+            ..*self
+        }
+    }
+}
+
 /// What the player asked for this frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Input {
@@ -119,7 +156,7 @@ fn gradient(field: &dyn Density, p: DVec3) -> DVec3 {
 pub fn ground(field: &dyn Density, bounds: &Bounds, dir: DVec3, foot: Option<f64>) -> f64 {
     let (mut r, step) = match foot {
         Some(f) => (f + STEP + 0.01, 0.1),
-        None => (bounds.top, 0.5),
+        None => (bounds.top, MARCH),
     };
     if solid(field, dir, r) {
         // Something is where the step would be: its top is the ground.
@@ -813,5 +850,38 @@ mod tests {
         );
         assert!(top < 0.6, "the head met the lintel at {top} m up");
         assert!(w.on_ground);
+    }
+
+    /// A field that counts how often it is asked.
+    struct Counted<'a>(&'a dyn Density, std::cell::Cell<usize>);
+
+    impl Density for Counted<'_> {
+        fn at(&self, p: DVec3) -> f64 {
+            self.1.set(self.1.get() + 1);
+            self.0.at(p)
+        }
+    }
+
+    #[test]
+    fn a_body_known_to_be_near_its_ground_finds_it_in_forty_samples_and_not_six_thousand() {
+        // Three kilometres of air over the ground, which is what the top
+        // of a planet's relief band is.
+        let high = Bounds {
+            top: R + 3000.0,
+            ..bounds()
+        };
+        let ball = Sphere { radius: R };
+        let far = Counted(&ball, std::cell::Cell::new(0));
+        let from_top = ground(&far, &high, DVec3::Y, None);
+        let near = Counted(&ball, std::cell::Cell::new(0));
+        // Where the rails had it: a little off the true ground either way.
+        let from_near = ground(&near, &high.near(R + 0.3), DVec3::Y, None);
+        assert!((from_top - R).abs() < 0.01);
+        // The same ground to the bit, because it is the same samples.
+        assert_eq!(from_near.to_bits(), from_top.to_bits());
+        assert!(far.1.get() > 5000, "{} samples from the top", far.1.get());
+        assert!(near.1.get() < 60, "{} samples from near", near.1.get());
+        // And never over the top it was given.
+        assert_eq!(high.near(R + 4000.0).top, high.top);
     }
 }
