@@ -45,6 +45,8 @@ const PANE_W: f64 = 1.2;
 const PANE_H: f64 = 1.5;
 const SILL: f64 = 1.0;
 const PANE_PITCH: f64 = 2.6;
+/// How far a pitched roof's eaves overhang the walls under them, metres.
+const EAVE: f64 = 0.3;
 /// How far proud of the wall a pane sits, metres: enough that no depth
 /// test can put the wall in front of it, and under anything an eye reads
 /// as a ledge.
@@ -454,10 +456,13 @@ fn shell(m: &mut Model, w: f64, d: f64, h: f64, seed: u32, skin: u8) {
     let t = WALL * 0.5;
     let (hw, hd) = (w * 0.5, d * 0.5);
     // The FLOOR is poured concrete whatever the walls are, which is
-    // what a floor is: a slab on the ground.
+    // what a floor is: a slab on the ground. `INSET` in from the walls'
+    // outer faces, or its sides lie in their planes for its whole depth
+    // and the two fight for every pixel of a band along the foot of the
+    // building, which is what the owner saw as z-fighting.
     m.solid(
         DVec3::new(0.0, 0.0, SLAB * 0.5),
-        DVec3::new(hw, hd, SLAB * 0.5),
+        DVec3::new(hw - INSET, hd - INSET, SLAB * 0.5),
         0.0,
         CONCRETE,
     );
@@ -535,7 +540,7 @@ fn round(m: &mut Model, r: f64, h: f64, seed: u32, skin: u8) {
     let wide = r * (step * 0.5).tan();
     m.solid(
         DVec3::new(0.0, 0.0, SLAB * 0.5),
-        DVec3::new(r, r, SLAB * 0.5),
+        DVec3::new(r - INSET, r - INSET, SLAB * 0.5),
         0.0,
         CONCRETE,
     );
@@ -599,8 +604,12 @@ fn flat_roof(m: &mut Model, w: f64, d: f64, h: f64) {
 
 /// A gable: two pitched faces to a ridge along the lot's east axis, and a
 /// triangle closing each end.
+///
+/// The eaves overhang by `EAVE` and the gable ends not at all: terraced
+/// neighbours share a height and a pitch, so a roof past its own lot lay
+/// in the next one's plane, a strip of z-fighting at every party wall.
 fn gable(m: &mut Model, w: f64, d: f64, h: f64, skin: u8) {
-    let (hw, hd) = (w * 0.5 + 0.3, d * 0.5 + 0.3);
+    let (hw, hd) = (w * 0.5, d * 0.5 + EAVE);
     let ridge = h + d * 0.35;
     for side in [-1.0, 1.0] {
         let eave = DVec3::new(0.0, side * hd, h);
@@ -650,12 +659,20 @@ fn vault(m: &mut Model, w: f64, d: f64, h: f64) {
 
 /// Plate pillars at the corners of a block, which is what stops a tower
 /// reading as one poured shape.
+///
+/// `PROUD` of the walls, the panes' own rule: flush, a pillar's two outer
+/// faces lay in the walls' planes for the building's whole height, and
+/// every corner of every tower flickered between plate and the wall's own
+/// skin as the camera moved. And TRIM, because proud of the walls it is
+/// proud of the lot, and a building's solids stop at its lot
+/// (`a_building_stands_on_its_own_block_and_never_in_the_street`): the
+/// walls behind it are what stops a body at the corner.
 fn pillars(m: &mut Model, w: f64, d: f64, h: f64) {
-    let (hw, hd) = (w * 0.5, d * 0.5);
+    let (hw, hd) = (w * 0.5 + PROUD, d * 0.5 + PROUD);
     let t = WALL * 0.6;
     for sx in [-1.0, 1.0] {
         for sy in [-1.0, 1.0] {
-            m.solid(
+            m.trim(
                 DVec3::new(sx * (hw - t), sy * (hd - t), h * 0.5),
                 DVec3::new(t, t, h * 0.5),
                 0.0,
