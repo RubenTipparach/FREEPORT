@@ -37,8 +37,11 @@ pub struct Done {
 }
 
 impl Job {
-    /// A fully levelled site has no procedural noise to offload. Those
-    /// chunks go straight to the CPU workers and can overlap a GPU batch.
+    /// A chunk wholly inside a levelled site goes straight to the CPU
+    /// workers, where it can overlap a GPU batch. It is not free there:
+    /// a town only CUTS, so the bare relief is still asked for the min
+    /// `Planet::surface` takes, which is why this is a routing choice
+    /// and not a skip.
     fn needs_gpu(&self) -> bool {
         if self.cancelled.load(Ordering::Relaxed) {
             return false;
@@ -98,7 +101,14 @@ impl Job {
         }
         let t0 = Instant::now();
         let (lo, hi) = self.id.bounds(&self.lat, 0);
-        let field = self.world.ground();
+        // The planet as THIS chunk sees it, with only the sites that can
+        // reach into it, which the GPU's own input was already built on.
+        // Contoured against the whole body instead, every sample walked a
+        // latitude band of the site index as wide as the widest site on
+        // it: 42.7 us a sample in the port against 2.5, and the band grew
+        // three and a half times the day cities did.
+        let local = crate::compute::local_planet(&self.world.planet, &self.lat, self.id);
+        let field = freeport_core::field::Built::bare(&local);
         let mesh = if field.solid(lo, hi).is_some() {
             DcMesh::default()
         } else if let Some(samples) = self.samples {

@@ -129,6 +129,40 @@ fn a_car_standing_still_cannot_turn_however_hard_the_wheel_is_held() {
     assert!(fast > slow, "the wheel does the same at every speed");
 }
 
+/// The speed a bend is held at is the speed the wheel HOLDS it at: a car
+/// at `bend_speed(k)` with the wheel hard over turns at exactly `k`, a
+/// hair slower it turns tighter and a hair faster it runs wide.
+#[test]
+fn a_car_holds_a_bend_at_the_speed_the_bend_is_held_at() {
+    let (b, w) = (bounds(), world(&[]));
+    let at = |speed: f64| {
+        let mut d = car(&w, &b);
+        d.speed = speed;
+        d.yaw_rate(1.0).abs() / speed
+    };
+    for radius in [8.0, 15.0, 25.0] {
+        let k = 1.0 / radius;
+        let v = crate::driver::bend_speed(k);
+        println!("a {radius} m bend is held at {v:.2} m/s");
+        assert!(
+            (at(v) - k).abs() < 1e-9 * k.max(1.0),
+            "{} against {k}",
+            at(v)
+        );
+        assert!(at(v * 0.98) > k && at(v * 1.02) < k);
+    }
+    // The slip's own fifteen metres, which is the bend that sent a car
+    // at the top speed onto the grass.
+    assert!((crate::driver::bend_speed(1.0 / 15.0) - 17.9).abs() < 0.05);
+    // A straight is the top speed and a bend past full lock is none. Past
+    // about thirty metres the top speed's own lock holds it, so a
+    // highway's curve is taken flat out.
+    assert_eq!(crate::driver::bend_speed(0.0), crate::driver::TOP);
+    assert_eq!(crate::driver::bend_speed(1.0), 0.0);
+    assert_eq!(crate::driver::bend_speed(1.0 / 60.0), crate::driver::TOP);
+    assert_eq!(crate::driver::bend_speed(1.0 / 1_116.0), crate::driver::TOP);
+}
+
 /// How tight a circle it can hold: the wheelbase over the tangent of the
 /// lock, which is a small car's ten metre turning circle. Measured by
 /// DRIVING one rather than by reading the constant back.
@@ -176,6 +210,7 @@ fn a_wall_stops_a_car_and_a_kerb_is_driven_up() {
         east: DVec3::X,
         north: DVec3::Z,
         base: R,
+        lean: glam::DVec2::ZERO,
     };
     let block = |along: f64, half: DVec3| {
         crate::model::Solid {
@@ -381,6 +416,7 @@ fn a_car_that_has_met_a_wall_can_back_off_it_again() {
         east: DVec3::X,
         north: DVec3::Z,
         base: R,
+        lean: glam::DVec2::ZERO,
     };
     let slab = |centre: DVec3, half: DVec3| {
         crate::model::Solid {
@@ -687,6 +723,7 @@ fn wall_at(along: f64, half: DVec3) -> Block {
         east,
         north: east.cross(dir).normalize(),
         base: R,
+        lean: glam::DVec2::ZERO,
     };
     crate::model::Solid {
         centre: DVec3::new(0.0, 0.0, half.z),

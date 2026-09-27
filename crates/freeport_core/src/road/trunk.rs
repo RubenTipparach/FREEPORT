@@ -130,7 +130,8 @@ fn cell(dir: DVec3, radius: f64) -> u64 {
 
 /// The nearest point of the great circle chord from `a` to `b` to `p`,
 /// as the share along the chord and the point itself on the sphere.
-fn project(p: DVec3, a: DVec3, b: DVec3) -> (f64, DVec3) {
+/// `path` snaps a place onto the network with it too.
+pub(super) fn project(p: DVec3, a: DVec3, b: DVec3) -> (f64, DVec3) {
     let ab = b - a;
     let t = ((p - a).dot(ab) / ab.length_squared().max(1e-30)).clamp(0.0, 1.0);
     (t, (a + ab * t).normalize_or(a))
@@ -180,7 +181,8 @@ fn nearest(
                     }
                     let line = &lines[r];
                     for seg in [i.wrapping_sub(1), i] {
-                        let (Some(a), Some(b)) = (line.get(seg), line.get(seg + 1)) else {
+                        let (Some(a), Some(b)) = (line.get(seg), line.get(seg.wrapping_add(1)))
+                        else {
                             continue;
                         };
                         let (t, q) = project(p, *a, *b);
@@ -402,7 +404,7 @@ fn steepest(lanes: &[Laying<'_>], pins: &[Pin], gaps: &[Vec<f64>]) -> f64 {
         .flat_map(|p| [p.k.wrapping_sub(1), p.k].map(|k| (p.road, k)))
         .filter_map(|(r, k)| {
             let run = &lanes[r].run;
-            Some((run.get(k + 1)? - run.get(k)?).abs() / gaps[r].get(k)?.max(1e-9))
+            Some((run.get(k.wrapping_add(1))? - run.get(k)?).abs() / gaps[r].get(k)?.max(1e-9))
         })
         .fold(0.0, f64::max)
 }

@@ -159,6 +159,118 @@ pub fn street(piece: &Piece) -> Model {
     }
 }
 
+/// A piece of street at a GRADE of detail, the same ladder a building's
+/// own bakes are on: the whole cross section at the two nearest, then
+/// FLAT, then one SLAB.
+///
+/// A street is laid in pieces a few metres long, and each is thirty two
+/// triangles of kerbs, markings and pavement ends: a town of seven
+/// thousand of them is a quarter of a million triangles of paving,
+/// which is more than its buildings at their own farthest bake. Past a
+/// couple of hundred metres a kerb's twelve centimetres is under a
+/// pixel and a dash of paint is under a tenth of one, so what is left
+/// is the carriageway and the pavement tops (`flat`), and past a
+/// kilometre one quad over the whole piece (`slab`), which is what a
+/// street IS from there: a strip of tarmac through the blocks.
+///
+/// Nothing at a far grade stops a body. What a body is stopped by is
+/// built from the nearest grade and only where a body can reach it.
+pub fn street_graded(piece: &Piece, grade: usize) -> Model {
+    match grade {
+        0 | 1 => street(piece),
+        2 => flat(piece),
+        _ => slab(piece),
+    }
+}
+
+/// A piece with its kerbs and paint taken off: the carriageway at its
+/// own lift and the pavement's tops at theirs, and no sides to either.
+fn flat(piece: &Piece) -> Model {
+    let mut m = Model::new();
+    let top = LIFT + KERB;
+    if piece.square() {
+        let h = DVec2::new(piece.w, piece.d) * 0.5;
+        for (lo, hi) in tiles(-h, h, SQUARE_FAR_TILE) {
+            panel(&mut m, lo, hi, top, CONCRETE);
+        }
+        return m;
+    }
+    if piece.run() {
+        let half = (if piece.northerly() { piece.d } else { piece.w }) * 0.5;
+        for &(c0, c1) in &BANDS {
+            let (lo, hi) = if piece.northerly() {
+                (DVec2::new(c0, -half), DVec2::new(c1, half))
+            } else {
+                (DVec2::new(-half, c0), DVec2::new(half, c1))
+            };
+            let road = c0 < 0.0 && c1 > 0.0;
+            let (up, material) = if road {
+                (LIFT, STREET)
+            } else {
+                (top, CONCRETE)
+            };
+            panel(&mut m, lo, hi, up, material);
+        }
+        return m;
+    }
+    for (bx, &(x0, x1)) in BANDS.iter().enumerate() {
+        for (bz, &(z0, z1)) in BANDS.iter().enumerate() {
+            let (up, material) = if paved(piece.arms, bx, bz) {
+                (LIFT, STREET)
+            } else {
+                (top, CONCRETE)
+            };
+            panel(&mut m, DVec2::new(x0, z0), DVec2::new(x1, z1), up, material);
+        }
+    }
+    m
+}
+
+/// A piece as ONE quad over the whole of it, in tarmac, or in paving for
+/// the square.
+fn slab(piece: &Piece) -> Model {
+    let mut m = Model::new();
+    let h = DVec2::new(piece.w, piece.d) * 0.5;
+    if piece.square() {
+        for (lo, hi) in tiles(-h, h, SQUARE_FAR_TILE) {
+            panel(&mut m, lo, hi, LIFT + KERB, CONCRETE);
+        }
+    } else {
+        panel(&mut m, -h, h, LIFT, STREET);
+    }
+    m
+}
+
+/// How wide a square's paving is laid in one piece, metres, and how wide
+/// once its kerbs are not worth drawing.
+///
+/// A square is one PIECE, up to 137 m across in a city, and on graded
+/// ground one piece is one plane: laid whole it stood 0.74 m off the
+/// ground the town is graded to at its worst. In tiles every tile corner
+/// is laid on the ground at its own point, and between two corners the
+/// ground bends by the grade's own curvature, `2 GRADE / STEP`, over at
+/// most a tile: two centimetres at eight metres.
+const SQUARE_TILE: f64 = 8.0;
+const SQUARE_FAR_TILE: f64 = 16.0;
+
+/// A rectangle cut into tiles no wider than `most` either way.
+fn tiles(lo: DVec2, hi: DVec2, most: f64) -> Vec<(DVec2, DVec2)> {
+    let size = hi - lo;
+    let (nx, ny) = (
+        (size.x / most).ceil().max(1.0) as usize,
+        (size.y / most).ceil().max(1.0) as usize,
+    );
+    let step = DVec2::new(size.x / nx as f64, size.y / ny as f64);
+    let mut out = Vec::with_capacity(nx * ny);
+    for j in 0..ny {
+        for i in 0..nx {
+            let a = lo + step * DVec2::new(i as f64, j as f64);
+            out.push((a, a + step));
+        }
+    }
+    out
+}
+
 /// How wide the plinth in the middle of a square is and how high it
 /// stands, metres, and how far in from the square's own corners its
 /// four lamps stand.
@@ -173,7 +285,9 @@ const SQUARE_LAMP_H: f64 = 5.0;
 fn square(w: f64, d: f64) -> Model {
     let mut m = Model::new();
     let (hw, hd) = (w * 0.5, d * 0.5);
-    kerb(&mut m, DVec2::new(-hw, -hd), DVec2::new(hw, hd));
+    for (lo, hi) in tiles(DVec2::new(-hw, -hd), DVec2::new(hw, hd), SQUARE_TILE) {
+        kerb(&mut m, lo, hi);
+    }
     let top = LIFT + KERB;
     m.solid(
         DVec3::new(0.0, 0.0, top + PLINTH_H * 0.5),

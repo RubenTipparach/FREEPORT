@@ -43,6 +43,9 @@ pub struct Sites {
     /// The shortest arc any site spans, radians, so the steepest grade
     /// is bounded by `drop / (sweep * radius)`.
     sweep: f64,
+    /// Whether any site is a town on GRADED ground, which climbs across
+    /// itself where a level town does not.
+    graded: bool,
 }
 
 impl Sites {
@@ -56,7 +59,8 @@ impl Sites {
         for site in &out.by_lat {
             out.reach_y = out.reach_y.max((site.dir.y - site.to.y).abs() * 0.5);
             out.reach_m = out.reach_m.max(site_band(site).1);
-            out.level = out.level.max(site.h.abs()).max(site.to_h.abs());
+            out.level = out.level.max(site.top().abs()).max(site.bottom().abs());
+            out.graded |= site.grade.is_some();
             out.drop = out.drop.max((site.to_h - site.h).abs());
             let sweep = site.dir.angle_between(site.to);
             if sweep > 0.0 {
@@ -122,12 +126,25 @@ impl Sites {
         self.level
     }
 
+    ///
+    /// A town on GRADED ground climbs across itself too, at up to
+    /// `town::GRADE` along either of its axes and so the square root of
+    /// two of it across a diagonal, and that is carried beside the
+    /// roads' own rather than summed with it: no point is on two
+    /// gradients at once, since a road's flat takes its own level
+    /// outright (`Planet::levelling`).
     pub fn grade(&self, radius: f64) -> f64 {
-        if self.sweep.is_finite() && self.sweep > 0.0 && radius > 0.0 {
+        let road = if self.sweep.is_finite() && self.sweep > 0.0 && radius > 0.0 {
             self.drop / (self.sweep * radius)
         } else {
             0.0
-        }
+        };
+        let town = if self.graded {
+            crate::town::GRADE * std::f64::consts::SQRT_2
+        } else {
+            0.0
+        };
+        road.max(town)
     }
 
     /// The sites whose own latitude band is within `window` of a

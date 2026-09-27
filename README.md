@@ -6,15 +6,18 @@ across, drawn from orbit to the ground with no seam, and a ship you climb out
 of. Bevy 0.18, Rust, `f64` world frame with a floating origin, and a two
 thousand kilometre planet drawn from one density field: dual contoured into
 triangles a chunk at a time, on one lattice at every level, in rings of
-detail round the eye. There is a sea, eight towns whose buildings and
-streets are parametric models standing on ground the field levels for them,
+detail round the eye. There is a sea, cities up to six and a half
+kilometres across whose buildings and streets are models standing on ground
+the field grades for them to the country they are built in,
 and a walker on a street of the port who is stopped by the same boxes the
 walls were drawn from. The sky is tenebris's scattering march, run in the
 core so the dome and the fog cannot disagree.
 
 Terrain density sampling now uses batched compute shaders, with CPU meshing for
-precise surface crossings and LOD seams. The rings adapt to altitude, and buildings
-use three distance-based detail levels. Buildings are baked with headless Blender:
+precise surface crossings and LOD seams. The rings adapt to altitude, and a city is
+drawn a block at a time: three baked detail levels near the eye and solid
+blocks past a kilometre, so a whole city of thousands of buildings is in one
+picture. Buildings are baked with headless Blender:
 editable boolean-cut windows and doors, transparent glazing, static runtime meshes,
 and collision from the same dimensions. See [the authoring and streaming guide](docs/buildings-and-streaming.md).
 

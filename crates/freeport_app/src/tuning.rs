@@ -11,9 +11,21 @@ pub struct Tuning {
     pub terrain_jobs_ahead: usize,
     pub terrain_workers: usize,
     pub terrain_compute_batch: usize,
+    /// Where a tile of a town stops being drawn from the nearest bake,
+    /// from the middle one, and from the farthest and becomes a SOLID
+    /// BLOCK, metres from the eye to the tile.
+    pub building_lod_detail: f64,
     pub building_lod_near: f64,
     pub building_lod_far: f64,
+    /// How many tiles of a town may be being built on workers at once.
+    pub building_jobs: usize,
     pub lod_hysteresis: f64,
+    /// Whether the GPU culls, for the camera and the sun's cascades, what
+    /// last frame's depth proves is hidden (`cull::cull_views`).
+    pub occlusion_culling: bool,
+    /// Whether a tile drawn past its nearest bake casts its shadow from
+    /// its solid block rather than from its detail (`cull::casts`).
+    pub shadow_proxies: bool,
 }
 
 impl Default for Tuning {
@@ -27,9 +39,13 @@ impl Default for Tuning {
                 .map(|n| (n.get() / 2).clamp(1, 8))
                 .unwrap_or(2),
             terrain_compute_batch: 2,
+            building_lod_detail: 80.0,
             building_lod_near: 250.0,
             building_lod_far: 1200.0,
+            building_jobs: 3,
             lod_hysteresis: 0.15,
+            occlusion_culling: true,
+            shadow_proxies: true,
         }
     }
 }
@@ -73,12 +89,20 @@ impl Tuning {
         self.terrain_workers = self.terrain_workers.min(64);
         self.terrain_upload_count = self.terrain_upload_count.min(256);
         self.terrain_jobs_ahead = self.terrain_jobs_ahead.min(256);
-        if !self.building_lod_near.is_finite() || self.building_lod_near <= 0.0 {
-            self.building_lod_near = d.building_lod_near;
+        if !self.building_lod_detail.is_finite() || self.building_lod_detail <= 0.0 {
+            self.building_lod_detail = d.building_lod_detail;
+        }
+        if !self.building_lod_near.is_finite() || self.building_lod_near <= self.building_lod_detail
+        {
+            self.building_lod_near = d.building_lod_near.max(self.building_lod_detail * 2.0);
         }
         if !self.building_lod_far.is_finite() || self.building_lod_far <= self.building_lod_near {
             self.building_lod_far = d.building_lod_far.max(self.building_lod_near * 2.0);
         }
+        if self.building_jobs == 0 {
+            self.building_jobs = d.building_jobs;
+        }
+        self.building_jobs = self.building_jobs.min(32);
         if !self.lod_hysteresis.is_finite() || self.lod_hysteresis <= 0.0 {
             self.lod_hysteresis = d.lod_hysteresis;
         }

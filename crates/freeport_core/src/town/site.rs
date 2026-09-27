@@ -6,8 +6,9 @@
 //! `town.rs` was over this project's nine hundred lines the day a site
 //! stopped being a circle.
 
-use super::{edge, frame_at, APRON, OUTLINE, WOBBLE};
+use super::{edge, frame_at, Grade, APRON, OUTLINE, WOBBLE};
 use glam::{DVec2, DVec3};
+use std::sync::Arc;
 
 /// A patch of planet LEVELLED: a town's own ground, or the corridor a
 /// road is cut along.
@@ -43,7 +44,7 @@ pub struct Outline {
 }
 
 /// are subtle enough that one copy would be wrong.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Site {
     /// One end of the arc, and a town's own middle.
     pub dir: DVec3,
@@ -79,6 +80,14 @@ pub struct Site {
     /// two hundred metres of bare levelled plateau round a town three
     /// hundred and seventy across.
     pub outline: Option<Outline>,
+    /// A town's GRADED ground, when it has one: the level it cuts to at
+    /// every point of it, rather than one height right across.
+    ///
+    /// None on a road's corridor, which ramps along itself, and on a town
+    /// laid with no planet under it, which is level at `h`. Behind an
+    /// `Arc`, because a site is handed about by value and a city's grade
+    /// is twenty thousand nodes.
+    pub grade: Option<Arc<Grade>>,
 }
 
 impl Site {
@@ -92,6 +101,7 @@ impl Site {
             r,
             fills: false,
             outline: None,
+            grade: None,
         }
     }
 
@@ -114,6 +124,40 @@ impl Site {
                 along,
                 seed,
             }),
+            grade: None,
+        }
+    }
+
+    /// The same site on graded ground.
+    pub fn graded(mut self, grade: Option<Arc<Grade>>) -> Site {
+        self.grade = grade;
+        self
+    }
+
+    /// The highest and the lowest this site levels anything to, metres
+    /// over the mean radius: an upper bound on the ground it cuts and a
+    /// lower bound on what it leaves.
+    pub fn top(&self) -> f64 {
+        match &self.grade {
+            Some(g) => g.high(),
+            None => self.h.max(self.to_h),
+        }
+    }
+
+    /// The highest it levels anything to within `span` metres of a
+    /// direction: `top` for a road's arc, and the grade's own highest
+    /// near there on a graded town.
+    pub fn top_near(&self, dir: DVec3, span: f64) -> f64 {
+        match &self.grade {
+            Some(g) => g.high_near(dir, span),
+            None => self.h.max(self.to_h),
+        }
+    }
+
+    pub fn bottom(&self) -> f64 {
+        match &self.grade {
+            Some(g) => g.low(),
+            None => self.h.min(self.to_h),
         }
     }
 
@@ -129,6 +173,7 @@ impl Site {
             r,
             fills: true,
             outline: None,
+            grade: None,
         }
     }
 
@@ -156,6 +201,11 @@ impl Site {
 
     /// The nearest point of the arc to a direction, and the level there.
     pub fn nearest(&self, dir: DVec3) -> (DVec3, f64) {
+        // A town's middle is its nearest point to anything, and its level
+        // there is its GRADE's at the point asked about.
+        if let Some(g) = &self.grade {
+            return (self.dir, g.at_dir(dir));
+        }
         let t = self.along(dir);
         if t <= 0.0 {
             return (self.dir, self.h);

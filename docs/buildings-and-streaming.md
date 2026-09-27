@@ -34,7 +34,13 @@ The bake checks wall manifoldness and positive signed volume, ray-tests every
 window opening and door, and verifies that wall remains below each window.
 LOD0 includes bevels and trim; LOD1 keeps the openings, frames and glass but drops
 bevels and small details; LOD2 keeps the building silhouette and doorway and fills
-subpixel windows. Baked meshes are reused and batched by town. Glass has its own
+subpixel windows. Baked meshes are reused and batched by city block (a tile of
+`PITCH`, 48.5 m). Past the LOD2 distance a block is drawn as SOLID BLOCKS, one box
+per building in its own skin (`model::massing`) and one quad per piece of street,
+which is about 1% of LOD0's triangles. Every tile has this massing from the moment
+its town is raised. Nearer tiles are rebuilt on a worker at their grade and replace
+the massing when ready. Collision boxes and lamps exist only for tiles within
+180 m (dropped past 260 m), again built on a worker. Glass has its own
 transparent material and draw, rather than the opaque terrain shader's window color.
 Missing or invalid libraries produce a warning and use the procedural reference
 models, whose box and pane winding is now corrected.
@@ -61,8 +67,9 @@ of pending jobs limits both in-flight memory and wasted work. A readback failure
 switches subsequent jobs to CPU sampling. Software adapters and unsupported
 compute limits select CPU automatically; `--cpu-terrain` explicitly selects it.
 Conservative local field bounds skip whole air/rock chunks before dispatch.
-Fully levelled town chunks have no noise to evaluate and bypass the compute
-dispatch, so their CPU work can overlap GPU batches for the surrounding terrain.
+Fully levelled town chunks (a town's ground is graded to the country,
+`town::Grade`, and inside the town it is that grade outright) have no noise
+to evaluate and bypass the compute dispatch, so their CPU work can overlap GPU batches for the surrounding terrain.
 
 Layout culling, seam signatures and distance ordering run on a separate planner
 thread. The frame thread consumes an already ordered queue. Terrain rings drop
@@ -90,10 +97,16 @@ The finest grid uses 0.5 m cells, configurable as `terrain_cell_size` or
 follow the contoured surface; cell size is not an exact triangle-edge length.
 
 `assets/config/render.json` controls the mesh installation time/count budgets,
-queue lookahead, worker count, compute batch size, and building LOD distances/hysteresis. Distances are
-metres from the town's bounds in the absolute world frame. Zero selects the default.
+queue lookahead, worker count, compute batch size, building LOD distances/hysteresis
+and the number of building jobs in flight. Distances are metres from each block's own
+bounds, in the town's frame. Zero selects the default.
 The default worker count uses half the available hardware threads and caps terrain workers
-at eight. Building LOD thresholds are 250 and 1,200 metres, with 15% hysteresis.
+at eight. Building LOD thresholds are 80, 250 and 1,200 metres (LOD0 to LOD1, LOD1 to
+LOD2, LOD2 to solid blocks), with 15% hysteresis, and three building jobs run at once.
+`occlusion_culling` (on by default) lets the GPU cull, for the camera only, what the
+previous frame's depth proves hidden. `shadow_proxies` (on by default) makes a tile drawn
+past its nearest bake cast its shadow from its solid block, which only the sun sees.
+Both are booleans rather than zero-sentinel numbers, so an A/B is one line of this file.
 
 ## Validation and measurements
 

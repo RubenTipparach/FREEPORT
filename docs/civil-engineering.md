@@ -120,17 +120,26 @@ here so the next reader knows it was a decision.
 | motorway, level terrain | 3 to 4% |
 | rural arterial, rolling | 5 to 6% |
 | rural arterial, mountainous | 7 to 8% |
+| urban collector, rolling | 8 to 9% |
 | local and mountain roads | 9 to 12% |
 
-**FREEPORT uses 10%** (`road::STEEPEST`, one in ten), which is a
-mountain road rather than a motorway. That is a deliberate departure
-and the reason is the body: the relief is 8,000 m over a 1,000 km
-radius and the settlements are placed by the ground, so a network held
-to 4% would refuse most of the edges it needs and leave the interior of
-every continent unjoined. The routing cost function already leans hard
-against climbing (`road::GRADE`, eight times the flat distance per unit
-of grade), so a route takes the long way round rather than the steep
-way over wherever it can.
+**FREEPORT's highways use 7%** (`road::STEEPEST`), which is the
+owner's own number and a mountainous arterial's. It was 10% for a
+while, a mountain road, on the reasoning that a network held to 4%
+would refuse most of the edges it needs on a body with 8,000 m of
+relief; the routing cost function already leans hard against climbing
+(`road::GRADE`, eight times the flat distance per unit of grade), so a
+route takes the long way round rather than the steep way over wherever
+it can, and seven holds everywhere it has to.
+
+**A town's streets use 8%** (`town::GRADE`), an urban collector on
+rolling ground, because a town's ground is GRADED to the country
+rather than levelled to one height (`town::Grade`) and every street
+runs along one of the two axes the grade is held on. Across a diagonal
+the ground can reach the square root of two of it, 11.3%, which no
+street runs along. Where the country climbs faster than that, the
+grade stands under it and cuts, and a site is refused where that cut
+passes `town::CUT` (15 m, a retaining wall five storeys high).
 
 ## The cross section
 

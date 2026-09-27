@@ -20,7 +20,7 @@
 //! (`town::coastal`), so the three are one law rather than three.
 
 use super::{
-    demand, home_run, shape, streets_of, Lot, Piece, Zone, BLOCK, LOT, PITCH, SIDE, STREET, TOWN_AT,
+    demand, home_run, streets_of, Lot, Piece, Zone, BLOCK, LOT, PITCH, SIDE, STREET, TOWN_AT,
 };
 use crate::field::hash3;
 use crate::model::Kind;
@@ -105,8 +105,9 @@ pub fn square_of(tier: Tier, radius: f64) -> i64 {
 /// on it, which is what this was.
 const SUBURB_FILL: f64 = 0.55;
 /// How much of a town is a park, a plaza or a car park rather than a
-/// block of buildings, on the block's own hash and thinned by the same
-/// grain. A sixth of the ground is New York's own 16.1% of open space.
+/// block of buildings, on the block's own hash. A sixth of the ground is
+/// New York's own 16.1% of open space. The holes the FRONT leaves in a
+/// town's fringe are the town's own shape and come on top of this.
 const OPEN: f64 = 0.16;
 /// How far a suburban house WANTS to stand off the middle of its own
 /// lot, metres either way, against a town house's own small jitter. A
@@ -179,14 +180,18 @@ pub(super) fn plot(n: i64, radius: f64, along: DVec2, seed: u32) -> Plan {
             let facing = square > 0
                 && (((0..square).contains(&i) && (j == -1 || j == square))
                     || ((0..square).contains(&j) && (i == -1 || i == square)));
-            // A park downtown, a field in the suburbs: the same hash,
-            // read against the grain, so the holes in a town are the
-            // shape of the holes in its own edge and there is ONE rule
-            // about where a town is not rather than two. What faces
-            // the square is never empty: a square with a field on one
-            // side of it is not a square.
-            let thin = shape::bite(cx, cz, radius, along, seed);
-            if !facing && hash(i, j, 0) < OPEN + (1.0 - OPEN) * thin {
+            // A park, a plaza or a car park, on the block's own hash.
+            // The holes the FRONT leaves are the town's own shape and
+            // come off the demand above; this is the open ground a town
+            // keeps inside itself on purpose. What faces the square is
+            // never empty: a square with a field on one side of it is
+            // not a square.
+            // And the block a town STANDS on is never open ground: the
+            // smallest village on the body is 64 m, which the front
+            // leaves little more than its middle block, and a park
+            // there is a village with nothing in it.
+            let middle = i == 0 && j == 0;
+            if !facing && !middle && hash(i, j, 0) < OPEN {
                 continue;
             }
             // A village is houses and nothing else, whatever its demand
@@ -274,7 +279,7 @@ fn fill(cell: &Cell, tier: Tier, radius: f64, along: DVec2, seed: u32, lots: &mu
             yaw,
             storeys,
             kind,
-            id: ((cell.i + 64) as u32) << 13 | ((cell.j + 64) as u32) << 5 | slot,
+            id: lot_id(cell.i, cell.j, slot),
         });
     };
     if cell.big {
@@ -296,20 +301,34 @@ fn fill(cell: &Cell, tier: Tier, radius: f64, along: DVec2, seed: u32, lots: &mu
             if cell.zone == Zone::Suburb && hash(a, b, 7) > SUBURB_FILL {
                 continue;
             }
-            // And the GRAIN thins the ring lot by lot, on the lot's own
+            // And the FRONT is asked again lot by lot, at the lot's own
             // place, so a town's edge is ragged at the scale of the
-            // thing that is actually laid and not only block by block.
+            // thing that is actually laid and not only block by block:
+            // the grain's finest octave is one lot for exactly this.
             let (lx, lz) = (
                 cx + (a as f64 + 0.5 - side as f64 * 0.5) * LOT,
                 cz + (b as f64 + 0.5 - side as f64 * 0.5) * LOT,
             );
-            if hash(a, b, 8) < shape::bite(lx, lz, radius, along, seed) {
+            if demand(lx, lz, radius, along, seed) <= 0.0 {
                 continue;
             }
             let tall = storeys_at(cell, hash(a, b, 3));
             put(a, b, LOT, tall, (a * side + b) as u32);
         }
     }
+}
+
+/// A lot's own number, for what its model hashes: the block and the
+/// lot's slot on it, packed so that no two lots of one town share one.
+///
+/// It was `i + 64` in thirteen bits, which is a town of sixty four
+/// blocks either way and was every town there was; a city three times
+/// the size reaches seventy seven, and a block past sixty four wrapped
+/// into another's number and put the same building on both. Eleven
+/// bits a side is a town fifty kilometres across.
+fn lot_id(i: i64, j: i64, slot: u32) -> u32 {
+    let at = |k: i64| (k + 1024).clamp(0, 2047) as u32;
+    at(i) << 16 | at(j) << 5 | (slot & 31)
 }
 
 /// How tall a lot of a block WANTS to be: one storey in a suburb

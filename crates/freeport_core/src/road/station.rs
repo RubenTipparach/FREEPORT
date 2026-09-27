@@ -319,6 +319,7 @@ mod tests {
             east: DVec3::X,
             north: DVec3::Y,
             base: 0.0,
+            lean: glam::DVec2::ZERO,
         };
         let blocks = m.blocks(&frame);
         let solid = |p: DVec3| blocks.iter().any(|b| b.at(p) > 0.0);

@@ -32,6 +32,7 @@ fn atlas_of(planet: &Planet, towns: &[Town], roads: Vec<Line>) -> Atlas {
         embank: freeport_core::road::EMBANK,
         steepest: freeport_core::road::STEEPEST,
         curve: freeport_core::road::CURVE,
+        grade: town::GRADE,
         sea: SEA,
         probe: probe(planet),
         towns: towns
@@ -58,10 +59,20 @@ fn atlas_of(planet: &Planet, towns: &[Town], roads: Vec<Line>) -> Atlas {
 fn a_town_read_back_is_the_town_that_was_baked() {
     let (planet, _, towns) = world();
     assert!(towns.len() > 4, "the test body grew {} towns", towns.len());
-    let back = atlas_of(&planet, &towns, Vec::new()).towns();
+    let back = atlas_of(&planet, &towns, Vec::new()).towns(&planet, SEA);
     assert_eq!(back.len(), towns.len());
     for (a, b) in towns.iter().zip(&back) {
         assert!((a.dir - b.dir).length() < 1e-12, "a town moved");
+        // And its GROUND, which is derived again rather than stored: the
+        // ground a site was accepted on is the ground its town gets.
+        // To rounding, because the file renormalises a direction and that
+        // moves it by a bit.
+        assert!(a.grade.is_some(), "a planned town is graded");
+        for k in 0..64 {
+            let (x, z) = ((k % 8) as f64 * 37.0 - 130.0, (k / 8) as f64 * 37.0 - 130.0);
+            let gap = (a.ground(x, z) - b.ground(x, z)).abs();
+            assert!(gap < 1e-6, "a town's ground moved {gap:.2e} m");
+        }
         assert_eq!(a.index, b.index, "a town's index moved");
         assert_eq!(a.lots.len(), b.lots.len(), "a town's lot count moved");
         assert_eq!(a.pieces.len(), b.pieces.len(), "a town's streets moved");

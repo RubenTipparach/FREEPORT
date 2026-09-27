@@ -300,10 +300,24 @@ fn a_corridor_follows_the_ground_and_stops_short_of_its_towns() {
         }
     }
     // Consecutive pieces MEET, which is what lets the field's slope
-    // bound assume two overlapping skirts rather than a count.
+    // bound assume two overlapping skirts rather than a count, EXCEPT
+    // where the road passes through a town on its way: a corridor stops
+    // at every town it passes (`road::open`), because the town owns the
+    // ground there, so a gap is only ever inside some town's levelling.
     for pair in sites.windows(2) {
-        assert_eq!(pair[0].to, pair[1].dir, "a gap between two pieces");
-        assert_eq!(pair[0].to_h, pair[1].h, "a step between two pieces");
+        if pair[0].to == pair[1].dir {
+            assert_eq!(pair[0].to_h, pair[1].h, "a step between two pieces");
+            continue;
+        }
+        let mid = (pair[0].to + pair[1].dir).normalize();
+        let owned = discs.iter().any(|t| {
+            mid.angle_between(t.dir) * planet.radius
+                <= t.level_r(mid) + crate::field::site_skirt(t) + PIECE
+        });
+        assert!(
+            owned,
+            "a gap between two pieces in open country at {mid:.4}"
+        );
     }
 }
 
@@ -350,7 +364,7 @@ fn the_tarmac_lands_on_the_ground_its_corridor_levelled() {
     let road = roads.first().expect("a road");
     let run = survey(&levelled, road, sea - planet.radius + DRY);
     let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
-    let mut sites: Vec<_> = discs.iter().copied().collect();
+    let mut sites: Vec<_> = discs.iter().cloned().collect();
     sites.extend(corridor(road, &run, planet.radius, &discs));
     levelled.sites = sites.into();
 
@@ -738,7 +752,7 @@ fn the_mound_is_the_ground_the_field_levels() {
     let road = roads.first().expect("a road");
     let run = survey(&levelled, road, sea - planet.radius + DRY);
     let discs: crate::field::Sites = towns.iter().map(crate::town::site_of).collect();
-    let mut sites: Vec<_> = discs.iter().copied().collect();
+    let mut sites: Vec<_> = discs.iter().cloned().collect();
     sites.extend(corridor(road, &run, planet.radius, &discs));
     levelled.sites = sites.into();
     let line = centreline(road, planet.radius);

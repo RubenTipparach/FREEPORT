@@ -306,7 +306,7 @@ fn a_charted_slope_leans_the_normal_away_from_its_hill() {
 #[test]
 fn a_mark_is_a_coverage_and_a_light_and_leaves_the_albedo_alone() {
     let (planet, sea) = world();
-    let site = *planet.sites.iter().next().expect("a town");
+    let site = planet.sites.iter().next().expect("a town").clone();
     let roads = [crate::road::Road {
         from: 0,
         to: 0,

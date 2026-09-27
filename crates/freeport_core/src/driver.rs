@@ -120,6 +120,34 @@ const RUNAWAY: f64 = 1.5;
 pub fn holds() -> f64 {
     ACCEL / (GRAVITY * GRAVITY - ACCEL * ACCEL).sqrt()
 }
+/// The fastest a car can go and still HOLD a bend of curvature `k` (one
+/// over its radius, per metre), metres a second.
+///
+/// The inverse of `yaw_rate`'s own taper and nothing else: at speed `v`
+/// the wheels give up to `LOCK / (1 + v / TAPER)` of lock, which is a
+/// radius of `WHEELBASE / tan(lock)`, so a bend is held for as long as
+/// that radius is no wider than the bend's. A slip's fifteen metre turn
+/// is held at 17.9 m/s (64 km/h) and a highway's 1,116 m curve at the
+/// top speed; a bend tighter than full lock is held at none, which is
+/// nought.
+///
+/// It is what a DRIVER reads off a bend coming up, and a scripted drive
+/// that did not read it held 160 km/h into the port's slip, ran wide
+/// onto the grass a hundred metres off its route and circled there for
+/// two minutes chasing a point it could never turn tightly enough to
+/// reach.
+pub fn bend_speed(k: f64) -> f64 {
+    let k = k.abs();
+    if !k.is_finite() || k <= 0.0 {
+        return TOP;
+    }
+    let lock = (k * WHEELBASE).atan();
+    if lock >= LOCK {
+        return 0.0;
+    }
+    (TAPER * (LOCK / lock - 1.0)).clamp(0.0, TOP)
+}
+
 /// How long the bodywork takes to lay itself on a new slope, seconds.
 /// Short, because a car on its springs settles in about this, and a car
 /// that snapped would flick over every seam in the mesh.
