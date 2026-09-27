@@ -638,15 +638,21 @@ fn arrive(
     (Some(away), park)
 }
 
-/// Whether a place is inside a town's own outline, which is where a drive
-/// is on its streets rather than on the highway.
+/// Whether a place is on ground a town has levelled, which is where a
+/// drive is on its streets rather than on the highway.
+///
+/// The town's own edge along the bearing (`Site::level_r`) and not the
+/// disc it can reach at its widest: a town is squeezed across its shore
+/// to under half of that, so the disc counted two kilometres of highway
+/// out of a city as streets, and the drive out of the port at 160 km/h
+/// on ground too coarse for the road was filed under the town.
 fn in_town(world: &World, at: DVec3) -> bool {
     let dir = at.normalize();
     let radius = world.planet.radius;
-    world
-        .towns
-        .iter()
-        .any(|t| t.dir.angle_between(dir) * radius < t.radius * town::OUTLINE)
+    world.towns.iter().any(|t| {
+        let away = t.dir.angle_between(dir) * radius;
+        away < t.radius * town::OUTLINE && away < town::site_of(t).level_r(dir)
+    })
 }
 
 /// A picture every `--bot-shot-every` simulated seconds of the errand,

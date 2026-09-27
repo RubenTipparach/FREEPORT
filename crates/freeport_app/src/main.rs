@@ -361,7 +361,7 @@ fn tick(app: &mut App) {
                 )
                     .chain(),
                 (
-                    place_eye,
+                    (place_eye, roads::pull_tarmac).chain(),
                     clock::toggle_menu,
                     clock::press_menu,
                     sky::turn_sun,

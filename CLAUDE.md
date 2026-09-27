@@ -1244,6 +1244,30 @@ architectural materials retain the normal crease rule.
   it reads is EASED over `PACE_EASE` (0.75 s), because a rule that read
   one frame's own step would drop and re-raise the finest ring every
   time a car touched the brake.
+- **And the finest ring outlasts the BUILD the streamer measures, not a
+  number of seconds.** The eye rides one set of boxes for TWO builds
+  (placed when a layout is asked for, replaced one build after it is
+  shown), so `Rings::adapt` asks the finest box to outlast `OUTLAST`
+  (four) of the streamer's own recent builds wherever that is longer
+  than `DWELL`: four builds of demand is two of reach, because the level
+  steps at 1.2 of the NEXT box. The recent build is the slowest of the
+  lately published layouts, let go over `HOLD` (20 s) so one quick
+  build after slow ones does not put the ring straight back to slow,
+  and the first layout of a body is not among them. A fixed dwell was
+  a number measured on one machine and one stretch of road: leaving
+  the port at the top speed a layout rebuilds six to seven chunks a
+  metre of travel (`churn_at_speed`, about half of them chunks whose
+  neighbours changed level), which near a town is more than a second
+  of build for every second of driving, so every layout was longer
+  than the last, 3 s, then 7, then 10, and the car ran off its 256 m
+  ring onto 16 m cells standing over the road for 17 to 28 seconds of
+  the trip. The bot had filed all of it under the TOWN's streets, which
+  is why the highway's own number said 0.9%: `streets` was a disc of
+  `OUTLINE` radii, two kilometres of highway out of a city, and it is
+  the town's own levelled edge along the bearing now. Measured, the
+  trip ABBA: fast frames at level 5 or coarser under the car **1,043 to
+  1,663 against none**, the town exit held at level 4 on builds of 2 to
+  5.5 s, and the frame p99 24.74 ms against 24.33 on the same 12,996 m.
 - **The coarsest box no longer holds the planet, and the CHART is what is
   behind it.** At 5,000 m of radius the 32 km box held the whole world; at
   1,000,000 m it is a patch 16 km either side of the eye. On foot that is
@@ -4226,6 +4250,27 @@ that is not a box. `the_mound_is_the_ground_the_field_levels` holds
 every one of its 5,208 vertices to that surface: -0.150 m to -0.150 m,
 which is the sink and nothing else.
 
+**And the TARMAC is drawn half a per cent of its range nearer the eye**
+(`roads::PULL`), because the mound cannot carry the road through a
+coarse cell: `examples/lod_over_road` measured the drawn ground at up to
+0.82 m over the tarmac in the 16 m cells from 512 m out, 4.27 m in the
+32 m cells from 1,024 m and 2.29 m in the 64 m from 2,048 m, which is
+0.16, 0.42 and 0.11% of the range. A uniform scale about the eye moves
+every vertex along its own view ray, so the road lands on the pixels it
+always did and every pass agrees, the depth prepass and the shadows
+included; in the stretch's own frame that is a child transform of
+translation `PULL c` and scale `1 - PULL`, where `c` is the eye in that
+frame (`pull_tarmac`). The MOUND is the parent and is not pulled,
+because it is sunk 15 cm and pulled it would meet its own ground at the
+one range where the pull equals the sink. It replaces a constant depth
+bias of eight, which on a float depth buffer is eight units of the
+depth's own last place: a millimetre at a kilometre. It does not beat a
+hill, and it does not answer coarse ground UNDER the car, which is
+five per cent of the range and the streamer's to prevent. Measured on
+the `--road 3` camera: a triangle of sand bitten out of the road's far
+edge and the near left shoulder buried before, both clear after, 3.87%
+of the frame moved.
+
 **And it is SUNK rather than laid on**, which is the pavement slab's own
 trick: wherever the terrain really is drawn at this detail the terrain
 wins and the mound is inside the hill, and wherever it is not the mound
@@ -5634,7 +5679,7 @@ up, and the replacement is run again after any update.
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 239, the core, about 45 s on an i9-11900H
+cargo test -p freeport_core                       # 242, the core, about 45 s on an i9-11900H
 cargo test -p freeport_app                        # 69, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100

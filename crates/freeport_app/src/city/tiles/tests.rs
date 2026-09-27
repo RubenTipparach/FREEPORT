@@ -167,7 +167,6 @@ fn app_with(radius: f64) -> App {
         .insert_resource(crate::cull::Proxy(Handle::default()))
         .insert_resource(Ground3d {
             ground: Handle::default(),
-            tarmac: Handle::default(),
         })
         .init_resource::<Assets<Mesh>>()
         .init_resource::<crate::tuning::Tuning>()

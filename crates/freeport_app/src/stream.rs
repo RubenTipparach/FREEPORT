@@ -128,11 +128,37 @@ struct Timings {
     publish_ms: f32,
     max_queue_ms: f32,
     layouts: usize,
-    /// When the layout being built was planned, and how many chunks it
-    /// had to build then; and for every layout published, those chunks
-    /// and how long it took from its plan to its swap, milliseconds.
-    begun: Option<(Instant, usize)>,
+    /// When the layout being built was planned, how many chunks it had
+    /// to build then and the workers' milliseconds so far; and for every
+    /// layout published, those chunks and how long it took from its plan
+    /// to its swap, milliseconds.
+    begun: Option<(Instant, usize, f32)>,
     built: Vec<(usize, f32)>,
+    /// The slowest recent layout's build, seconds, and when it was
+    /// taken: what the finest ring is asked to outlast.
+    recent: Option<(Instant, f64)>,
+}
+
+/// How long a slow layout build is remembered, seconds, as the time a
+/// memory of it takes to fall to a third. Long against the one to four
+/// seconds between layouts at speed, so one quick build after slow ones
+/// does not put the finest ring straight back to be slow again; short
+/// against a drive, so the ring is back to fine within a stretch of road
+/// once the builds are. A body that stops needs none of it: the dwell is
+/// a time and a speed of nought asks for no distance.
+const HOLD: f64 = 20.0;
+
+impl Timings {
+    /// How long layouts have lately taken to build, seconds: the slowest
+    /// of them, let go over `HOLD`. The first layout of a body is not
+    /// among them, because it is the whole world at once and draws as it
+    /// loads, and a walker would stand on a coarse ring for a minute
+    /// after it.
+    fn recent_build(&self) -> f64 {
+        self.recent.map_or(0.0, |(at, s)| {
+            s * (-at.elapsed().as_secs_f64() / HOLD).exp()
+        })
+    }
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
@@ -287,7 +313,12 @@ impl Streamer {
             return;
         }
         let height = (-world.planet.at(eye)).max(0.0);
-        let adapted = self.rings.adapt(&self.lat, height, self.pace.length());
+        let adapted = self.rings.adapt(
+            &self.lat,
+            height,
+            self.pace.length(),
+            self.timings.recent_build(),
+        );
         // The boxes follow the eye's own GROUND at altitude, not the
         // eye: a box that is sixteen kilometres either way holds no
         // terrain at all once the eye is higher than that. And they
@@ -339,7 +370,7 @@ impl Streamer {
         }
         self.todo.extend(rebuilt);
         self.remaining = self.todo.len();
-        self.timings.begun = Some((Instant::now(), self.remaining));
+        self.timings.begun = Some((Instant::now(), self.remaining, self.stats.work_ms));
         self.stats.wanted = self.wanted.len();
         self.planning = false;
     }
@@ -505,13 +536,20 @@ impl Streamer {
                 self.loaded.insert(id, loaded);
             }
             self.building = false;
-            self.has_layout = true;
-            if let Some((when, chunks)) = self.timings.begun.take() {
+            let replaced = std::mem::replace(&mut self.has_layout, true);
+            if let Some((when, chunks, work)) = self.timings.begun.take() {
                 let ms = when.elapsed().as_secs_f32() * 1000.0;
                 self.timings.built.push((chunks, ms));
+                if replaced {
+                    let slowest = (ms as f64 / 1000.0).max(self.timings.recent_build());
+                    self.timings.recent = Some((Instant::now(), slowest));
+                }
                 debug!(
-                    "layout {} published: {chunks} chunks built in {ms:.0} ms, finest level {}",
-                    self.timings.layouts, self.rings.min_level
+                    "layout {} published: {chunks} chunks built in {ms:.0} ms at {:.1} worker ms a chunk, finest level {}, outlasting {:.1} s",
+                    self.timings.layouts,
+                    (self.stats.work_ms - work) / chunks.max(1) as f32,
+                    self.rings.min_level,
+                    self.timings.recent_build()
                 );
             }
         }

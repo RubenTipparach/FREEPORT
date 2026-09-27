@@ -72,8 +72,12 @@ seconds.
   worst, and how many frames were over 16.7 ms and over 33.3 ms) for `all`
   and for each of `walk`, `hail`, `streets` and `highway`. A frame's `wall`
   time is from one frame's start to the next; its update is the main
-  thread's own part of it, `First` to `Last`. `streets` is driving inside
-  any town's outline and `highway` is driving outside all of them.
+  thread's own part of it, `First` to `Last`. `streets` is driving on
+  ground a town has levelled (its own edge along the bearing out of its
+  middle, `Site::level_r`) and `highway` is driving anywhere else. It was
+  a disc of `OUTLINE` radii, which counted two kilometres of highway out
+  of a city as its streets, and a report before that change is not
+  comparable on those two labels.
 - `goal_town`, `goal_km_at_boarding`, `to_goal_km_at_end`, `walked_m`,
   `driven_m`, `stuck` (how many times it made no ground for three seconds),
   `sim_seconds`, `wall_seconds`, `wall_seconds_by_phase` and `phases` (when
