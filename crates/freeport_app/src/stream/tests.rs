@@ -427,6 +427,10 @@ fn moving_layout_planning_cost() {
     let mut synchronous_ms = 0.0;
     let mut submitted_ms = 0.0;
     let mut count = 0;
+    // The planner thread keeps what the field ruled from one plan to the
+    // next, and so does the direct side, which is what makes the second
+    // and later plans of a moving eye cheap.
+    let mut known = super::planning::Known::default();
     for step in 0..30 {
         let eye = eye + DVec3::X * (step as f64 * 16.0);
         let request = || Request {
@@ -437,7 +441,7 @@ fn moving_layout_planning_cost() {
             world: world.clone(),
         };
         let start = Instant::now();
-        let direct = request().build();
+        let direct = request().build(&mut known);
         synchronous_ms += start.elapsed().as_secs_f64() * 1000.0;
         let start = Instant::now();
         assert!(planner.request(request()));

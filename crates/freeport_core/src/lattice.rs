@@ -185,14 +185,24 @@ impl Rings {
     /// On the harness planet the finest box is 32 m either way. On foot
     /// that is six seconds; at the car's own 44.4 m/s it is under one,
     /// which is what the owner is looking at when a drive down a highway
-    /// takes a long time to load. Four seconds is what it takes to drop
-    /// the finest level to a 2 m cell at the top speed and to leave a
-    /// walker and a runner on the half metre one they always had.
+    /// takes a long time to load.
+    ///
+    /// EIGHT, and it was four, because the dwell has to outlast a
+    /// layout's own BUILD and that was measured rather than assumed: the
+    /// bot's `trip` errand logs every layout, and at the top speed on a
+    /// 2 m finest cell each one was 2,000 to 2,700 chunks and 6 to 15 s.
+    /// The car covered 300 m on every one of them, out of the 128 m ring,
+    /// and the ground under it was a 16 m cell or coarser on 10.2% of the
+    /// highway's frames, which the owner saw as the ground over the road.
+    /// At eight the top speed streams a 4 m finest cell reaching 256 m,
+    /// a layout's median is 315 chunks and 0.7 s, and that share is 0.9%.
+    /// A walker (5 m/s) and a runner (8.5) keep the half metre cell they
+    /// always had; a car at a town's 50 km/h is on a 1 m one.
     ///
     /// It is the same rule as the HEIGHT term beside it and not a second
     /// one: both say that a box too small for what the eye is doing is a
     /// box not worth streaming, and both are read through one demand.
-    const DWELL: f64 = 4.0;
+    const DWELL: f64 = 8.0;
 
     /// Adapt the finest ring to the height above the surface AND to how
     /// fast the eye is going, with hysteresis.

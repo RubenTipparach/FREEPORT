@@ -128,6 +128,11 @@ struct Timings {
     publish_ms: f32,
     max_queue_ms: f32,
     layouts: usize,
+    /// When the layout being built was planned, and how many chunks it
+    /// had to build then; and for every layout published, those chunks
+    /// and how long it took from its plan to its swap, milliseconds.
+    begun: Option<(Instant, usize)>,
+    built: Vec<(usize, f32)>,
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
@@ -334,6 +339,7 @@ impl Streamer {
         }
         self.todo.extend(rebuilt);
         self.remaining = self.todo.len();
+        self.timings.begun = Some((Instant::now(), self.remaining));
         self.stats.wanted = self.wanted.len();
         self.planning = false;
     }
@@ -500,6 +506,14 @@ impl Streamer {
             }
             self.building = false;
             self.has_layout = true;
+            if let Some((when, chunks)) = self.timings.begun.take() {
+                let ms = when.elapsed().as_secs_f32() * 1000.0;
+                self.timings.built.push((chunks, ms));
+                debug!(
+                    "layout {} published: {chunks} chunks built in {ms:.0} ms, finest level {}",
+                    self.timings.layouts, self.rings.min_level
+                );
+            }
         }
         self.stats.loaded = self.loaded.len();
         self.stats.pending = self.pending.len();
@@ -544,7 +558,30 @@ impl Streamer {
             "max_layout_worker_ms": self.timings.max_layout_ms,
             "max_queue_ms": self.timings.max_queue_ms,
             "stream_main_ms": self.timings.main_ms, "max_stream_main_ms": self.timings.max_main_ms,
-            "upload_ms": self.timings.upload_ms, "publish_ms": self.timings.publish_ms})
+            "upload_ms": self.timings.upload_ms, "publish_ms": self.timings.publish_ms,
+            "layout_builds": self.layout_builds()})
+    }
+
+    /// Every published layout's chunks to build and its time from plan to
+    /// swap, as medians, 90th percentiles and worsts: how long the ground
+    /// on screen is behind the eye, which is the thing a fast car sees.
+    fn layout_builds(&self) -> serde_json::Value {
+        let built = &self.timings.built;
+        let spread = |mut v: Vec<f32>| {
+            v.sort_by(f32::total_cmp);
+            let at = |q: f64| {
+                v.get(((v.len().saturating_sub(1)) as f64 * q) as usize)
+                    .copied()
+            };
+            serde_json::json!({"p50": at(0.5), "p90": at(0.9), "max": v.last()})
+        };
+        serde_json::json!({
+            "count": built.len(),
+            "chunks": spread(built.iter().map(|b| b.0 as f32).collect()),
+            "ms": spread(built.iter().map(|b| b.1).collect()),
+            "chunks_per_s": built.iter().map(|b| b.0 as f32).sum::<f32>()
+                / (built.iter().map(|b| b.1).sum::<f32>() / 1000.0).max(1e-3),
+        })
     }
 }
 

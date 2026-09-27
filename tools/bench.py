@@ -124,6 +124,11 @@ METRICS: list[tuple[str, str, int]] = [
     ("settle_seconds", "settle s", -1),
     ("wall_seconds", "errand wall s", -1),
     ("terrain.mean_chunk_ms", "mean chunk ms", -1),
+    # The share of frames the ground drawn under the car was a 16 m cell or
+    # coarser, where the ground stands over the road: the owner's "terrain
+    # isn't catching up with the road" as a number (`bot/report.rs`).
+    ("drawn_level.highway.coarse_share", "highway on coarse ground", -1),
+    ("drawn_level.streets.coarse_share", "town streets on coarse ground", -1),
     ("terrain.remaining", "chunks still wanted at the end", -1),
     ("stuck", "times stuck", -1),
     ("sim_seconds", "simulated s", 0),
