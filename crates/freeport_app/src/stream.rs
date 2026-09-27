@@ -198,6 +198,19 @@ impl Streamer {
         }
     }
 
+    /// The finest level of ground DRAWN under a planet local point: what a
+    /// body standing there sees itself standing on. A road has no cell
+    /// narrow enough under coarse ground and the ground is drawn over it,
+    /// so this is the number that says whether the terrain has caught up
+    /// with the eye (`bot.rs` records it every frame).
+    pub fn drawn_level(&self, p: DVec3) -> Option<u8> {
+        let fine = self.lat.fine_cell(p);
+        (0..self.rings.levels()).find(|&l| {
+            self.loaded
+                .contains_key(&freeport_core::lattice::ChunkId::holding(l, fine))
+        })
+    }
+
     /// Whether every wanted chunk is drawn.
     pub fn idle(&self) -> bool {
         !self.fresh && !self.building && self.pending.is_empty() && self.remaining == 0
