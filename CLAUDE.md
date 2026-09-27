@@ -5608,6 +5608,29 @@ system on the main thread over a whole errand, about 4 ms a traced frame
 without its knocks, and nobody has looked at why. The bot walks a
 street's middle rather than its pavement.
 
+## Work is tracked in OPENSPEC, and an open change is a promise
+
+The owner's ask, on the laptop the bot was built on: set up
+[OpenSpec](https://openspec.dev/) and keep track of what the owner saw.
+`openspec/config.yaml` points at this file rather than restating it, the
+way the owner's Pale Blue Dot repository does; `openspec/specs` is what the
+game does TODAY and a requirement there is pinned by a test or a measured
+errand; `openspec/changes` is what somebody saw and nobody has finished,
+each with a proposal in the owner's own words, a spec a bot errand or a
+test can check, a design and a task list. `openspec list` is the list, and
+`/opsx:propose`, `/opsx:apply` and `/opsx:archive` are the workflow.
+
+The first six are the owner's: the terrain falling behind the road at
+160 km/h, z-fighting on the buildings and the pavement, the chase camera
+inside walls, cars flipping on small knocks and shaking when boarded,
+traffic that avoids nothing (and stop signs), and a wall sensor for the
+cars a script drives.
+
+**`openspec update` regenerates `.claude/skills/openspec-*` and
+`.claude/commands/opsx/*` with EM DASHES in them**, which this file's own
+check refuses. They were replaced with plain hyphens when the tool was set
+up, and the replacement is run again after any update.
+
 ## Suites
 
 ```sh

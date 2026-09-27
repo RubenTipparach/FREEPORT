@@ -1,0 +1,42 @@
+schema: spec-driven
+
+# Read CLAUDE.md before planning anything. It is the only copy of this
+# project's engineering rules, and this field deliberately points at it
+# rather than restating it: a summary here would be a second copy to keep in
+# step, and the one that is wrong is always the one nobody is reading.
+context: |
+  Read CLAUDE.md at the repository root first. It is the single source for
+  this project's architecture, the f64 world and floating origin rules, the
+  crate boundary and the verification rules, and it takes precedence over
+  any summary.
+
+  FREEPORT is about driving a car from one town to another and doing jobs
+  when you get there (deliveries, rides, cooking, serving). It is not about
+  flight, and no change should add flight routes or flight benchmarks.
+
+  Rust workspace: freeport_core depends on std and glam only (no Bevy);
+  freeport_app adapts it to Bevy 0.18.1. That direction never reverses. If
+  two clients computed something differently and the world would diverge,
+  it belongs in the core.
+
+  openspec/specs holds what the game actually does today, and a requirement
+  there is pinned by a passing test or a measured bot errand. Work that is
+  designed but not built belongs in openspec/changes, never in specs.
+
+  Measure, then decide. A performance or behaviour change is measured with
+  the bot (crates/freeport_app/src/bot.rs) and tools/bench.py, before and
+  after, ABBA, and the numbers go in the commit message. A visual change
+  needs pictures (--bot-shots) the owner has seen, not a green test.
+
+  Before claiming anything is done: python3 tools/shape.py --check,
+  cargo fmt --all -- --check, cargo clippy -p freeport_core -- -D warnings,
+  cargo clippy -p freeport_app (its warning count never rises),
+  cargo test -p freeport_core and cargo test -p freeport_app. No em or en
+  dashes anywhere.
+
+rules:
+  proposal:
+    - Say what the owner saw, in their words where there are some, and what was measured.
+    - Name what is out of scope rather than leaving it implied.
+  tasks:
+    - Every change ends with a measured bot errand or a picture the owner can check, as its own task.
