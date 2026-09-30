@@ -427,6 +427,10 @@ fn moving_layout_planning_cost() {
     let mut synchronous_ms = 0.0;
     let mut submitted_ms = 0.0;
     let mut count = 0;
+    // The planner thread keeps what the field ruled from one plan to the
+    // next, and so does the direct side, which is what makes the second
+    // and later plans of a moving eye cheap.
+    let mut known = super::planning::Known::default();
     for step in 0..30 {
         let eye = eye + DVec3::X * (step as f64 * 16.0);
         let request = || Request {
@@ -437,7 +441,7 @@ fn moving_layout_planning_cost() {
             world: world.clone(),
         };
         let start = Instant::now();
-        let direct = request().build();
+        let direct = request().build(&mut known);
         synchronous_ms += start.elapsed().as_secs_f64() * 1000.0;
         let start = Instant::now();
         assert!(planner.request(request()));
@@ -455,4 +459,84 @@ fn moving_layout_planning_cost() {
         count += direct.wanted.len();
     }
     eprintln!("30 layouts, mean {} chunks: synchronous planning {:.3} ms/layout; main-thread submission {:.3} ms/layout", count / 30, synchronous_ms / 30.0, submitted_ms / 30.0);
+}
+
+/// What a layout REBUILDS when the eye is a car at its top speed, by
+/// level: chunks new to the rings, and chunks already built whose
+/// neighbours' levels changed. A layout at 160 km/h near a town took 7 to
+/// 10 s, so the car left its finest ring on every one; this says whether
+/// that is the new ground ahead or the rebuilds the new ground causes.
+#[test]
+#[ignore = "release-mode measurement, run with --ignored --nocapture"]
+fn churn_at_speed() {
+    let mut world = test_world();
+    let planet = &mut Arc::make_mut(&mut world).planet;
+    planet.octaves = 18;
+    let planet = world.planet.clone();
+    let lat = Lattice::new(DVec3::splat(-2000100.0), 0.5);
+    let ground = world.ground();
+    let water = world.water(&ground);
+    // The drive out of the port stands about here, diagonal to every
+    // lattice axis, which is where a box moves on two or three of them.
+    let start = DVec3::new(0.71, -0.69, 0.18).normalize();
+    let way = start.cross(DVec3::Z).normalize();
+    let at = |d: f64| {
+        let dir = (start * (d / 1e6).cos() + way * (d / 1e6).sin()).normalize();
+        dir * (freeport_core::town::surface_radius(&planet, dir) + 1.5)
+    };
+    let speed = 44.4;
+    let mut empty: HashMap<ChunkId, bool> = HashMap::new();
+    let mut plan = |rings: &Rings| -> HashMap<ChunkId, u64> {
+        let mut wanted = HashMap::new();
+        for id in rings.chunks() {
+            let e = *empty.entry(id).or_insert_with(|| {
+                let (lo, hi) = id.bounds(&lat, 0);
+                ground.solid(lo, hi).is_some() && water.solid(lo, hi).is_some()
+            });
+            if !e {
+                wanted.insert(id, rings.signature(id));
+            }
+        }
+        wanted
+    };
+    for step_s in [1.0, 2.0, 4.0, 8.0] {
+        let mut rings = Rings::around(&lat, at(0.0), 14);
+        let pace = (at(1.0) - at(0.0)) * speed;
+        rings.adapt(&lat, 1.5, speed, 0.0);
+        rings.follow(&lat, rings.focus(&lat, at(0.0), 1.5, pace));
+        let mut built = plan(&rings);
+        let (mut new, mut resig) = ([0usize; 14], [0usize; 14]);
+        let layouts = (64.0 / step_s) as usize;
+        for n in 1..=layouts {
+            let eye = at(n as f64 * step_s * speed);
+            rings.follow(&lat, rings.focus(&lat, eye, 1.5, pace));
+            let wanted = plan(&rings);
+            for (id, sig) in &wanted {
+                match built.get(id) {
+                    None => new[id.level as usize] += 1,
+                    Some(s) if s != sig => resig[id.level as usize] += 1,
+                    _ => {}
+                }
+            }
+            built = wanted;
+        }
+        let metres = layouts as f64 * step_s * speed;
+        let total: usize = new.iter().sum::<usize>() + resig.iter().sum::<usize>();
+        eprintln!(
+            "a layout every {step_s} s ({:.0} m): {:.1} chunks a layout, {:.2} a metre, finest level {}",
+            step_s * speed,
+            total as f64 / layouts as f64,
+            total as f64 / metres,
+            rings.min_level
+        );
+        for l in 0..14 {
+            if new[l] + resig[l] > 0 {
+                eprintln!(
+                    "  level {l:2}: {:6.1} new and {:6.1} rebuilt a layout",
+                    new[l] as f64 / layouts as f64,
+                    resig[l] as f64 / layouts as f64
+                );
+            }
+        }
+    }
 }

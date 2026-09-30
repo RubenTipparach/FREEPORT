@@ -185,33 +185,71 @@ impl Rings {
     /// On the harness planet the finest box is 32 m either way. On foot
     /// that is six seconds; at the car's own 44.4 m/s it is under one,
     /// which is what the owner is looking at when a drive down a highway
-    /// takes a long time to load. Four seconds is what it takes to drop
-    /// the finest level to a 2 m cell at the top speed and to leave a
-    /// walker and a runner on the half metre one they always had.
+    /// takes a long time to load.
+    ///
+    /// EIGHT, and it was four, because the dwell has to outlast a
+    /// layout's own BUILD and that was measured rather than assumed: the
+    /// bot's `trip` errand logs every layout, and at the top speed on a
+    /// 2 m finest cell each one was 2,000 to 2,700 chunks and 6 to 15 s.
+    /// The car covered 300 m on every one of them, out of the 128 m ring,
+    /// and the ground under it was a 16 m cell or coarser on 10.2% of the
+    /// highway's frames, which the owner saw as the ground over the road.
+    /// At eight the top speed streams a 4 m finest cell reaching 256 m,
+    /// a layout's median is 315 chunks and 0.7 s, and that share is 0.9%.
+    /// A walker (5 m/s) and a runner (8.5) keep the half metre cell they
+    /// always had; a car at a town's 50 km/h is on a 1 m one.
     ///
     /// It is the same rule as the HEIGHT term beside it and not a second
     /// one: both say that a box too small for what the eye is doing is a
     /// box not worth streaming, and both are read through one demand.
-    const DWELL: f64 = 4.0;
+    ///
+    /// It is a FLOOR now, because eight seconds is a number measured on
+    /// one machine and one stretch of road: what the ring really has to
+    /// outlast is the build the streamer MEASURES (`OUTLAST`).
+    const DWELL: f64 = 8.0;
+
+    /// How many of the streamer's own layout BUILDS the finest ring is
+    /// asked to outlast, where that is longer than `DWELL`.
+    ///
+    /// A layout's boxes are placed when it is asked for and shown when it
+    /// is built, and the next is asked for then and shown one build
+    /// later, so the eye rides one set of boxes for TWO builds. And the
+    /// finest box `adapt` keeps may reach as little as a 2.4th of the
+    /// demand, because the level steps when the demand passes 1.2 of the
+    /// NEXT box's reach, which is twice this one's. Four builds of demand
+    /// is two builds of reach with the lead to spare.
+    ///
+    /// Measured leaving the port at the top speed, where it was a fixed
+    /// eight seconds: a layout there rebuilds six to seven chunks a metre
+    /// of travel (`churn_at_speed`), and at the 4.7 ms of wall a chunk
+    /// near a town costs that is more than a second of build for every
+    /// second of driving. So each layout was longer than the last, 3 s,
+    /// then 7, then 10; the car ran 300 to 450 m out of its 256 m ring
+    /// on every one, and for 24 s the ground under it was a 16 m cell
+    /// standing over the road. A slower machine meets that everywhere.
+    const OUTLAST: f64 = 4.0;
 
     /// Adapt the finest ring to the height above the surface AND to how
     /// fast the eye is going, with hysteresis.
     ///
     /// The finest box stays filled and every neighbour still differs by
     /// at most one level. Height, pace and the lattice are in absolute
-    /// world metres; `pace` is metres a second.
-    pub fn adapt(&mut self, lat: &Lattice, height: f64, pace: f64) -> bool {
+    /// world metres; `pace` is metres a second, and `build` is how long
+    /// the streamer's recent layouts have taken to build, seconds, nought
+    /// where it has measured none.
+    pub fn adapt(&mut self, lat: &Lattice, height: f64, pace: f64, build: f64) -> bool {
         if !height.is_finite() || self.levels() == 0 {
             return false;
         }
         // ONE demand, in metres: how far the eye is off the ground, or
         // how far it will have gone by the time a layout could be built,
         // whichever asks for the coarser ring.
-        let want = height.max(if pace.is_finite() {
-            pace * Self::DWELL
+        let dwell = if build.is_finite() {
+            Self::DWELL.max(Self::OUTLAST * build)
         } else {
-            0.0
-        });
+            Self::DWELL
+        };
+        let want = height.max(if pace.is_finite() { pace * dwell } else { 0.0 });
         let old = self.min_level;
         let reach = |level| lat.cell(level) * CH as f64 * HALF as f64;
         while self.min_level + 1 < self.levels() && want > reach(self.min_level + 1) * 1.2 {
@@ -481,7 +519,7 @@ mod tests {
             let eye = DVec3::Y * (radius + height);
             let mut rings = Rings::around(&lat, eye, levels);
             let focus = rings.focus(&lat, eye, height, DVec3::ZERO);
-            rings.adapt(&lat, height, 0.0);
+            rings.adapt(&lat, height, 0.0, 0.0);
             rings.follow(&lat, focus);
             // The box at the coarsest level, in metres, and the ground
             // right under the eye.
@@ -504,15 +542,15 @@ mod tests {
         let lat = Lattice::new(DVec3::ZERO, 0.25);
         let mut rings = Rings::around(&lat, DVec3::ZERO, 8);
         let full = rings.chunks().len();
-        assert!(rings.adapt(&lat, 500.0, 0.0));
+        assert!(rings.adapt(&lat, 500.0, 0.0, 0.0));
         assert!(rings.min_level > 0);
         assert!(rings.chunks().len() < full);
         assert_eq!(rings.level_at([0; 3]), Some(rings.min_level));
         for id in rings.chunks() {
             assert_eq!(rings.level_at(id.f0()), Some(id.level));
         }
-        assert!(!rings.adapt(&lat, 500.1, 0.0));
-        assert!(rings.adapt(&lat, 0.0, 0.0));
+        assert!(!rings.adapt(&lat, 500.1, 0.0, 0.0));
+        assert!(rings.adapt(&lat, 0.0, 0.0, 0.0));
         assert_eq!(rings.min_level, 0);
         assert_eq!(rings.chunks().len(), full);
     }
@@ -529,7 +567,7 @@ mod tests {
         let lat = Lattice::new(DVec3::splat(-0.25), 0.5);
         let mut rings = Rings::around(&lat, DVec3::Y * 1_000_000.0, 14);
         let mut at = |pace: f64| {
-            rings.adapt(&lat, 0.0, pace);
+            rings.adapt(&lat, 0.0, pace, 0.0);
             rings.min_level
         };
         assert_eq!(at(0.0), 0, "standing still is the finest ring there is");
@@ -549,6 +587,43 @@ mod tests {
         // hysteresis is for: a rule that only ever coarsened would be a
         // walker standing in a field of 2 m cells.
         assert_eq!(at(0.0), 0, "and it comes back when the car stops");
+    }
+
+    /// A SLOW BUILD GETS A COARSER RING, and a fast one changes nothing.
+    /// The finest box has to outlast two of the streamer's own builds,
+    /// so at the top speed a build the eight second dwell already covers
+    /// leaves the ring alone, and one that would carry the car out of its
+    /// finest box before the next layout lands coarsens it until it
+    /// would not.
+    #[test]
+    fn a_slow_build_streams_a_coarser_ring_than_a_fast_one() {
+        let lat = Lattice::new(DVec3::splat(-0.25), 0.5);
+        let reach = |level| lat.cell(level) * CH as f64 * HALF as f64;
+        let top = crate::driver::TOP;
+        let level = |build: f64| {
+            let mut rings = Rings::around(&lat, DVec3::Y * 1_000_000.0, 14);
+            rings.adapt(&lat, 0.0, top, build);
+            rings.min_level
+        };
+        let fixed = level(0.0);
+        assert_eq!(level(1.0), fixed, "a one second build is inside the dwell");
+        assert_eq!(level(2.0), fixed, "and so is two");
+        for build in [3.0, 5.0, 8.0, 12.0] {
+            let finest = level(build);
+            // Two builds of travel, less the lead, inside the finest box.
+            let lead = (top * Rings::LEAD).min(reach(finest) * 0.5);
+            let travel = 2.0 * top * build - lead;
+            println!(
+                "a {build:.0} s build at {top:.1} m/s streams level {finest}, reaching {:.0} m against {travel:.0} m of travel",
+                reach(finest)
+            );
+            assert!(finest >= fixed);
+            assert!(
+                reach(finest) >= travel,
+                "a {build} s build leaves the car {travel:.0} m on a {:.0} m ring",
+                reach(finest)
+            );
+        }
     }
 
     /// THE BOXES LEAD THE EYE. Half of the finest box is behind a body
@@ -571,7 +646,7 @@ mod tests {
         // uses. Measured either way it is the same rule and a different
         // number: 16 m off an unadapted level 0 and 64 m off the level 2
         // the same speed actually streams.
-        rings.adapt(&lat, 0.0, crate::driver::TOP);
+        rings.adapt(&lat, 0.0, crate::driver::TOP, 0.0);
         let led = rings.focus(&lat, eye, 0.0, way * crate::driver::TOP) - eye;
         let reach = lat.cell(rings.min_level) * CH as f64 * HALF as f64;
         assert!(led.dot(way) > 0.0, "a lead is the way the eye is going");
@@ -587,7 +662,7 @@ mod tests {
         );
         // And a crawl is led by what it will actually cover, not by the
         // cap: a body doing a metre a second is led a metre and a half.
-        rings.adapt(&lat, 0.0, 1.0);
+        rings.adapt(&lat, 0.0, 1.0, 0.0);
         let slow = rings.focus(&lat, eye, 0.0, way) - eye;
         assert!((slow.length() - Rings::LEAD).abs() < 1e-9, "{slow:?}");
     }

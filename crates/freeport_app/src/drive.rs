@@ -197,6 +197,8 @@ pub struct Street<'w> {
     crowds: Option<Res<'w, Crowds>>,
     time: Res<'w, Time>,
     args: Res<'w, Args>,
+    /// The BOT, whose E is a request it makes once (`Bot::take_board`).
+    bot: Option<ResMut<'w, crate::bot::Bot>>,
 }
 
 /// E gets in and out. The one key, because getting into the car you are
@@ -205,7 +207,7 @@ pub struct Street<'w> {
 pub fn board(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    street: Street,
+    mut street: Street,
     walker: Option<Res<OnFoot>>,
     mut thefts: ResMut<Thefts>,
     mut status: ResMut<Status>,
@@ -216,7 +218,9 @@ pub fn board(
     // firing on frame nought, because the crowds are turned out after
     // the world is and a theft of nothing is a walk.
     let script = street.args.drive > 0 && !*scripted && thefts.cars.is_empty();
-    if !keys.just_pressed(KeyCode::KeyE) && !script {
+    // And the BOT's E, at a player's own reach: it walked to the car.
+    let bot = street.bot.as_mut().is_some_and(|b| b.take_board());
+    if !keys.just_pressed(KeyCode::KeyE) && !script && !bot {
         return;
     }
     let ground = &street.ground;
@@ -230,7 +234,9 @@ pub fn board(
             let field = street
                 .fabric
                 .underfoot(&ground.0.planet, dir * car.car.foot, 8.0);
-            let walker = Walker::enter(&field, &ground.0.bounds, dir, heading);
+            // Beside the car, so its ground is near the car's own (`Bounds::near`).
+            let near = ground.0.bounds.near(car.car.foot);
+            let walker = Walker::enter(&field, &near, dir, heading);
             commands.insert_resource(OnFoot(walker));
             thefts.at_wheel = None;
             status.walker = "out of the car".to_string();
@@ -266,7 +272,8 @@ pub fn board(
             };
             let dir = at.normalize();
             let field = street.fabric.underfoot(&ground.0.planet, here, 8.0);
-            let mut car = Driver::board(&field, &ground.0.bounds, dir, fwd);
+            // Where the rails had it, which is on its town's own ground.
+            let mut car = Driver::board(&field, &ground.0.bounds.near(at.length()), dir, fwd);
             // With whatever was in its tank: nobody parks full.
             car.tank = Tank::part(hash3(who.0 as i64, who.1 as i64, 0x7A, 0x9A5));
             let swing = car.fwd;
@@ -328,12 +335,17 @@ pub fn drive_car(
     mut auto: Local<Auto>,
 ) {
     let Some(k) = thefts.at_wheel else { return };
-    let (input, dt, steps) = pedals(&controls, &script, &mut auto);
+    let (keys, dt, steps) = pedals(&controls, &script, &mut auto);
     // The OTHER CARS, as boxes, so the one with somebody at the wheel is
     // stopped by them. They are gathered BEFORE the field is borrowed
     // and live as long as it does, which is what lets a `Built` carry
     // the town's own walls and something that moves in one list.
-    let others = around(&crowds, &here, &thefts, k, controls.time.elapsed_secs_f64());
+    let now = controls.time.elapsed_secs_f64();
+    let others = around(&crowds, &here, &thefts, k, now);
+    // And where they are GOING, for a scripted drive to keep off them.
+    if keys.is_none() {
+        auto.traffic = coming(&crowds, &here, &thefts, k, now);
+    }
     let standing = thefts.cars[k].car.dir;
     let foot = thefts.cars[k].car.foot;
     let mut field = here.underfoot(standing * foot, 12.0);
@@ -350,7 +362,8 @@ pub fn drive_car(
         // The wheel is re-read every sub step, or a scripted drive
         // holds one bearing for a whole second and weaves round its own
         // line at sixteen metres a second.
-        let input = if steps > 1 {
+        let input = match keys {
+            Some(keys) => keys,
             // The AIM and not the goal, and that is the whole of what a
             // road bought a scripted drive. `steer_for` computed the
             // point on the tarmac and handed it to the wheel of the
@@ -358,15 +371,16 @@ pub fn drive_car(
             // replaced with `car.toward(goal)`: the road following was
             // written, tested and never once driven on, and the car went
             // on wedging itself against the same building it always had.
-            let aim = auto.aim(&script, &here, car);
-            auto.drive(car, aim, dt, here.world().planet.radius)
-        } else {
-            input
+            None => {
+                let aim = auto.aim(&script, &here, car);
+                auto.drive(car, aim, dt, here.world().planet.radius)
+            }
         };
         car.update(&field, &bounds, &input, dt);
     }
-    if steps > 1 {
-        auto.say(car, was, script.goal.0, here.world().planet.radius);
+    if keys.is_none() {
+        let driven = (was, dt * steps as f64);
+        auto.say(car, driven, script.goal.0, here.world().planet.radius);
     }
     dash.status.walker = format!(
         "{:.1} m over the mean radius, {:.0} km/h{}, at the wheel{} | {}",
@@ -416,29 +430,11 @@ fn around(
     driving: usize,
     now: f64,
 ) -> Vec<freeport_core::field::Block> {
-    let radius = here.world().planet.radius;
     let at = thefts.cars[driving].car.dir * thefts.cars[driving].car.foot;
-    let mut out = Vec::new();
-    if let Some(crowds) = crowds {
-        if crowds.on_body(here.body()) {
-            let built = here.fabric.standing();
-            let town = crowds.cars_near(radius, at, CAR_REACH, now, &built);
-            // And the ones out on the ROADS, which is where a car at
-            // 160 km/h actually meets another one.
-            let road = crowds.road_cars_near(here.world(), at, CAR_REACH, now);
-            // Not the GHOST of a car that is off the rails: the rails
-            // still say where a stolen or a knocked car would have got
-            // to, and that was an invisible wall driving down the road.
-            let (stolen, knocked) = (thefts.stolen(), thefts.knocked_roads());
-            let town = town
-                .into_iter()
-                .filter(|c| stolen.binary_search(&c.0).is_err());
-            let road = road.into_iter().filter(|c| !knocked.contains(&c.0));
-            for (_, _, place, fwd) in town.chain(road) {
-                out.push(driver::car_box(place, fwd, place.normalize_or(DVec3::Y)));
-            }
-        }
-    }
+    let mut out: Vec<_> = on_rails(crowds, here, thefts, at, now)
+        .into_iter()
+        .map(|(place, fwd)| driver::car_box(place, fwd, place.normalize_or(DVec3::Y)))
+        .collect();
     // And the ones the player has already taken and left standing: a car
     // you got out of is a car that is still there, so it is still
     // something to drive into. Not one hit inside `CLEAR`, which is on
@@ -451,6 +447,71 @@ fn around(
         let place = car.dir * car.foot;
         if place.distance(at) < CAR_REACH {
             out.push(driver::car_box(place, car.fwd, car.dir));
+        }
+    }
+    out
+}
+
+/// The cars still ON THE RAILS within `CAR_REACH` of a place at a time, as
+/// where each is and which way it faces: a town's and a road's.
+fn on_rails(
+    crowds: &Option<Res<Crowds>>,
+    here: &crate::world::Surface,
+    thefts: &Thefts,
+    at: DVec3,
+    time: f64,
+) -> Vec<(DVec3, DVec3)> {
+    let Some(crowds) = crowds.as_ref().filter(|c| c.on_body(here.body())) else {
+        return Vec::new();
+    };
+    let radius = here.world().planet.radius;
+    let built = here.fabric.standing();
+    let town = crowds.cars_near(radius, at, CAR_REACH, time, &built);
+    // And the ones out on the ROADS, which is where a car at 160 km/h
+    // actually meets another one.
+    let road = crowds.road_cars_near(here.world(), at, CAR_REACH, time);
+    // Not the GHOST of a car that is off the rails: the rails still say
+    // where a stolen or a knocked car would have got to, and that was an
+    // invisible wall driving down the road.
+    let (stolen, knocked) = (thefts.stolen(), thefts.knocked_roads());
+    let town = town
+        .into_iter()
+        .filter(|c| stolen.binary_search(&c.0).is_err());
+    let road = road.into_iter().filter(|c| !knocked.contains(&c.0));
+    town.chain(road)
+        .map(|(_, _, place, fwd)| (place, fwd))
+        .collect()
+}
+
+/// How far ahead a scripted drive looks at where the traffic is GOING,
+/// seconds, and how finely.
+const FORESEE: f64 = 2.0;
+const FORESEE_STEP: f64 = 0.5;
+
+/// Where every car near the wheel is and, for the ones on the rails,
+/// where the rails will have them over the next `FORESEE` seconds. The
+/// rails are closed form, so a car's place in a second is the same
+/// question asked a second later, and a car about to cross the junction
+/// ahead is in the way before it gets there. It is what a scripted drive
+/// keeps off (`Auto::room`): it rammed everything in its path, and every
+/// car it knocked off the rails stayed in the street as a wall.
+fn coming(
+    crowds: &Option<Res<Crowds>>,
+    here: &crate::world::Surface,
+    thefts: &Thefts,
+    driving: usize,
+    now: f64,
+) -> Vec<DVec3> {
+    let at = thefts.cars[driving].car.dir * thefts.cars[driving].car.foot;
+    let steps = (FORESEE / FORESEE_STEP) as usize;
+    let mut out: Vec<DVec3> = (0..=steps)
+        .flat_map(|k| on_rails(crowds, here, thefts, at, now + k as f64 * FORESEE_STEP))
+        .map(|(place, _)| place)
+        .collect();
+    for (i, theft) in thefts.cars.iter().enumerate() {
+        let place = theft.car.dir * theft.car.foot;
+        if i != driving && place.distance(at) < CAR_REACH {
+            out.push(place);
         }
     }
     out

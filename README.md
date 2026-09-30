@@ -37,6 +37,8 @@ cargo test -p freeport_core                 # the engine free core: positions, t
 ./run.sh                                    # build the Bevy harness and open a window (run.bat on Windows); --test runs the suites first, --shot out.png takes a picture with no display, -- hands the rest to the app
 ./target/release/freeport_app               # the window by hand: on foot on a street of the port; F flies, Tab wires, Esc frees the mouse
 ./target/release/freeport_app --fly         # in the air over the 2,000 km planet instead
+./target/release/freeport_app --bot         # the bot: walks the port, takes a car and drives it to the next town
+python3 tools/bench.py run                  # the bot measured over rounds; `ab` compares two builds (docs/bot-and-bench.md)
 python3 tools/shape.py --check              # no file over 900 lines, no function over 100
 tools/get_material_maker.sh                 # fetch Material Maker into tools/ (gitignored)
 tools/bake_materials.sh                     # bake materials/*.ptex to assets/textures/terrain

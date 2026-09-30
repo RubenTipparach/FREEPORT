@@ -94,7 +94,7 @@ pub(crate) fn clear_input(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: ResMut<Messages<bevy::input::mouse::MouseMotion>>,
 ) {
-    if args.benchmark.is_some() {
+    if args.measuring() {
         keys.reset_all();
         mouse.clear();
     }
@@ -291,7 +291,7 @@ fn counts(values: &[f64]) -> serde_json::Value {
     serde_json::json!({"p50": sorted.get(sorted.len() / 2), "max": sorted.last()})
 }
 
-fn distribution(values: &[f64]) -> serde_json::Value {
+pub(crate) fn distribution(values: &[f64]) -> serde_json::Value {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     let percentile = |p: f64| {

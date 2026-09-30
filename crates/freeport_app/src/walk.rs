@@ -27,16 +27,25 @@ pub struct Scripted {
     cost: f64,
 }
 
+/// What the walker is TOLD besides the keys: a scripted walk's flag, and
+/// the bot's legs when the bot is walking.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Told<'w> {
+    args: Res<'w, Args>,
+    legs: Res<'w, crate::bot::Legs>,
+}
+
 /// One frame on foot.
 pub fn walk(
     mut controls: Controls,
     here: crate::world::Surface,
-    args: Res<Args>,
+    told: Told,
     walker: Option<ResMut<OnFoot>>,
     mut eye: ResMut<Eye>,
     mut status: ResMut<Status>,
     mut script: Local<Scripted>,
 ) {
+    let args = &told.args;
     let look = controls.look();
     let Some(mut walker) = walker else {
         return;
@@ -68,6 +77,11 @@ pub fn walk(
         dt = 1.0 / 60.0;
         script.left -= 1;
         script.done += 1;
+    }
+    // The BOT's legs, at the same fixed sixtieth.
+    if let Some(bot) = told.legs.0 {
+        input = bot;
+        dt = 1.0 / 60.0;
     }
     let field = here.underfoot(walker.0.eye(), 8.0);
     // The sea holds the feet only where there is water: a dry pit under

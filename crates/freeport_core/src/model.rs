@@ -35,10 +35,6 @@ pub const DOOR_W: f64 = 1.6;
 pub const DOOR_H: f64 = 2.3;
 /// A floor slab and a roof slab, metres thick.
 const SLAB: f64 = 0.25;
-/// The parapet round a flat roof: how high it stands over the slab and how
-/// thick it is, metres.
-const PARAPET: f64 = 0.7;
-const PARAPET_T: f64 = 0.22;
 /// A window: how wide and how high, how far over its own floor the sill
 /// is, and how far apart the panes are along a wall, metres.
 const PANE_W: f64 = 1.2;
@@ -56,8 +52,6 @@ const LAMP_R: f64 = 0.22;
 pub const LAMP_REACH: f64 = 9.0;
 /// How many sides a round tower is drawn and collided with.
 const SIDES: usize = 12;
-/// How many pieces a barrel vault's arc is cut into.
-const ARCH: usize = 9;
 
 /// An oriented box in the model's own frame: what is DRAWN and what a body
 /// is stopped by, from one set of numbers.
@@ -454,10 +448,13 @@ fn shell(m: &mut Model, w: f64, d: f64, h: f64, seed: u32, skin: u8) {
     let t = WALL * 0.5;
     let (hw, hd) = (w * 0.5, d * 0.5);
     // The FLOOR is poured concrete whatever the walls are, which is
-    // what a floor is: a slab on the ground.
+    // what a floor is: a slab on the ground. `INSET` in from the walls'
+    // outer faces, or its sides lie in their planes for its whole depth
+    // and the two fight for every pixel of a band along the foot of the
+    // building, which is what the owner saw as z-fighting.
     m.solid(
         DVec3::new(0.0, 0.0, SLAB * 0.5),
-        DVec3::new(hw, hd, SLAB * 0.5),
+        DVec3::new(hw - INSET, hd - INSET, SLAB * 0.5),
         0.0,
         CONCRETE,
     );
@@ -535,7 +532,7 @@ fn round(m: &mut Model, r: f64, h: f64, seed: u32, skin: u8) {
     let wide = r * (step * 0.5).tan();
     m.solid(
         DVec3::new(0.0, 0.0, SLAB * 0.5),
-        DVec3::new(r, r, SLAB * 0.5),
+        DVec3::new(r - INSET, r - INSET, SLAB * 0.5),
         0.0,
         CONCRETE,
     );
@@ -570,92 +567,22 @@ fn round(m: &mut Model, r: f64, h: f64, seed: u32, skin: u8) {
     }
 }
 
-/// A flat roof: a slab and a parapet round it.
-fn flat_roof(m: &mut Model, w: f64, d: f64, h: f64) {
-    let (hw, hd) = (w * 0.5, d * 0.5);
-    m.solid(
-        DVec3::new(0.0, 0.0, h + SLAB * 0.5),
-        DVec3::new(hw, hd, SLAB * 0.5),
-        0.0,
-        CONCRETE,
-    );
-    let z = h + SLAB + PARAPET * 0.5;
-    let t = PARAPET_T * 0.5;
-    for side in [-1.0, 1.0] {
-        m.trim(
-            DVec3::new(0.0, side * (hd - t), z),
-            DVec3::new(hw, t, PARAPET * 0.5),
-            0.0,
-            PLATE,
-        );
-        m.trim(
-            DVec3::new(side * (hw - t), 0.0, z),
-            DVec3::new(t, hd - PARAPET_T, PARAPET * 0.5),
-            0.0,
-            PLATE,
-        );
-    }
-}
-
-/// A gable: two pitched faces to a ridge along the lot's east axis, and a
-/// triangle closing each end.
-fn gable(m: &mut Model, w: f64, d: f64, h: f64, skin: u8) {
-    let (hw, hd) = (w * 0.5 + 0.3, d * 0.5 + 0.3);
-    let ridge = h + d * 0.35;
-    for side in [-1.0, 1.0] {
-        let eave = DVec3::new(0.0, side * hd, h);
-        let a = eave - DVec3::X * hw;
-        let b = eave + DVec3::X * hw;
-        let c = DVec3::new(hw, 0.0, ridge);
-        let e = DVec3::new(-hw, 0.0, ridge);
-        if side < 0.0 {
-            m.quad(a, b, c, e, skin);
-        } else {
-            m.quad(b, a, e, c, skin);
-        }
-    }
-    for side in [-1.0, 1.0] {
-        let x = side * hw;
-        let a = DVec3::new(x, -hd, h);
-        let b = DVec3::new(x, hd, h);
-        let c = DVec3::new(x, 0.0, ridge);
-        if side < 0.0 {
-            m.tri(a, c, b, skin);
-        } else {
-            m.tri(a, b, c, skin);
-        }
-    }
-}
-
-/// A barrel vault: an arc of quads over the lot's north axis, with the
-/// ends left open, which is what a hangar looks like.
-fn vault(m: &mut Model, w: f64, d: f64, h: f64) {
-    let r = w * 0.5;
-    let hd = d * 0.5;
-    let at = |k: usize| {
-        let a = std::f64::consts::PI * k as f64 / ARCH as f64;
-        DVec3::new(-r * a.cos(), 0.0, h + r * a.sin() * 0.55)
-    };
-    for k in 0..ARCH {
-        let (p, q) = (at(k), at(k + 1));
-        m.quad(
-            p - DVec3::Y * hd,
-            q - DVec3::Y * hd,
-            q + DVec3::Y * hd,
-            p + DVec3::Y * hd,
-            PLATE,
-        );
-    }
-}
-
 /// Plate pillars at the corners of a block, which is what stops a tower
 /// reading as one poured shape.
+///
+/// `PROUD` of the walls, the panes' own rule: flush, a pillar's two outer
+/// faces lay in the walls' planes for the building's whole height, and
+/// every corner of every tower flickered between plate and the wall's own
+/// skin as the camera moved. And TRIM, because proud of the walls it is
+/// proud of the lot, and a building's solids stop at its lot
+/// (`a_building_stands_on_its_own_block_and_never_in_the_street`): the
+/// walls behind it are what stops a body at the corner.
 fn pillars(m: &mut Model, w: f64, d: f64, h: f64) {
-    let (hw, hd) = (w * 0.5, d * 0.5);
+    let (hw, hd) = (w * 0.5 + PROUD, d * 0.5 + PROUD);
     let t = WALL * 0.6;
     for sx in [-1.0, 1.0] {
         for sy in [-1.0, 1.0] {
-            m.solid(
+            m.trim(
                 DVec3::new(sx * (hw - t), sy * (hd - t), h * 0.5),
                 DVec3::new(t, t, h * 0.5),
                 0.0,
@@ -872,6 +799,10 @@ fn weld_on(
 /// A piece of STREET as a model: a run, a crossing or the square.
 mod street;
 pub use street::{street, street_graded};
+
+/// A building's roof: flat, gabled or vaulted.
+mod roof;
+use roof::{flat_roof, gable, vault};
 
 /// A building as a solid block, for the ranges its detail is not worth.
 mod massing;

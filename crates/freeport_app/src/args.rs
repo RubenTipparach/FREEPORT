@@ -3,6 +3,7 @@
 //! The defaults are `main.rs`'s own constants, so a flag and the number it
 //! overrides are never written twice.
 
+use crate::bot::{BOT_SECONDS, BOT_WALK};
 use crate::{FPS, LEVELS, OCTAVES};
 use bevy::math::DVec3;
 use bevy::prelude::{warn, Resource};
@@ -102,6 +103,37 @@ pub(crate) struct Args {
     pub(crate) bench_height: f64,
     pub(crate) cell_size: Option<f64>,
     pub(crate) profile_render: bool,
+    /// Run the BOT: walk the streets of the town the world starts in to a
+    /// car, take it, and drive it to the next town (`bot.rs`).
+    pub(crate) bot: bool,
+    /// Run the bot MEASURED, write what it cost here and stop: the
+    /// flight benchmark's own rules, an uncapped frame with the keys and
+    /// the mouse taken away, and the clock a sixtieth a frame.
+    pub(crate) bot_report: Option<String>,
+    /// Simulated seconds the bot is given to get there, walking and
+    /// driving together.
+    pub(crate) bot_seconds: f64,
+    /// How far the bot walks the streets before it goes for a car,
+    /// metres.
+    pub(crate) bot_walk: f64,
+    /// Drive a SECOND a frame rather than a sixtieth: the scripted
+    /// drive's own journey pace, for a machine that wants the trip and
+    /// not what its frames cost.
+    pub(crate) bot_fast: bool,
+    /// Where the bot's PICTURES go, one every `bot_shot_every` simulated
+    /// seconds of its errand: what a person watching would have seen,
+    /// for a run nobody watched.
+    pub(crate) bot_shots: Option<String>,
+    pub(crate) bot_shot_every: f64,
+}
+
+impl Args {
+    /// Whether this run is a MEASUREMENT, which is what takes the frame
+    /// cap off, keeps the window drawing unfocused and takes the keys
+    /// away: the flight benchmark, or the bot with a report to write.
+    pub(crate) fn measuring(&self) -> bool {
+        self.benchmark.is_some() || self.bot_report.is_some()
+    }
 }
 
 impl Default for Args {
@@ -138,6 +170,13 @@ impl Default for Args {
             bench_height: 0.0,
             cell_size: None,
             profile_render: false,
+            bot: false,
+            bot_report: None,
+            bot_seconds: BOT_SECONDS,
+            bot_walk: BOT_WALK,
+            bot_fast: false,
+            bot_shots: None,
+            bot_shot_every: 5.0,
         }
     }
 }
@@ -227,8 +266,43 @@ pub(crate) fn parse_args() -> Args {
                     .and_then(|v| v.parse::<f64>().ok())
                     .filter(|v| v.is_finite() && (0.125..=4.0).contains(v))
             }
-            other => warn!("unknown argument {other}"),
+            other => {
+                if !bot_arg(&mut args, other, &mut it) {
+                    warn!("unknown argument {other}")
+                }
+            }
         }
     }
     args
+}
+
+/// The bot's own flags, answered `true` when `a` was one of them. Its own
+/// function, because `parse_args` is one long match already.
+fn bot_arg(args: &mut Args, a: &str, it: &mut impl Iterator<Item = String>) -> bool {
+    match a {
+        "--bot" => args.bot = true,
+        "--bot-report" => {
+            args.bot = true;
+            args.bot_report = it.next();
+        }
+        "--bot-seconds" => args.bot_seconds = number(it, BOT_SECONDS),
+        "--bot-walk" => args.bot_walk = number(it, BOT_WALK),
+        "--bot-fast" => args.bot_fast = true,
+        "--bot-shots" => args.bot_shots = it.next(),
+        "--bot-shot-every" => args.bot_shot_every = number(it, 5.0).max(STEP_SHOT),
+        _ => return false,
+    }
+    true
+}
+
+/// The closest two of the bot's pictures may be, simulated seconds: a
+/// frame's own worth.
+const STEP_SHOT: f64 = 1.0 / 60.0;
+
+/// The next flag's value as a number no less than nought, or `fallback`.
+fn number(it: &mut impl Iterator<Item = String>, fallback: f64) -> f64 {
+    it.next()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or(fallback)
 }

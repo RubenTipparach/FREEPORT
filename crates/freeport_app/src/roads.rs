@@ -241,6 +241,31 @@ impl Network {
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub struct Paved(pub usize, pub usize);
 
+/// A stretch's tarmac, drawn `PULL` of its range nearer the eye.
+#[derive(Component)]
+pub struct Pulled;
+
+/// How much nearer the eye the tarmac is drawn, as a share of its range.
+///
+/// Every vertex moves along its own view ray, so the road lands on the
+/// same pixels it always did and wins the depth test against any ground
+/// standing over it by less than this share of the range. What that
+/// ground is, is a coarse cell: dual contouring puts a cell's vertex up
+/// on the hill beside a corridor narrower than the cell, and
+/// `examples/lod_over_road` measured it at up to 0.82 m over the tarmac
+/// in the 16 m cells that start 512 m out, 4.27 m in the 32 m cells from
+/// 1,024 m and 2.29 m in the 64 m ones from 2,048 m: 0.16, 0.42 and
+/// 0.11% of the range. Half a per cent clears the worst of them, and is
+/// the ground over the road at a kilometre that the owner saw.
+///
+/// It does not beat a HILL, because a crest hides the road behind it by
+/// far more than half a per cent of the range, and a car on the road is
+/// covered by it only in the centimetre where its tyres meet it. Nor does
+/// it answer coarse ground UNDER the car, which stands 0.8 m over the
+/// tarmac fifteen metres off: that is five per cent, and it is the
+/// streamer's to prevent (`Rings::OUTLAST`), not the road's to paint over.
+const PULL: f32 = 0.005;
+
 /// What the streamer needs to lay one stretch of tarmac.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Kit<'w> {
@@ -345,10 +370,17 @@ fn lay(
         frame.north.as_vec3(),
         frame.dir.as_vec3(),
     );
+    // The MOUND is the stretch's own entity and the tarmac a CHILD of
+    // it, so the two are placed, rebased and despawned together: one
+    // `Anchored` and one `Paved`, which is what keeps the near set a set
+    // of STRETCHES rather than of meshes. That way round because the
+    // tarmac is `Pulled` and the mound must not be: it is sunk
+    // `ribbon::BURIED` under the ground it copies, and pulled it would
+    // meet that ground at the one range where the pull equals the sink
+    // and fight it there.
     let mut entity = commands.spawn((
-        Mesh3d(kit.meshes.add(mesh)),
-        // The TARMAC's own material: the ground's, with a depth bias.
-        MeshMaterial3d(kit.ground.tarmac.clone()),
+        Mesh3d(kit.meshes.add(skirt)),
+        MeshMaterial3d(kit.ground.ground.clone()),
         Transform {
             translation: kit.frame.0.local(anchor),
             rotation: Quat::from_mat3(&basis),
@@ -360,21 +392,46 @@ fn lay(
     if let Some(bounds) = bounds {
         entity.insert((bounds, NoAutoAabb));
     }
-    // The mound is a CHILD of the tarmac, in the same frame with an
-    // identity transform, so it is placed, rebased and despawned with
-    // it: one `Anchored` and one `Paved`, which is what keeps the near
-    // set a set of STRETCHES rather than of meshes.
     entity.with_children(|kids| {
         let mut kid = kids.spawn((
-            Mesh3d(kit.meshes.add(skirt)),
+            Mesh3d(kit.meshes.add(mesh)),
             MeshMaterial3d(kit.ground.ground.clone()),
             Transform::IDENTITY,
+            Pulled,
         ));
         if let Some(bounds) = bounds {
             kid.insert((bounds, NoAutoAabb));
         }
     });
     Some(verge_of(&model, &frame, which))
+}
+
+/// Draw every stretch's tarmac `PULL` of its range nearer the eye: a
+/// uniform scale about the eye, which in the stretch's own frame is a
+/// scale about where the eye stands in it. After the eye is placed, so
+/// the pull is measured from where the picture is taken from.
+pub fn pull_tarmac(
+    eye: Query<&Transform, (With<Camera3d>, Without<Pulled>)>,
+    stretches: Query<&Transform, (With<Paved>, Without<Pulled>)>,
+    mut tarmac: Query<(&mut Transform, &ChildOf), With<Pulled>>,
+) {
+    let Ok(eye) = eye.single() else {
+        return;
+    };
+    for (mut tf, parent) in &mut tarmac {
+        let Ok(stretch) = stretches.get(parent.parent()) else {
+            continue;
+        };
+        let at = stretch.rotation.inverse() * (eye.translation - stretch.translation);
+        if !at.is_finite() {
+            continue;
+        }
+        *tf = Transform {
+            translation: at * PULL,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(1.0 - PULL),
+        };
+    }
 }
 
 /// What a stretch puts in the WORLD besides its picture: its lamps and

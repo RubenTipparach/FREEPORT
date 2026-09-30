@@ -128,6 +128,37 @@ struct Timings {
     publish_ms: f32,
     max_queue_ms: f32,
     layouts: usize,
+    /// When the layout being built was planned, how many chunks it had
+    /// to build then and the workers' milliseconds so far; and for every
+    /// layout published, those chunks and how long it took from its plan
+    /// to its swap, milliseconds.
+    begun: Option<(Instant, usize, f32)>,
+    built: Vec<(usize, f32)>,
+    /// The slowest recent layout's build, seconds, and when it was
+    /// taken: what the finest ring is asked to outlast.
+    recent: Option<(Instant, f64)>,
+}
+
+/// How long a slow layout build is remembered, seconds, as the time a
+/// memory of it takes to fall to a third. Long against the one to four
+/// seconds between layouts at speed, so one quick build after slow ones
+/// does not put the finest ring straight back to be slow again; short
+/// against a drive, so the ring is back to fine within a stretch of road
+/// once the builds are. A body that stops needs none of it: the dwell is
+/// a time and a speed of nought asks for no distance.
+const HOLD: f64 = 20.0;
+
+impl Timings {
+    /// How long layouts have lately taken to build, seconds: the slowest
+    /// of them, let go over `HOLD`. The first layout of a body is not
+    /// among them, because it is the whole world at once and draws as it
+    /// loads, and a walker would stand on a coarse ring for a minute
+    /// after it.
+    fn recent_build(&self) -> f64 {
+        self.recent.map_or(0.0, |(at, s)| {
+            s * (-at.elapsed().as_secs_f64() / HOLD).exp()
+        })
+    }
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
@@ -196,6 +227,19 @@ impl Streamer {
             settled: None,
             timings: Timings::default(),
         }
+    }
+
+    /// The finest level of ground DRAWN under a planet local point: what a
+    /// body standing there sees itself standing on. A road has no cell
+    /// narrow enough under coarse ground and the ground is drawn over it,
+    /// so this is the number that says whether the terrain has caught up
+    /// with the eye (`bot.rs` records it every frame).
+    pub fn drawn_level(&self, p: DVec3) -> Option<u8> {
+        let fine = self.lat.fine_cell(p);
+        (0..self.rings.levels()).find(|&l| {
+            self.loaded
+                .contains_key(&freeport_core::lattice::ChunkId::holding(l, fine))
+        })
     }
 
     /// Whether every wanted chunk is drawn.
@@ -269,7 +313,12 @@ impl Streamer {
             return;
         }
         let height = (-world.planet.at(eye)).max(0.0);
-        let adapted = self.rings.adapt(&self.lat, height, self.pace.length());
+        let adapted = self.rings.adapt(
+            &self.lat,
+            height,
+            self.pace.length(),
+            self.timings.recent_build(),
+        );
         // The boxes follow the eye's own GROUND at altitude, not the
         // eye: a box that is sixteen kilometres either way holds no
         // terrain at all once the eye is higher than that. And they
@@ -321,6 +370,7 @@ impl Streamer {
         }
         self.todo.extend(rebuilt);
         self.remaining = self.todo.len();
+        self.timings.begun = Some((Instant::now(), self.remaining, self.stats.work_ms));
         self.stats.wanted = self.wanted.len();
         self.planning = false;
     }
@@ -486,7 +536,22 @@ impl Streamer {
                 self.loaded.insert(id, loaded);
             }
             self.building = false;
-            self.has_layout = true;
+            let replaced = std::mem::replace(&mut self.has_layout, true);
+            if let Some((when, chunks, work)) = self.timings.begun.take() {
+                let ms = when.elapsed().as_secs_f32() * 1000.0;
+                self.timings.built.push((chunks, ms));
+                if replaced {
+                    let slowest = (ms as f64 / 1000.0).max(self.timings.recent_build());
+                    self.timings.recent = Some((Instant::now(), slowest));
+                }
+                debug!(
+                    "layout {} published: {chunks} chunks built in {ms:.0} ms at {:.1} worker ms a chunk, finest level {}, outlasting {:.1} s",
+                    self.timings.layouts,
+                    (self.stats.work_ms - work) / chunks.max(1) as f32,
+                    self.rings.min_level,
+                    self.timings.recent_build()
+                );
+            }
         }
         self.stats.loaded = self.loaded.len();
         self.stats.pending = self.pending.len();
@@ -531,7 +596,30 @@ impl Streamer {
             "max_layout_worker_ms": self.timings.max_layout_ms,
             "max_queue_ms": self.timings.max_queue_ms,
             "stream_main_ms": self.timings.main_ms, "max_stream_main_ms": self.timings.max_main_ms,
-            "upload_ms": self.timings.upload_ms, "publish_ms": self.timings.publish_ms})
+            "upload_ms": self.timings.upload_ms, "publish_ms": self.timings.publish_ms,
+            "layout_builds": self.layout_builds()})
+    }
+
+    /// Every published layout's chunks to build and its time from plan to
+    /// swap, as medians, 90th percentiles and worsts: how long the ground
+    /// on screen is behind the eye, which is the thing a fast car sees.
+    fn layout_builds(&self) -> serde_json::Value {
+        let built = &self.timings.built;
+        let spread = |mut v: Vec<f32>| {
+            v.sort_by(f32::total_cmp);
+            let at = |q: f64| {
+                v.get(((v.len().saturating_sub(1)) as f64 * q) as usize)
+                    .copied()
+            };
+            serde_json::json!({"p50": at(0.5), "p90": at(0.9), "max": v.last()})
+        };
+        serde_json::json!({
+            "count": built.len(),
+            "chunks": spread(built.iter().map(|b| b.0 as f32).collect()),
+            "ms": spread(built.iter().map(|b| b.1).collect()),
+            "chunks_per_s": built.iter().map(|b| b.0 as f32).sum::<f32>()
+                / (built.iter().map(|b| b.1).sum::<f32>() / 1000.0).max(1e-3),
+        })
     }
 }
 

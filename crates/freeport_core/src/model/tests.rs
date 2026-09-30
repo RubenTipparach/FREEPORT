@@ -813,3 +813,6 @@ fn a_street_at_every_grade_covers_its_own_ground_and_gets_cheaper() {
         assert!(street_graded(piece, 3).mesh.triangles() == 2);
     }
 }
+
+mod coplanar;
+mod joins;

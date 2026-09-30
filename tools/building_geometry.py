@@ -125,9 +125,18 @@ def wall(name, run, reach, yaw, storeys, door, dims, target, root):
             window_rects.append(rect)
             box(f"{name}_window_{floor}_{i}", point(x, z), (w/2, thickness, h/2), yaw, CONCRETE, windows, root, "cutter")
             frame = dims["frame"]
+            # The frame stands 2.5 cm proud of the ROOM side and 1 cm
+            # SHY of the street side, so nothing of it leaves the lot. A
+            # building is as wide as its lot and has windows on all four
+            # walls, so on a terrace every window of a party wall is
+            # back to back with the neighbour's own at the same place; a
+            # frame proud of both faces put the two frames' sides in one
+            # plane for the 5 cm they overlapped, and that was 4,563
+            # fights over the port (`baked_buildings_meet_their_neighbours_in_no_plane`).
+            deep, inward = (thickness + 0.025 - 0.01)/2, -(0.025 + 0.01)/2
             for side in [-1, 1]:
-                box("Window jamb", point(x+side*(w-frame)/2, z), (frame/2, thickness/2+0.025, h/2), yaw, PLATE, target, root, "frame")
-                box("Window sill", point(x, z+side*(h-frame)/2), ((w-2*frame)/2, thickness/2+0.025, frame/2), yaw, PLATE, target, root, "frame")
+                box("Window jamb", point(x+side*(w-frame)/2, z, inward), (frame/2, deep, h/2), yaw, PLATE, target, root, "frame")
+                box("Window sill", point(x, z+side*(h-frame)/2, inward), ((w-2*frame)/2, deep, frame/2), yaw, PLATE, target, root, "frame")
             box("Glazing", point(x, z), (w/2-frame, 0.008, h/2-frame), yaw, GLASS, target, root, "glass")
     if door:
         w, h = dims["door_width"], dims["door_height"]
@@ -159,10 +168,20 @@ def roof(kind, width, depth, height, dims, target, root):
         return
     if kind == "gable":
         section = [(-depth/2-0.2, height+0.25), (0, height+depth*0.35), (depth/2+0.2, height+0.25)]
-        axis, reach = 1, width/2+0.2
+        # No overhang at the gable ENDS: two terraced neighbours are the
+        # same height on the same pitch, and a roof reaching past its lot
+        # lay in the plane of the next one's, a strip of z-fighting at
+        # every party wall. And 2 cm SHORT of the lot, or its end cap lies
+        # in the ceiling slab's side plane. The eaves keep their overhang.
+        axis, reach = 1, width/2-0.02
     else:
-        section = [(-width/2*math.cos(math.pi*k/12), height+0.25+width*0.275*math.sin(math.pi*k/12)) for k in range(13)]
-        axis, reach = 0, depth/2
+        # Sprung 2 cm inside the walls, or the vault's own thickness at its
+        # foot lies in the ceiling slab's side plane. And its ENDS 3 cm in,
+        # not the gable's 2: a hangar turned a quarter from the house on
+        # the next lot of its column puts its end caps in the plane of the
+        # house's, and the house's eave reaches over the line to meet them.
+        section = [(-(width/2-0.02)*math.cos(math.pi*k/12), height+0.25+width*0.275*math.sin(math.pi*k/12)) for k in range(13)]
+        axis, reach = 0, depth/2-0.03
     # A closed solid roof shell, with thickness and end caps, not one-sided quads.
     outer = section
     inner = [(x, z-dims["slab"]) for x, z in reversed(section)]
@@ -203,8 +222,16 @@ def build(recipe, storeys, dims):
     root["regenerate"] = "Edit assets/config/buildings.json and rerun tools/bake_buildings.py; cutters/modifiers remain editable here."
     w, d, h, t = dims["width"], dims["depth"], root["height"], dims["wall"]
     solids, checks = [], []
+    # The FLOOR stands inset from the walls' outer faces: flush, its sides
+    # lay in the walls' own planes for its whole depth and the two fought
+    # for every pixel of a band round the foot of the building, which the
+    # owner saw as z-fighting. The CEILING stands on top of the walls and
+    # meets them on an edge, so it keeps the full footprint: inset, it was
+    # a groove under the eaves. The colliders keep the full footprint.
     for z in [dims["slab"]/2, h+dims["slab"]/2]:
-        box("Floor" if z < h else "Ceiling", (0, 0, z), ("width / 2", "depth / 2", "slab / 2"), 0, CONCRETE, target, root)
+        floor = z < h
+        half = ("width / 2 - 0.02", "depth / 2 - 0.02") if floor else ("width / 2", "depth / 2")
+        box("Floor" if floor else "Ceiling", (0, 0, z), (*half, "slab / 2"), 0, CONCRETE, target, root)
         solids.append(collision((0, 0, z), (w/2, d/2, dims["slab"]/2)))
     if recipe.get("sides"):
         n = recipe["sides"]

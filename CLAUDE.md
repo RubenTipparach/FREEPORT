@@ -1244,6 +1244,30 @@ architectural materials retain the normal crease rule.
   it reads is EASED over `PACE_EASE` (0.75 s), because a rule that read
   one frame's own step would drop and re-raise the finest ring every
   time a car touched the brake.
+- **And the finest ring outlasts the BUILD the streamer measures, not a
+  number of seconds.** The eye rides one set of boxes for TWO builds
+  (placed when a layout is asked for, replaced one build after it is
+  shown), so `Rings::adapt` asks the finest box to outlast `OUTLAST`
+  (four) of the streamer's own recent builds wherever that is longer
+  than `DWELL`: four builds of demand is two of reach, because the level
+  steps at 1.2 of the NEXT box. The recent build is the slowest of the
+  lately published layouts, let go over `HOLD` (20 s) so one quick
+  build after slow ones does not put the ring straight back to slow,
+  and the first layout of a body is not among them. A fixed dwell was
+  a number measured on one machine and one stretch of road: leaving
+  the port at the top speed a layout rebuilds six to seven chunks a
+  metre of travel (`churn_at_speed`, about half of them chunks whose
+  neighbours changed level), which near a town is more than a second
+  of build for every second of driving, so every layout was longer
+  than the last, 3 s, then 7, then 10, and the car ran off its 256 m
+  ring onto 16 m cells standing over the road for 17 to 28 seconds of
+  the trip. The bot had filed all of it under the TOWN's streets, which
+  is why the highway's own number said 0.9%: `streets` was a disc of
+  `OUTLINE` radii, two kilometres of highway out of a city, and it is
+  the town's own levelled edge along the bearing now. Measured, the
+  trip ABBA: fast frames at level 5 or coarser under the car **1,043 to
+  1,663 against none**, the town exit held at level 4 on builds of 2 to
+  5.5 s, and the frame p99 24.74 ms against 24.33 on the same 12,996 m.
 - **The coarsest box no longer holds the planet, and the CHART is what is
   behind it.** At 5,000 m of radius the 32 km box held the whole world; at
   1,000,000 m it is a patch 16 km either side of the eye. On foot that is
@@ -2996,6 +3020,56 @@ a three metre tile; the first cut put five cells across the whole map,
 which is a 600 mm knot, and the wall came back blotched like scorched
 plywood.
 
+## No two faces FIGHT for one plane, and a town is where they meet
+
+The owner saw z-fighting on the buildings, their details and the
+pavements, and it was not precision: two kilometres from the floating
+origin an `f32` holds a quarter of a millimetre. It was faces that really
+lie in one plane where they overlap, and `fights::fights` is that
+measured on a mesh: triangles facing one way within a millimetre of one
+plane, overlapping by more than a square centimetre, where the caller
+does not say the overlap is hidden. It bins every triangle by its plane
+first, so a whole laid town of 800,000 triangles is checked in a
+second, and `fights::in_town` is the one rule for a town (a face turned
+down is under a slab and the ground sees it; a face with a box of the
+town standing on it is inside a wall, the boxes asked in the planet's
+frame they are kept in).
+
+**A model on its own was the first half, and the easy one.** A floor
+slab's sides lay in the walls' planes, a block's pillars were flush with
+its walls, a gable's ends overhung into the next roof, and in the bakes a
+gable and a vault reached exactly to the walls: 63 to 98 fights in every
+baked variant but the towers. Each is a rule now (`INSET`, `PROUD`,
+`EAVE`), `no_two_faces_of_a_building_fight_for_one_plane` holds every
+parametric kind and `tools/coplanar.py` every bake at every LOD.
+
+**A TOWN is the other half, because a building is as wide as its lot.**
+Anything proud of an outer wall is over the next lot, and on a terrace
+the next lot holds the same building. The bakes framed every window on
+all four walls, 2.5 cm proud of both faces, so every window on a party
+wall stood back to back with the neighbour's own and their frames' sides
+shared a plane for the 5 cm they overlapped: **4,563 fights over
+90.5 m^2 in the harness port**, which is the flicker along every terrace.
+A frame is 1 cm SHY of the street face now and 2.5 cm proud of the room's,
+so nothing of it leaves its lot; a vault's ends stand 3 cm in where a
+gable's stand 2, because a hangar turned a quarter from the house beside
+it in its column put the two end caps in one plane; and a parametric
+gable's eave wedges stand `INSET` behind its end, because past the wall
+they are over the lot behind. And the paving: a road marking was 4 mm
+over a carriageway, which was a hundred times what a LEVEL town is flat
+to and is not on graded ground, where every triangle is a chord of the
+grade and the middles stand 4.6 to 5.5 cm over it against the 5 laid:
+**113 markings within a millimetre of their own tarmac**. `PAINT_UP` is
+1.5 cm. `no_two_faces_of_a_town_fight_for_one_plane` holds the
+parametric port and `baked_buildings_meet_their_neighbours_in_no_plane`
+the baked one at all three grades, **nought fights either way**.
+
+What was tried and taken OUT: splitting a baked gable's roof shell at the
+wall line, for two houses built back to back. It put a face of the shell
+in the wall's own plane, where the ceiling slab's side already is, and
+took the port to 5,896 fights over 509 m^2. Back to back is rare, since a
+block's ring fronts its streets.
+
 ## A town is INHABITED, and a townsman is on rails
 
 `traffic.rs` in the core says who is out on a town's streets and where
@@ -4225,6 +4299,27 @@ being one box that is drawn and collided arriving at the one thing here
 that is not a box. `the_mound_is_the_ground_the_field_levels` holds
 every one of its 5,208 vertices to that surface: -0.150 m to -0.150 m,
 which is the sink and nothing else.
+
+**And the TARMAC is drawn half a per cent of its range nearer the eye**
+(`roads::PULL`), because the mound cannot carry the road through a
+coarse cell: `examples/lod_over_road` measured the drawn ground at up to
+0.82 m over the tarmac in the 16 m cells from 512 m out, 4.27 m in the
+32 m cells from 1,024 m and 2.29 m in the 64 m from 2,048 m, which is
+0.16, 0.42 and 0.11% of the range. A uniform scale about the eye moves
+every vertex along its own view ray, so the road lands on the pixels it
+always did and every pass agrees, the depth prepass and the shadows
+included; in the stretch's own frame that is a child transform of
+translation `PULL c` and scale `1 - PULL`, where `c` is the eye in that
+frame (`pull_tarmac`). The MOUND is the parent and is not pulled,
+because it is sunk 15 cm and pulled it would meet its own ground at the
+one range where the pull equals the sink. It replaces a constant depth
+bias of eight, which on a float depth buffer is eight units of the
+depth's own last place: a millimetre at a kilometre. It does not beat a
+hill, and it does not answer coarse ground UNDER the car, which is
+five per cent of the range and the streamer's to prevent. Measured on
+the `--road 3` camera: a triangle of sand bitten out of the road's far
+edge and the near left shoulder buried before, both clear after, 3.87%
+of the frame moved.
 
 **And it is SUNK rather than laid on**, which is the pavement slab's own
 trick: wherever the terrain really is drawn at this detail the terrain
@@ -5502,11 +5597,140 @@ time it was broken.
   yaw and pitch against the live basis every frame after guessed angles
   stared at empty sky for a week.
 
+## The BOT is a player nobody is playing, and a frame is measured doing what the game is FOR
+
+The owner's framing, which is the reason for all of it: FREEPORT is about
+driving a car from one town to another and doing jobs when you get there,
+washing dishes, serving food, cooking, deliveries and rides, and not about
+flight. So what is measured is not a camera flown along a rail, it is a
+player, and the owner's own words for it were a bot that walks round the
+city, gets in a car and drives to another city. `bot.rs` is that, and
+`docs/bot-and-bench.md` is its long form.
+
+**It goes through the player's own code at every step, or it measures a
+different game.** It walks with the walker's own `Input` and is stopped by
+the same walls; it takes a car through `drive::board` at `driver::REACH`, so
+it has to catch one; and it drives with the scripted drive along the route
+the map plans. `Autopilot` (`drive/script.rs`) is the one switch the
+scripted drive asks whether it is on, set by `--drive` and by the bot, so
+the two cannot disagree about it. Where the bot gets stuck is where a
+player would, and what its frames cost is what a player's cost.
+
+**Two runs are one errand, which is what makes a comparison mean
+anything.** Measured (`--bot-report`), it keeps the flight benchmark's own
+rules through `Args::measuring` (no frame cap, the window drawing
+unfocused, the keys and the mouse taken away), steps the whole world's
+clock a sixtieth a frame, and HOLDS that clock while the world comes up:
+the settle is a different number of frames every run, and a clock that ran
+through it put every car the bot walked to somewhere else. Held, two traced
+runs hit the same five hitches at the same frames counted from the walk,
+and an A/B's six rounds drive the same 739 m on both binaries.
+
+**`tools/bench.py` is what a performance commit is measured with now.** It
+runs errands for rounds and gives medians with their spread; `ab`
+interleaves two binaries ABBA so a laptop warming up charges both alike; a
+change is `better` or `worse` only past both sides' own spread. It refuses
+a second game, a screen recorder and (unless forced) a compiler, and says
+rather than refuses: battery power, a busy CPU, a run on the integrated GPU
+of a machine with a discrete one, rounds that ended apart or differently,
+and a streamer still behind at the end. `tools/trace.py` reads a
+`bevy/trace_chrome` build's trace a line at a time and says which SYSTEM a
+slow frame was spent on.
+
+**What the first errand found, and it was not the city.** The port's
+street errand on an RTX 3060 laptop had main thread hitches of 230 to 435
+ms, and the trace named them: `drive::board` when the bot took its car and
+`ram::ram_cars` every time a car was knocked off the rails, both through
+`Driver::board`, whose `walker::ground` with no feet known marches down
+from the top of the relief band a half metre a step. Six thousand samples
+of an eighteen octave field for every car taken, knocked or got out of.
+`Bounds::near` starts that march twenty metres over a radius the caller
+already has (the rails' own place, the car's own foot).
+
+**Measured, before and after**, three rounds of the `town` errand each,
+ABBA: the worst frame **259 ms to 41.2** (-84.1%), the p95 24.00 to 23.36,
+frames over 33.3 ms 50 to 37, and the median (13.12 to 13.11 ms), the p99
+and the update all within noise, on the same 739 m errand in all six
+rounds. The march for unknown feet starts ON the long march's own half
+metre grid, so the ground it finds is the same to the bit
+(`a_body_known_to_be_near_its_ground_finds_it_in_forty_samples_and_not_six_thousand`
+holds it): started twenty metres up exactly, it was a few millimetres off,
+and ninety seconds of driving later the two binaries were driving 563 m
+and 478 m, which the tool's own distance check said in capitals. What is
+left is the frame itself, 13 ms at the median with 12 of it the update: on
+this laptop the main thread IS the frame.
+
+**And the bot found a bug of its OWN plumbing.** `drive_car` steered the
+scripted drive only when a frame had more than one sub step, which is true
+of `--drive`'s second a frame and false of the bot's sixtieth, so in real
+time the car held full throttle dead ahead: out of the port the wrong way
+and down the highway at 160 km/h AWAY from its goal, 11.1 km off when it
+boarded and 20.7 km seven minutes later. `pedals` now says whether the
+script is driving (`None` for the input) and the wheel reads that.
+
+**And the TRIP arrives, which took five rules in the scripted drive, each
+found by a picture.** From deep in the 1,815 m port the drive steered at
+each crossing's middle, so it drove the centreline into every car coming
+the other way (`kept_right` puts it in its own lane); it turned for the
+next crossing from halfway down a block, a line through the corner
+building (the crossing ahead is steered for until the car is in it); it
+rammed everything in its path and every car it knocked stayed in the
+street as a wall (`Auto::room` keeps its speed to the clear road in its
+lane, against where the rails will have the traffic over the next two
+seconds); it did 93 km/h between two crossings (`TOWN_SPEED`, 50); and it
+drove on past a village it had reached (arrival is the town's OUTLINE,
+and the bot pulls up there, `Autopilot::park`). Measured, the whole errand
+in real time: a car taken at 25.6 s, the port's streets, the highway at
+160 km/h, and **arrived** in town 160 at 471 s, 13.0 km driven, frames
+p50 14.5 ms and p99 23.9. The cars on the rails still drive into it,
+because a closed form cannot know it is there, and at 160 km/h the
+streamed terrain falls behind the road.
+
+**What was tried first and measured WORSE, which is worth keeping.**
+Sphere tracing that march on the field's slope bound, `town::surface_radius`'s
+own rule, took the hitches from about 250 ms to about 400: the bound is
+ISOTROPIC and the planet's is in the hundreds now that road skirts are in
+it, while straight down the field changes at about one a metre, so the
+trace crawled. The lesson this file already wrote for `surface_radius` is
+the one that held: start from where the answer is.
+
+**What is MISSING, named rather than hidden.** The missions: each becomes
+an errand the day it exists. Two runs are not QUITE one errand: one round
+in six parted after a ram, most likely because the boxes a car meets in a
+town come from tiles built under a frame budget, so a frame's timing can
+decide whether a wall is there yet. `ram::ram_cars` is the costliest
+system on the main thread over a whole errand, about 4 ms a traced frame
+without its knocks, and nobody has looked at why. The bot walks a
+street's middle rather than its pavement.
+
+## Work is tracked in OPENSPEC, and an open change is a promise
+
+The owner's ask, on the laptop the bot was built on: set up
+[OpenSpec](https://openspec.dev/) and keep track of what the owner saw.
+`openspec/config.yaml` points at this file rather than restating it, the
+way the owner's Pale Blue Dot repository does; `openspec/specs` is what the
+game does TODAY and a requirement there is pinned by a test or a measured
+errand; `openspec/changes` is what somebody saw and nobody has finished,
+each with a proposal in the owner's own words, a spec a bot errand or a
+test can check, a design and a task list. `openspec list` is the list, and
+`/opsx:propose`, `/opsx:apply` and `/opsx:archive` are the workflow.
+
+The first six are the owner's: the terrain falling behind the road at
+160 km/h, z-fighting on the buildings and the pavement, the chase camera
+inside walls, cars flipping on small knocks and shaking when boarded,
+traffic that avoids nothing (and stop signs), and a wall sensor for the
+cars a script drives.
+
+**`openspec update` regenerates `.claude/skills/openspec-*` and
+`.claude/commands/opsx/*` with EM DASHES in them**, which this file's own
+check refuses. They were replaced with plain hyphens when the tool was set
+up, and the replacement is run again after any update.
+
 ## Suites
 
 ```sh
-cargo test -p freeport_core                       # 234, the core, about 100 s
-cargo test -p freeport_app                        # 67, the harness. It was NOT in this list and
+cargo test -p freeport_core                       # 244, the core, about 45 s on an i9-11900H
+cargo test -p freeport_app                        # 70, the harness. It was NOT in this list and
                                                   # went uncompilable for a commit with nothing to say so
 python3 tools/shape.py --check                    # no file over 900 lines, no function over 100
 cargo fmt --all -- --check                        # the format
@@ -5519,6 +5743,10 @@ python3 tools/pngdiff.py before.png after.png     # a refactor's pictures, again
 cargo build --release -p freeport_app             # the harness (needs libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev on Linux)
 ./target/release/freeport_app                     # a window: on foot on a street of the port, F flies, E steals a car, M the map, G gas, H the time menu, T the torch, Tab wires, Esc frees the mouse
 ./run.sh --test                                   # the core suite and the shape check, then the build and the window; run.bat is the Windows twin, --shot out.png takes a picture with no display
+./target/release/freeport_app --bot               # the BOT: walks the port, takes a car, drives to the next town (docs/bot-and-bench.md)
+python3 tools/bench.py run                        # the bot measured, three rounds of each errand, medians and spread in target/bench
+python3 tools/bench.py ab --base old.exe --head target/release/freeport_app.exe   # two binaries, interleaved ABBA
+python3 tools/trace.py trace-<stamp>.json --worst 5   # which system a slow frame was spent on, off a bevy/trace_chrome build
 # Every headless run below is under xvfb-run with
 # VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json, and `--octaves` is
 # what a picture on a software rasteriser is bought down with, since the

@@ -18,10 +18,18 @@ use glam::{DVec2, DVec3};
 /// exactly on it would fleck along its whole length.
 const BURY: f64 = 0.15;
 /// How wide a painted marking is, metres, and how high over the
-/// carriageway it is laid. Four millimetres is nothing an eye can see
-/// as a step and is a hundred times the two the paving is flat to.
+/// carriageway it is laid. It was four millimetres, which was a hundred
+/// times what a LEVEL town's paving is flat to; on GRADED ground every
+/// triangle is draped at its own corners and its middle is a chord of
+/// the curving grade, and measured over the port the carriageway's
+/// middles stand 4.6 to 5.5 cm over the ground against the 5 cm it is
+/// laid at. The paint and the tarmac under it are two chords, so four
+/// millimetres put 113 of the port's markings within a millimetre of the
+/// tarmac's own plane (`no_two_faces_of_a_town_fight_for_one_plane`).
+/// A centimetre and a half clears both chords with a centimetre to
+/// spare, and is still nothing an eye can see as a step.
 const PAINT_W: f64 = 0.12;
-const PAINT_UP: f64 = 0.004;
+const PAINT_UP: f64 = 0.015;
 /// How far the edge line stands in from the kerb, metres.
 const EDGE_IN: f64 = 0.18;
 /// What share of a piece the centreline's dash takes, so the gap between
